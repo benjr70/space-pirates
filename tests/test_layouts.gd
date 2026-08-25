@@ -95,22 +95,41 @@ func _begin_open_door_phase() -> void:
 	if test_door == null:
 		_begin_locked_door_phase()
 		return
-	_expect(not test_door.is_open, "unlocked door was already open with nobody near it")
-	# One tile back from the threshold, on the room_a side.
+	# Straight back from the threshold on the room_a side: close enough to reach
+	# the controls, far enough that his collider is clear of the doorway itself.
 	var from := ShipBuilder.room_center_world(built_layout.rooms[test_door_data.room_a])
 	var door_pos: Vector2 = ShipBuilder.door_center_world(test_door_data)
-	player.global_position = door_pos + (from - door_pos).normalized() * ShipBuilder.TILE_SIZE
+	var across := Vector2.DOWN if test_door_data.horizontal else Vector2.RIGHT
+	var side := signf((from - door_pos).dot(across))
+	player.global_position = door_pos + across * (side if side != 0.0 else 1.0) * 44.0
 	player.velocity = Vector2.ZERO
 	phase = 2
 	frames = 0
 
 
+## Walks the interact key through a full open/close cycle on one door.
 func _physics_open_door() -> void:
 	player.move_and_slide()
 	frames += 1
-	if frames >= 10:
-		_expect(test_door.is_open, "door did not open for the player standing in it")
-		_begin_locked_door_phase()
+	match frames:
+		5:
+			_expect(test_door.in_reach(), "door did not notice the player standing next to it")
+			_expect(test_door.close(), "door would not shut with nobody in the doorway")
+		7:
+			_expect(not test_door.is_open, "door is still open after being shut")
+		8:
+			Input.action_press("interact")
+		9:
+			Input.action_release("interact")
+		14:
+			_expect(test_door.is_open, "pressing interact did not open the door")
+		15:
+			Input.action_press("interact")
+		16:
+			Input.action_release("interact")
+		21:
+			_expect(not test_door.is_open, "pressing interact again did not shut the door")
+			_begin_locked_door_phase()
 
 
 ## Park him in the medbay and shove him at the locked interior door.
@@ -252,11 +271,29 @@ func _check_built_geometry(layout: ShipLayout) -> void:
 			node.open()
 			_expect(not node.is_open, "locked door %d opened anyway" % i)
 
+	# Doorways stay lit so exits are visible from inside a dark room.
+	var shades: Array[Rect2] = []
+	_collect_shades(ship.get_node("Fog"), shades)
+	_expect(shades.size() > 0, "fog painted nothing")
+	var covered := 0
+	for d in layout.doors:
+		for tile in d.tiles():
+			var center := ShipBuilder.tile_to_world(tile)
+			for shade in shades:
+				if shade.has_point(center):
+					covered += 1
+					break
+	_expect(covered == 0, "%d doorway tiles are hidden under the fog" % covered)
+
 	var fog: RoomFog = ship.get_node("Fog")
 	_expect(fog.is_revealed(layout.entry_room), "entry room is still dark")
 	for i in layout.rooms.size():
 		if i != layout.entry_room:
 			_expect(not fog.is_revealed(i), "room %d was revealed before being entered" % i)
+
+	# Doors no longer open on approach, so prop the ship open for the roam below.
+	for door_node in doors.get_children():
+		door_node.open()
 
 	var props: Node2D = ship.get_node("Props")
 	var expected_props := 0
@@ -264,6 +301,14 @@ func _check_built_geometry(layout: ShipLayout) -> void:
 		expected_props += room.props.size()
 	_expect(props.get_child_count() == expected_props,
 			"spawned %d props, expected %d" % [props.get_child_count(), expected_props])
+
+
+func _collect_shades(node: Node, out: Array[Rect2]) -> void:
+	for child in node.get_children():
+		if child is ColorRect:
+			out.append(Rect2(child.global_position, child.size))
+		else:
+			_collect_shades(child, out)
 
 
 func _expect(condition: bool, message: String) -> void:
