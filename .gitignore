@@ -1,0 +1,7 @@
+# Godot 4+ specific ignores
+.godot/
+/android/
+
+# Godot export artifacts / secrets
+export_presets.cfg
+/builds/
