@@ -1,6 +1,7 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene load_steps=3 format=3]
 
-[ext_resource type="PackedScene" path="res://scenes/player.tscn" id="1_player"]
+[ext_resource type="PackedScene" path="res://scenes/ship.tscn" id="1_ship"]
+[ext_resource type="PackedScene" path="res://scenes/player.tscn" id="2_player"]
 
 [node name="Main" type="Node2D"]
 
@@ -13,5 +14,7 @@ offset_bottom = 2000.0
 color = Color(0.043, 0.055, 0.11, 1)
 mouse_filter = 2
 
-[node name="Player" parent="." instance=ExtResource("1_player")]
-position = Vector2(576, 324)
+[node name="Ship" parent="." instance=ExtResource("1_ship")]
+
+[node name="Player" parent="." instance=ExtResource("2_player")]
+position = Vector2(0, 150)
