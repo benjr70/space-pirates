@@ -27,6 +27,8 @@ const DEFAULT_FLOOR_ATLAS := Vector2i(0, 0)
 ## Doorways get hazard striping so the gaps read as thresholds.
 const DOOR_FLOOR_ATLAS := Vector2i(3, 0)
 
+const DOOR_SCENE: PackedScene = preload("res://scenes/door.tscn")
+
 const PROP_SCENES := {
 	&"console": preload("res://scenes/props/prop_console.tscn"),
 	&"cryopod": preload("res://scenes/props/prop_cryopod.tscn"),
@@ -42,6 +44,12 @@ static func tile_to_world(tile: Vector2i) -> Vector2:
 
 static func world_to_tile(pos: Vector2) -> Vector2i:
 	return Vector2i(floor(pos.x / TILE_SIZE), floor(pos.y / TILE_SIZE))
+
+
+## Centre of a doorway, in world pixels, accounting for how many tiles wide it is.
+static func door_center_world(door: DoorData) -> Vector2:
+	var span := Vector2(door.width, 1) if door.horizontal else Vector2(1, door.width)
+	return (Vector2(door.tile) + span / 2.0) * TILE_SIZE
 
 
 ## Centre of a room, in world pixels. Handles even-sized rooms correctly.
@@ -90,6 +98,22 @@ static func build(layout: ShipLayout, parent: Node2D) -> void:
 	for room in layout.rooms:
 		for prop in room.props:
 			_spawn_prop(prop, props)
+
+	var doors := Node2D.new()
+	doors.name = "Doors"
+	parent.add_child(doors)
+	for door_data in layout.doors:
+		var door: Door = DOOR_SCENE.instantiate()
+		# Sized before it enters the tree, since the span comes from the layout.
+		door.setup(door_data)
+		door.position = door_center_world(door_data)
+		doors.add_child(door)
+
+	var fog := RoomFog.new()
+	fog.name = "Fog"
+	fog.z_index = 10
+	parent.add_child(fog)
+	fog.setup(layout)
 
 
 ## Every tile that should hold wall: the one-tile ring around each room, minus

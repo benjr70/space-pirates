@@ -22,6 +22,12 @@ var directions := [
 var dir_index := 0
 var built_layout: ShipLayout
 var geometry_checked := false
+var phase := 0
+var locked_push := Vector2.ZERO
+var locked_from := -1
+var locked_to := -1
+var test_door: Door
+var test_door_data: DoorData
 var frames := 0
 var escapes := 0
 
@@ -48,6 +54,13 @@ func _physics_process(_delta: float) -> bool:
 		geometry_checked = true
 		_check_built_geometry(built_layout)
 
+	if phase == 2:
+		_physics_open_door()
+		return false
+	if phase == 1:
+		_physics_locked_door()
+		return false
+
 	# Shove the player hard in every direction; his centre must never leave the floor.
 	player.velocity = directions[dir_index] * 500.0
 	player.move_and_slide()
@@ -59,9 +72,78 @@ func _physics_process(_delta: float) -> bool:
 		dir_index += 1
 		if dir_index >= directions.size():
 			_expect(escapes == 0, "player escaped the hull on %d physics frames" % escapes)
-			_report()
-			quit(1 if failures.size() > 0 else 0)
+			_begin_open_door_phase()
 	return false
+
+
+## Stand him next to an unlocked door; it should notice him and open.
+func _begin_open_door_phase() -> void:
+	# The sweep dragged him through several rooms; the fog should have lifted off them.
+	var fog: RoomFog = main.get_node("Ship/Fog")
+	var seen := 0
+	for i in built_layout.rooms.size():
+		if fog.is_revealed(i):
+			seen += 1
+	_expect(seen > 1, "only %d room revealed after walking the whole ship" % seen)
+
+	var doors: Node2D = main.get_node("Ship/Doors")
+	for i in built_layout.doors.size():
+		if not built_layout.doors[i].locked:
+			test_door = doors.get_child(i)
+			test_door_data = built_layout.doors[i]
+			break
+	if test_door == null:
+		_begin_locked_door_phase()
+		return
+	_expect(not test_door.is_open, "unlocked door was already open with nobody near it")
+	# One tile back from the threshold, on the room_a side.
+	var from := ShipBuilder.room_center_world(built_layout.rooms[test_door_data.room_a])
+	var door_pos: Vector2 = ShipBuilder.door_center_world(test_door_data)
+	player.global_position = door_pos + (from - door_pos).normalized() * ShipBuilder.TILE_SIZE
+	player.velocity = Vector2.ZERO
+	phase = 2
+	frames = 0
+
+
+func _physics_open_door() -> void:
+	player.move_and_slide()
+	frames += 1
+	if frames >= 10:
+		_expect(test_door.is_open, "door did not open for the player standing in it")
+		_begin_locked_door_phase()
+
+
+## Park him in the medbay and shove him at the locked interior door.
+func _begin_locked_door_phase() -> void:
+	var locked_door: DoorData = null
+	for d in built_layout.doors:
+		if d.locked:
+			locked_door = d
+			break
+	if locked_door == null:
+		_report()
+		quit(1 if failures.size() > 0 else 0)
+		return
+	locked_from = locked_door.room_a
+	locked_to = locked_door.room_b
+	player.global_position = ShipBuilder.room_center_world(built_layout.rooms[locked_from])
+	player.velocity = Vector2.ZERO
+	var toward: Vector2 = ShipBuilder.room_center_world(built_layout.rooms[locked_to]) - player.global_position
+	locked_push = toward.normalized()
+	phase = 1
+	frames = 0
+
+
+func _physics_locked_door() -> void:
+	player.velocity = locked_push * 500.0
+	player.move_and_slide()
+	frames += 1
+	if frames >= 240:
+		var room := built_layout.room_at(ShipBuilder.world_to_tile(player.global_position))
+		_expect(room != locked_to,
+				"player walked through a locked door into room %d" % locked_to)
+		_report()
+		quit(1 if failures.size() > 0 else 0)
 
 
 func _check_rooms_disjoint(layout: ShipLayout) -> void:
@@ -107,6 +189,8 @@ func _check_connectivity(layout: ShipLayout) -> void:
 	for i in layout.rooms.size():
 		adjacency[i] = []
 	for d in layout.doors:
+		if d.locked:
+			continue  # a locked door must never be the only way into a room
 		adjacency[d.room_a].append(d.room_b)
 		adjacency[d.room_b].append(d.room_a)
 
@@ -120,7 +204,7 @@ func _check_connectivity(layout: ShipLayout) -> void:
 				queue.append(neighbour)
 
 	_expect(seen.size() == layout.rooms.size(),
-			"only %d of %d rooms reachable from the entry room" % [seen.size(), layout.rooms.size()])
+			"only %d of %d rooms reachable from the entry room through unlocked doors" % [seen.size(), layout.rooms.size()])
 
 
 func _check_built_geometry(layout: ShipLayout) -> void:
@@ -149,6 +233,30 @@ func _check_built_geometry(layout: ShipLayout) -> void:
 			if not expected_floor.has(n) and not walls.has(n):
 				leaks += 1
 	_expect(leaks == 0, "%d floor tiles open onto empty space" % leaks)
+
+	var doors: Node2D = ship.get_node("Doors")
+	_expect(doors.get_child_count() == layout.doors.size(),
+			"spawned %d doors, expected %d" % [doors.get_child_count(), layout.doors.size()])
+	for i in mini(doors.get_child_count(), layout.doors.size()):
+		var node: Door = doors.get_child(i)
+		var data: DoorData = layout.doors[i]
+		_expect(node.position.is_equal_approx(ShipBuilder.door_center_world(data)),
+				"door %d sits at %s, expected %s" % [i, node.position, ShipBuilder.door_center_world(data)])
+		var shape: RectangleShape2D = node.get_node("Blocker/CollisionShape2D").shape
+		var span := data.width * ShipBuilder.TILE_SIZE
+		var along := shape.size.x if data.horizontal else shape.size.y
+		_expect(is_equal_approx(along, span),
+				"door %d blocks %s px of a %d px doorway" % [i, along, span])
+		_expect(not node.is_open, "door %d starts open" % i)
+		if data.locked:
+			node.open()
+			_expect(not node.is_open, "locked door %d opened anyway" % i)
+
+	var fog: RoomFog = ship.get_node("Fog")
+	_expect(fog.is_revealed(layout.entry_room), "entry room is still dark")
+	for i in layout.rooms.size():
+		if i != layout.entry_room:
+			_expect(not fog.is_revealed(i), "room %d was revealed before being entered" % i)
 
 	var props: Node2D = ship.get_node("Props")
 	var expected_props := 0

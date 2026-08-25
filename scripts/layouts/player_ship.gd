@@ -47,7 +47,7 @@ static func create() -> ShipLayout:
 	layout.doors = [
 		_door(0, 1, Vector2i(3, 8), true, 3),
 		_door(0, 2, Vector2i(15, 8), true, 3),
-		_door(1, 2, Vector2i(10, 13), false, 3),
+		_door(1, 2, Vector2i(10, 13), false, 3, true),
 		_door(1, 3, Vector2i(3, 19), true, 3),
 		_door(2, 3, Vector2i(15, 19), true, 3),
 		_door(3, 4, Vector2i(9, 32), true, 4),
@@ -64,11 +64,12 @@ static func _room(rect: Rect2i, role: StringName, props: Array) -> RoomData:
 	return room
 
 
-static func _door(a: int, b: int, tile: Vector2i, horizontal: bool, width: int) -> DoorData:
+static func _door(a: int, b: int, tile: Vector2i, horizontal: bool, width: int, locked := false) -> DoorData:
 	var door := DoorData.new()
 	door.room_a = a
 	door.room_b = b
 	door.tile = tile
 	door.horizontal = horizontal
 	door.width = width
+	door.locked = locked
 	return door
