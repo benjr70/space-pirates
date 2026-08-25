@@ -1,20 +1,20 @@
-[gd_scene load_steps=3 format=3]
+[gd_scene format=3 uid="uid://bwndlgh11rsvu"]
 
 [ext_resource type="PackedScene" path="res://scenes/ship.tscn" id="1_ship"]
 [ext_resource type="PackedScene" path="res://scenes/player.tscn" id="2_player"]
 
-[node name="Main" type="Node2D"]
+[node name="Main" type="Node2D" unique_id=404682778]
 
-[node name="Background" type="ColorRect" parent="."]
+[node name="Background" type="ColorRect" parent="." unique_id=1283610711]
 z_index = -100
-offset_left = -2000.0
-offset_top = -2000.0
-offset_right = 2000.0
-offset_bottom = 2000.0
-color = Color(0.043, 0.055, 0.11, 1)
+offset_left = -1804.0
+offset_top = -1930.0
+offset_right = 2196.0
+offset_bottom = 2070.0
 mouse_filter = 2
+color = Color(0.043, 0.055, 0.11, 1)
 
-[node name="Ship" parent="." instance=ExtResource("1_ship")]
+[node name="Ship" parent="." unique_id=80214304 instance=ExtResource("1_ship")]
 
-[node name="Player" parent="." instance=ExtResource("2_player")]
+[node name="Player" parent="." unique_id=135684903 instance=ExtResource("2_player")]
 position = Vector2(0, 150)
