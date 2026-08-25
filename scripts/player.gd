@@ -1,6 +1,10 @@
 extends CharacterBody2D
 ## The pirate. Moves on WASD, aims and shoots wherever the mouse is.
 
+signal died
+
+const TEAM := &"pirate"
+
 ## Top speed in pixels per second.
 @export var max_speed: float = 165.0
 ## How quickly the spaceman gets up to speed, in pixels per second squared.
@@ -16,12 +20,35 @@ extends CharacterBody2D
 
 @export var projectile_scene: PackedScene = preload("res://scenes/projectile.tscn")
 
+## Seconds spent down before getting back up at the entry room.
+@export var respawn_delay := 1.5
+
 @onready var sprite: Sprite2D = $Sprite2D
+@onready var health: Health = $Health
+
+## Where he comes back, set by the scene that built the ship.
+var spawn_point := Vector2.ZERO
 
 ## Unit vector the pirate is currently pointing.
 var aim_direction := Vector2.DOWN
 
 var _cooldown := 0.0
+
+
+func _ready() -> void:
+	health.died.connect(_on_died)
+
+
+func get_team() -> StringName:
+	return TEAM
+
+
+func is_alive() -> bool:
+	return health.is_alive()
+
+
+func take_damage(amount: int, from: Node = null) -> void:
+	health.take_damage(amount, from)
 
 
 func _physics_process(delta: float) -> void:
@@ -78,3 +105,22 @@ func fire() -> Projectile:
 func _shot_parent() -> Node:
 	var container := get_tree().get_first_node_in_group(&"projectiles")
 	return container if container != null else get_parent()
+
+
+func _on_died(_from: Node) -> void:
+	died.emit()
+	velocity = Vector2.ZERO
+	visible = false
+	set_physics_process(false)
+	$CollisionShape2D.set_deferred("disabled", true)
+	await get_tree().create_timer(respawn_delay).timeout
+	respawn()
+
+
+func respawn() -> void:
+	health.reset()
+	global_position = spawn_point
+	velocity = Vector2.ZERO
+	visible = true
+	$CollisionShape2D.set_deferred("disabled", false)
+	set_physics_process(true)

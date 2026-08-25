@@ -14,7 +14,7 @@ size = Vector2(96, 32)
 resource_local_to_scene = true
 size = Vector2(96, 128)
 
-[node name="Door" type="Node2D"]
+[node name="Door" type="Node2D" groups=["doors"]]
 script = ExtResource("1_door")
 
 [node name="Blocker" type="StaticBody2D" parent="."]

@@ -31,6 +31,8 @@ var test_door_data: DoorData
 var shot: Projectile
 var shot_start := Vector2.ZERO
 var shot_last := Vector2.ZERO
+var gunman: Crew
+var bystander: Crew
 var frames := 0
 var escapes := 0
 
@@ -55,8 +57,14 @@ func _physics_process(_delta: float) -> bool:
 	# only there to inspect once the first physics frame comes round.
 	if not geometry_checked:
 		geometry_checked = true
+		# The scene built its own layout instance; check the one actually in use.
+		built_layout = main.layout
+		floors = built_layout.floor_tiles()
 		_check_built_geometry(built_layout)
 
+	if phase == 4:
+		_physics_crew()
+		return false
 	if phase == 3:
 		_physics_shooting()
 		return false
@@ -215,8 +223,86 @@ func _physics_shooting() -> void:
 	_expect(shot_last.x < shot_start.x, "shot travelled the wrong way")
 	_expect(shot_last.x < 25.0 and shot_last.x > -32.0,
 			"shot stopped at x %s, not against the hull" % shot_last.x)
-	_report()
-	quit(1 if failures.size() > 0 else 0)
+	_begin_crew_phase()
+
+
+## Put a live hostile in the room with the pirate and let them fight.
+func _begin_crew_phase() -> void:
+	for stray in main.get_node("Projectiles").get_children():
+		stray.free()
+
+	var room: RoomData = built_layout.rooms[built_layout.entry_room]
+	player.global_position = ShipBuilder.room_center_world(room)
+	player.velocity = Vector2.ZERO
+	player.health.reset()
+
+	var crew_scene: PackedScene = load("res://scenes/crew.tscn")
+	var holder: Node2D = main.get_node("Ship/Crew")
+
+	gunman = crew_scene.instantiate()
+	gunman.layout = built_layout
+	gunman.home_room = built_layout.entry_room
+	gunman.target = player
+	gunman.spread_degrees = 0.0
+	gunman.position = player.global_position + Vector2(180.0, 0.0)
+	holder.add_child(gunman)
+
+	# A second hostile directly in the line of fire, stood down so it holds
+	# position: friendly shots must pass straight through it.
+	bystander = crew_scene.instantiate()
+	bystander.layout = built_layout
+	bystander.home_room = built_layout.entry_room
+	bystander.position = player.global_position + Vector2(90.0, 0.0)
+	holder.add_child(bystander)
+	bystander.set_physics_process(false)
+
+	phase = 4
+	frames = 0
+
+
+func _physics_crew() -> void:
+	frames += 1
+	match frames:
+		30:
+			_expect(gunman.state in [Crew.State.HUNT, Crew.State.FIGHT, Crew.State.COVER],
+					"crew saw the pirate and stayed on patrol (state %d)" % gunman.state)
+		240:
+			_expect(player.health.current < player.health.max_health,
+					"crew never landed a shot on the pirate")
+			_expect(bystander.health.current == bystander.health.max_health,
+					"crew shot one of their own")
+			_check_cover()
+			_check_crew_dies()
+			_report()
+			quit(1 if failures.size() > 0 else 0)
+
+
+## Cover must actually be cover: something solid between it and the target, and
+## a clear walk to it.
+func _check_cover() -> void:
+	# Crates sit around tile (1,21); stand the two of them either side.
+	player.global_position = ShipBuilder.tile_to_world(Vector2i(1, 20))
+	gunman.global_position = ShipBuilder.tile_to_world(Vector2i(1, 24))
+	gunman._last_seen = player.global_position
+
+	var spot: Vector2 = gunman._find_cover_point()
+	_expect(spot != Vector2.INF, "crew could not find cover beside a crate stack")
+	if spot == Vector2.INF:
+		return
+	_expect(gunman._blocked(spot, player.global_position),
+			"the chosen cover at %s is in the open" % spot)
+	_expect(not gunman._blocked(gunman.global_position, spot),
+			"the chosen cover at %s cannot be walked to" % spot)
+
+
+func _check_crew_dies() -> void:
+	var before := gunman.health.current
+	_expect(before > 0, "crew was already down before being shot")
+	gunman.take_damage(1)
+	_expect(gunman.health.current == before - 1, "crew shrugged off a hit")
+	gunman.take_damage(gunman.health.max_health)
+	_expect(not gunman.is_alive(), "crew survived fatal damage")
+	_expect(gunman.state == Crew.State.DEAD, "dead crew is not in the dead state")
 
 
 func _check_rooms_disjoint(layout: ShipLayout) -> void:
@@ -344,6 +430,23 @@ func _check_built_geometry(layout: ShipLayout) -> void:
 	for i in layout.rooms.size():
 		if i != layout.entry_room:
 			_expect(not fog.is_revealed(i), "room %d was revealed before being entered" % i)
+
+	var crew_holder: Node2D = ship.get_node("Crew")
+	var expected_crew := 0
+	for room in layout.rooms:
+		expected_crew += room.crew_count
+	_expect(crew_holder.get_child_count() == expected_crew,
+			"spawned %d crew, expected %d" % [crew_holder.get_child_count(), expected_crew])
+	var misplaced := 0
+	for member in crew_holder.get_children():
+		var tile := ShipBuilder.world_to_tile(member.global_position)
+		if not layout.rooms[member.home_room].rect.has_point(tile):
+			misplaced += 1
+		_expect(member.layout == layout, "crew was not handed the ship layout")
+		# Stand them down for the movement phases below.
+		member.set_physics_process(false)
+		member.get_node("CollisionShape2D").set_deferred("disabled", true)
+	_expect(misplaced == 0, "%d crew spawned outside their own room" % misplaced)
 
 	# Doors no longer open on approach, so prop the ship open for the roam below.
 	for door_node in doors.get_children():

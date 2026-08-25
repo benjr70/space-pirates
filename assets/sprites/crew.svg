@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
+  <!-- Top-down hostile crew: backpack, arms, suit, helmet -->
+  <rect x="14" y="4" width="20" height="10" rx="3" fill="#3a2222"/>
+  <rect x="17" y="1" width="4" height="5" rx="1.5" fill="#6b3535"/>
+  <rect x="27" y="1" width="4" height="5" rx="1.5" fill="#6b3535"/>
+  <rect x="4" y="16" width="9" height="18" rx="4.5" fill="#a24747" stroke="#5e2b2b" stroke-width="1.5"/>
+  <rect x="35" y="16" width="9" height="18" rx="4.5" fill="#a24747" stroke="#5e2b2b" stroke-width="1.5"/>
+  <rect x="10" y="10" width="28" height="30" rx="10" fill="#8c3b3b" stroke="#5e2b2b" stroke-width="2"/>
+  <rect x="16" y="30" width="16" height="6" rx="3" fill="#e2c044"/>
+  <circle cx="24" cy="22" r="11" fill="#b9c2cc" stroke="#5e2b2b" stroke-width="2"/>
+  <path d="M14.5 22a9.5 9.5 0 0 1 19 0a9.5 9.5 0 0 1-19 0z" fill="#1e293b" opacity="0.15"/>
+  <path d="M16 19a8.5 8.5 0 0 1 16 0a8.5 8.5 0 0 1-16 0z" fill="#ff7a5e"/>
+  <path d="M18.5 18.5a5.5 5.5 0 0 1 6-4" stroke="#ffd9c9" stroke-width="2" stroke-linecap="round" fill="none"/>
+</svg>

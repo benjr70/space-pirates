@@ -1,0 +1,26 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/crew.gd" id="1_crew"]
+[ext_resource type="Texture2D" path="res://assets/sprites/crew.svg" id="2_sprite"]
+[ext_resource type="Script" path="res://scripts/health.gd" id="3_health"]
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_crew"]
+radius = 12.0
+
+[node name="Crew" type="CharacterBody2D" groups=["crew"]]
+z_index = 18
+collision_layer = 2
+collision_mask = 3
+motion_mode = 1
+script = ExtResource("1_crew")
+
+[node name="Sprite2D" type="Sprite2D" parent="."]
+scale = Vector2(0.6, 0.6)
+texture = ExtResource("2_sprite")
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+shape = SubResource("CircleShape2D_crew")
+
+[node name="Health" type="Node" parent="."]
+script = ExtResource("3_health")
+max_health = 4

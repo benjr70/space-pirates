@@ -9,6 +9,9 @@ extends Resource
 @export var rect: Rect2i = Rect2i(0, 0, 4, 4)
 ## What the room is for: &"bridge", &"engine", &"cargo", &"medbay", &"quarters".
 @export var role: StringName = &"quarters"
+## How many hostile crew start in this room. The generator will set this from
+## a threat budget later.
+@export var crew_count: int = 0
 ## Props to spawn, as [{type = StringName, tile = Vector2i}]. `tile` is the tile
 ## the prop is centred on, so odd-sized props line up with the grid.
 @export var props: Array[Dictionary] = []

@@ -16,6 +16,7 @@ func _ready() -> void:
 	layout = layout_override if layout_override != null else PlayerShipLayout.create()
 	ShipBuilder.build(layout, ship)
 	player.global_position = ShipBuilder.room_center_world(layout.rooms[layout.entry_room])
+	player.spawn_point = player.global_position
 
 	var fog: RoomFog = ship.get_node("Fog")
 	tracker = RoomTracker.new()

@@ -28,6 +28,7 @@ const DEFAULT_FLOOR_ATLAS := Vector2i(0, 0)
 const DOOR_FLOOR_ATLAS := Vector2i(3, 0)
 
 const DOOR_SCENE: PackedScene = preload("res://scenes/door.tscn")
+const CREW_SCENE: PackedScene = preload("res://scenes/crew.tscn")
 
 const PROP_SCENES := {
 	&"console": preload("res://scenes/props/prop_console.tscn"),
@@ -109,6 +110,18 @@ static func build(layout: ShipLayout, parent: Node2D) -> void:
 		door.position = door_center_world(door_data)
 		doors.add_child(door)
 
+	var crew := Node2D.new()
+	crew.name = "Crew"
+	parent.add_child(crew)
+	for i in layout.rooms.size():
+		var room: RoomData = layout.rooms[i]
+		for n in room.crew_count:
+			var hostile: Crew = CREW_SCENE.instantiate()
+			hostile.layout = layout
+			hostile.home_room = i
+			hostile.position = crew_spawn_position(room, n)
+			crew.add_child(hostile)
+
 	var fog := RoomFog.new()
 	fog.name = "Fog"
 	fog.z_index = 10
@@ -143,6 +156,29 @@ static func wall_atlas(tile: Vector2i, walls: Dictionary) -> Vector2i:
 	if walls.has(tile + Vector2i.LEFT):
 		mask |= W
 	return Vector2i(mask % 8, 1 + mask / 8)
+
+
+## Spreads crew across a room, keeping clear of the tiles its props sit on.
+static func crew_spawn_position(room: RoomData, index: int) -> Vector2:
+	var inner := room.rect.grow(-1)
+	if inner.size.x < 1 or inner.size.y < 1:
+		inner = room.rect
+
+	var taken := {}
+	for prop in room.props:
+		var at: Vector2i = prop.get("tile", Vector2i.ZERO)
+		for dx in range(-1, 2):
+			for dy in range(-1, 2):
+				taken[at + Vector2i(dx, dy)] = true
+
+	for attempt in 12:
+		var step := index * 3 + attempt * 5
+		var tile := inner.position + Vector2i(
+				(step + 1) % inner.size.x,
+				(step * 2 + 2) % inner.size.y)
+		if not taken.has(tile):
+			return tile_to_world(tile)
+	return room_center_world(room)
 
 
 static func _spawn_prop(prop: Dictionary, parent: Node2D) -> void:
