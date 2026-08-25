@@ -2,9 +2,9 @@ extends CharacterBody2D
 ## Top-down spaceman controlled with WASD (or arrow keys).
 
 ## Top speed in pixels per second.
-@export var max_speed: float = 260.0
+@export var max_speed: float = 165.0
 ## How quickly the spaceman gets up to speed, in pixels per second squared.
-@export var acceleration: float = 1800.0
+@export var acceleration: float = 1400.0
 ## How quickly he coasts to a stop when there is no input.
 @export var friction: float = 1400.0
 ## Rotate the sprite to face the direction of travel.

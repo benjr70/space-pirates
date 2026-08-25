@@ -1,0 +1,22 @@
+[gd_scene load_steps=2 format=3]
+
+[sub_resource type="RectangleShape2D" id="Rect_engine"]
+size = Vector2(94, 30)
+
+[node name="PropEngineConsole" type="StaticBody2D"]
+
+[node name="Body" type="Polygon2D" parent="."]
+color = Color(0.18, 0.22, 0.28, 1)
+polygon = PackedVector2Array(-47, -15, 47, -15, 47, 15, -47, 15)
+
+[node name="Core" type="Polygon2D" parent="."]
+color = Color(0.4, 0.85, 0.45, 1)
+polygon = PackedVector2Array(-26, -8, 26, -8, 26, 6, -26, 6)
+
+[node name="Vent" type="Line2D" parent="."]
+points = PackedVector2Array(-40, 10, 40, 10)
+width = 4.0
+default_color = Color(0.12, 0.14, 0.18, 1)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+shape = SubResource("Rect_engine")

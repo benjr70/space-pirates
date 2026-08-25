@@ -1,0 +1,18 @@
+[gd_scene load_steps=2 format=3]
+
+[sub_resource type="RectangleShape2D" id="Rect_crate"]
+size = Vector2(28, 28)
+
+[node name="PropCrate" type="StaticBody2D"]
+
+[node name="Body" type="Polygon2D" parent="."]
+color = Color(0.55, 0.42, 0.24, 1)
+polygon = PackedVector2Array(-14, -14, 14, -14, 14, 14, -14, 14)
+
+[node name="Strap" type="Line2D" parent="."]
+points = PackedVector2Array(-14, 0, 14, 0)
+width = 4.0
+default_color = Color(0.34, 0.26, 0.15, 1)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+shape = SubResource("Rect_crate")

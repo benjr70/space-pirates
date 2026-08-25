@@ -1,0 +1,17 @@
+[gd_scene load_steps=2 format=3]
+
+[sub_resource type="RectangleShape2D" id="Rect_console"]
+size = Vector2(94, 30)
+
+[node name="PropConsole" type="StaticBody2D"]
+
+[node name="Body" type="Polygon2D" parent="."]
+color = Color(0.2, 0.24, 0.31, 1)
+polygon = PackedVector2Array(-47, -15, 47, -15, 47, 15, -47, 15)
+
+[node name="Screen" type="Polygon2D" parent="."]
+color = Color(0.22, 0.75, 0.9, 1)
+polygon = PackedVector2Array(-40, -10, 40, -10, 40, 2, -40, 2)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+shape = SubResource("Rect_console")

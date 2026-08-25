@@ -1,0 +1,17 @@
+[gd_scene load_steps=2 format=3]
+
+[sub_resource type="RectangleShape2D" id="Rect_pod"]
+size = Vector2(30, 94)
+
+[node name="PropCryoPod" type="StaticBody2D"]
+
+[node name="Body" type="Polygon2D" parent="."]
+color = Color(0.24, 0.31, 0.38, 1)
+polygon = PackedVector2Array(-15, -47, 15, -47, 15, 47, -15, 47)
+
+[node name="Glass" type="Polygon2D" parent="."]
+color = Color(0.42, 0.72, 0.82, 0.75)
+polygon = PackedVector2Array(-9, -38, 9, -38, 9, 38, -9, 38)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+shape = SubResource("Rect_pod")
