@@ -188,7 +188,7 @@ func _tick_patrol() -> void:
 		_enter(State.HUNT)
 		return
 	if _path.is_empty() and _hold_timer <= 0.0:
-		_path = [_random_point_in_room(home_room)]
+		_path.append(_random_point_in_room(home_room))
 		_hold_timer = _rng.randf_range(0.8, 2.2)
 
 
@@ -260,11 +260,11 @@ func _steer(delta: float) -> void:
 
 func _repath_to(destination: Vector2) -> void:
 	_repath_timer = 0.5
-	if layout == null:
-		_path = [destination]
-		return
-	var route := ShipNavigator.waypoints(layout, global_position, destination)
-	_path = route if not route.is_empty() else [destination]
+	_path.clear()
+	if layout != null:
+		_path.assign(ShipNavigator.waypoints(layout, global_position, destination))
+	if _path.is_empty():
+		_path.append(destination)
 
 
 ## Crew work the doors they walk into; the pirate has to press E, they do not.

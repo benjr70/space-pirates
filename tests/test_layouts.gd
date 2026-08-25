@@ -272,6 +272,7 @@ func _physics_crew() -> void:
 			_expect(bystander.health.current == bystander.health.max_health,
 					"crew shot one of their own")
 			_check_cover()
+			_check_navigation()
 			_check_crew_dies()
 			_report()
 			quit(1 if failures.size() > 0 else 0)
@@ -293,6 +294,28 @@ func _check_cover() -> void:
 			"the chosen cover at %s is in the open" % spot)
 	_expect(not gunman._blocked(gunman.global_position, spot),
 			"the chosen cover at %s cannot be walked to" % spot)
+
+
+## Every way the crew build a path, including the one that used to fail on a
+## typed-array assignment the moment they gave up the chase.
+func _check_navigation() -> void:
+	var bridge := ShipBuilder.room_center_world(built_layout.rooms[0])
+	gunman._repath_to(bridge)
+	_expect(gunman._path.size() > 0, "crew could not plot a route to the bridge")
+	if gunman._path.size() > 0:
+		_expect(gunman._path[gunman._path.size() - 1].is_equal_approx(bridge),
+				"route ends at %s, not the destination" % gunman._path[gunman._path.size() - 1])
+
+	gunman._path.clear()
+	gunman._can_see = false
+	gunman._hold_timer = 0.0
+	gunman.state = Crew.State.PATROL
+	gunman._tick_patrol()
+	_expect(gunman._path.size() == 1, "patrolling crew did not pick somewhere to walk")
+
+	gunman._last_seen = bridge
+	gunman._enter(Crew.State.SEARCH)
+	_expect(gunman._path.size() > 0, "crew giving up the chase lost its route")
 
 
 func _check_crew_dies() -> void:
@@ -426,6 +449,10 @@ func _check_built_geometry(layout: ShipLayout) -> void:
 	_expect(covered == 0, "%d doorway tiles are hidden under the fog" % covered)
 
 	var fog: RoomFog = ship.get_node("Fog")
+	_expect(player.z_index > fog.z_index, "the pirate would be hidden by the fog")
+	var probe: Projectile = load("res://scenes/projectile.tscn").instantiate()
+	_expect(probe.z_index < fog.z_index, "shots draw over the fog")
+	probe.free()
 	_expect(fog.is_revealed(layout.entry_room), "entry room is still dark")
 	for i in layout.rooms.size():
 		if i != layout.entry_room:
@@ -443,6 +470,8 @@ func _check_built_geometry(layout: ShipLayout) -> void:
 		if not layout.rooms[member.home_room].rect.has_point(tile):
 			misplaced += 1
 		_expect(member.layout == layout, "crew was not handed the ship layout")
+		_expect(member.z_index < fog.z_index,
+				"crew draw over the fog and are visible in unexplored rooms")
 		# Stand them down for the movement phases below.
 		member.set_physics_process(false)
 		member.get_node("CollisionShape2D").set_deferred("disabled", true)
