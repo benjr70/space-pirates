@@ -28,6 +28,9 @@ var locked_from := -1
 var locked_to := -1
 var test_door: Door
 var test_door_data: DoorData
+var shot: Projectile
+var shot_start := Vector2.ZERO
+var shot_last := Vector2.ZERO
 var frames := 0
 var escapes := 0
 
@@ -54,6 +57,9 @@ func _physics_process(_delta: float) -> bool:
 		geometry_checked = true
 		_check_built_geometry(built_layout)
 
+	if phase == 3:
+		_physics_shooting()
+		return false
 	if phase == 2:
 		_physics_open_door()
 		return false
@@ -161,8 +167,56 @@ func _physics_locked_door() -> void:
 		var room := built_layout.room_at(ShipBuilder.world_to_tile(player.global_position))
 		_expect(room != locked_to,
 				"player walked through a locked door into room %d" % locked_to)
+		_begin_shooting_phase()
+
+
+## Stand in the middle of the cargo hold and shoot at the far wall.
+func _begin_shooting_phase() -> void:
+	var room: RoomData = built_layout.rooms[built_layout.entry_room]
+	player.global_position = ShipBuilder.room_center_world(room)
+	player.velocity = Vector2.ZERO
+	player.aim_at_mouse = false
+	player.aim_toward(player.global_position + Vector2.LEFT * 100.0)
+	_expect(player.aim_direction.is_equal_approx(Vector2.LEFT),
+			"aiming left pointed him %s" % player.aim_direction)
+	_expect(is_equal_approx(player.sprite.rotation, player.aim_direction.angle() + PI / 2.0),
+			"sprite is not turned to the aim direction")
+
+	shot = player.fire()
+	_expect(shot != null, "the pirate did not fire")
+	if shot == null:
 		_report()
 		quit(1 if failures.size() > 0 else 0)
+		return
+	_expect(player.fire() == null, "fired a second shot while still on cooldown")
+	_expect(shot.get_parent() == main.get_node("Projectiles"),
+			"shot was parented to %s, not the projectile container" % shot.get_parent())
+	_expect(absf(shot.global_position.distance_to(player.global_position) - player.muzzle_offset) < 1.0,
+			"shot spawned %s px out, expected %s" % [
+					shot.global_position.distance_to(player.global_position), player.muzzle_offset])
+	shot_start = shot.global_position
+	shot_last = shot_start
+	phase = 3
+	frames = 0
+
+
+func _physics_shooting() -> void:
+	frames += 1
+	if is_instance_valid(shot):
+		shot_last = shot.global_position
+		if frames > 120:
+			_expect(false, "shot never hit the hull; stopped tracking at %s" % shot_last)
+			_report()
+			quit(1 if failures.size() > 0 else 0)
+		return
+
+	# Gone: it struck something. The cargo hold's left wall spans x -32..0.
+	_expect(frames > 1, "shot died on its first frame, probably on the shooter")
+	_expect(shot_last.x < shot_start.x, "shot travelled the wrong way")
+	_expect(shot_last.x < 25.0 and shot_last.x > -32.0,
+			"shot stopped at x %s, not against the hull" % shot_last.x)
+	_report()
+	quit(1 if failures.size() > 0 else 0)
 
 
 func _check_rooms_disjoint(layout: ShipLayout) -> void:

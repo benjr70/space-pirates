@@ -17,4 +17,6 @@ color = Color(0.043, 0.055, 0.11, 1)
 
 [node name="Ship" type="Node2D" parent="."]
 
+[node name="Projectiles" type="Node2D" parent="." groups=["projectiles"]]
+
 [node name="Player" parent="." instance=ExtResource("2_player")]
