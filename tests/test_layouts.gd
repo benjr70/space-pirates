@@ -317,6 +317,27 @@ func _check_navigation() -> void:
 	gunman._enter(Crew.State.SEARCH)
 	_expect(gunman._path.size() > 0, "crew giving up the chase lost its route")
 
+	# The route comes back empty when the crew is stood in a doorway, because a
+	# doorway belongs to no room. That is the case that crashed in play.
+	var doorway := built_layout.doors[0].tile
+	_expect(built_layout.room_at(doorway) == -1, "doorway tile unexpectedly belongs to a room")
+	gunman.global_position = ShipBuilder.tile_to_world(doorway)
+	gunman._path.clear()
+	gunman._repath_to(bridge)
+	_expect(gunman._path.size() > 0, "crew stood in a doorway could not build a route")
+	if gunman._path.size() > 0:
+		_expect(gunman._path[gunman._path.size() - 1].is_equal_approx(bridge),
+				"doorway fallback route does not end at the destination")
+
+	# And with no layout at all it should still walk straight at the target.
+	var saved := gunman.layout
+	gunman.layout = null
+	gunman._path.clear()
+	gunman._repath_to(bridge)
+	_expect(gunman._path.size() == 1 and gunman._path[0].is_equal_approx(bridge),
+			"crew with no layout did not fall back to walking straight there")
+	gunman.layout = saved
+
 
 func _check_crew_dies() -> void:
 	var before := gunman.health.current

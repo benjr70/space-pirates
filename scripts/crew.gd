@@ -262,6 +262,7 @@ func _repath_to(destination: Vector2) -> void:
 	_repath_timer = 0.5
 	_path.clear()
 	if layout != null:
+		# Empty when the crew is stood in a doorway, which belongs to no room.
 		_path.assign(ShipNavigator.waypoints(layout, global_position, destination))
 	if _path.is_empty():
 		_path.append(destination)
