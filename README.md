@@ -1,4 +1,4 @@
-# Space Pirate
+# Space Pirates
 
 A 2D top-down space game built with [Godot 4.7](https://godotengine.org).
 
