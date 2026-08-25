@@ -18,6 +18,6 @@ texture = ExtResource("2_sprite")
 shape = SubResource("CircleShape2D_player")
 
 [node name="Camera2D" type="Camera2D" parent="."]
-zoom = Vector2(2, 2)
+zoom = Vector2(1.5, 1.5)
 position_smoothing_enabled = true
 position_smoothing_speed = 8.0

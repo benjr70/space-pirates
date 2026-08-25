@@ -21,7 +21,8 @@ func floor_tiles() -> Dictionary:
 			for y in range(room.rect.position.y, room.rect.end.y):
 				tiles[Vector2i(x, y)] = true
 	for door in doors:
-		tiles[door.tile] = true
+		for tile in door.tiles():
+			tiles[tile] = true
 	return tiles
 
 

@@ -3,6 +3,11 @@ extends SceneTree
 ##
 ##   flatpak run org.godotengine.Godot --headless --path . --script res://tests/test_layouts.gd
 
+## A room smaller than this cannot hold a fight -- the pirate, a couple of
+## crewmates and a few hostiles all need somewhere to move.
+const MIN_ROOM_SIZE := Vector2i(8, 6)
+const MIN_ROOM_AREA := 60
+
 var failures: Array[String] = []
 var checks := 0
 
@@ -24,6 +29,7 @@ var escapes := 0
 func _initialize() -> void:
 	var layout := PlayerShipLayout.create()
 	_check_rooms_disjoint(layout)
+	_check_rooms_fightable(layout)
 	_check_doors(layout)
 	_check_connectivity(layout)
 
@@ -68,6 +74,15 @@ func _check_rooms_disjoint(layout: ShipLayout) -> void:
 			_expect(not a.grow(1).intersects(b), "rooms %d and %d are flush; need a 1-tile wall gap" % [i, j])
 
 
+func _check_rooms_fightable(layout: ShipLayout) -> void:
+	for i in layout.rooms.size():
+		var size := layout.rooms[i].rect.size
+		_expect(size.x >= MIN_ROOM_SIZE.x and size.y >= MIN_ROOM_SIZE.y,
+				"room %d is %s tiles, below the %s minimum for a fight" % [i, size, MIN_ROOM_SIZE])
+		_expect(size.x * size.y >= MIN_ROOM_AREA,
+				"room %d has %d floor tiles, want at least %d" % [i, size.x * size.y, MIN_ROOM_AREA])
+
+
 func _check_doors(layout: ShipLayout) -> void:
 	var floor_set := {}
 	for room in layout.rooms:
@@ -78,11 +93,13 @@ func _check_doors(layout: ShipLayout) -> void:
 	for d in layout.doors:
 		_expect(d.room_a >= 0 and d.room_a < layout.rooms.size(), "door has bad room_a %d" % d.room_a)
 		_expect(d.room_b >= 0 and d.room_b < layout.rooms.size(), "door has bad room_b %d" % d.room_b)
-		_expect(not floor_set.has(d.tile), "door at %s sits on floor, not on a wall" % d.tile)
+		_expect(d.width >= 1, "door at %s has width %d" % [d.tile, d.width])
 		var ring_a: Rect2i = layout.rooms[d.room_a].rect.grow(1)
 		var ring_b: Rect2i = layout.rooms[d.room_b].rect.grow(1)
-		_expect(ring_a.has_point(d.tile) and ring_b.has_point(d.tile),
-				"door at %s is not on the wall shared by rooms %d and %d" % [d.tile, d.room_a, d.room_b])
+		for tile in d.tiles():
+			_expect(not floor_set.has(tile), "doorway tile %s sits on floor, not on a wall" % tile)
+			_expect(ring_a.has_point(tile) and ring_b.has_point(tile),
+					"doorway tile %s is not on the wall shared by rooms %d and %d" % [tile, d.room_a, d.room_b])
 
 
 func _check_connectivity(layout: ShipLayout) -> void:

@@ -78,7 +78,8 @@ static func build(layout: ShipLayout, parent: Node2D) -> void:
 				floor_layer.set_cell(Vector2i(x, y), SOURCE_ID, atlas)
 
 	for door in layout.doors:
-		floor_layer.set_cell(door.tile, SOURCE_ID, DOOR_FLOOR_ATLAS)
+		for tile in door.tiles():
+			floor_layer.set_cell(tile, SOURCE_ID, DOOR_FLOOR_ATLAS)
 
 	for tile in walls:
 		wall_layer.set_cell(tile, SOURCE_ID, wall_atlas(tile, walls))
