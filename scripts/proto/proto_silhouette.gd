@@ -17,7 +17,7 @@ extends RefCounted
 
 ## Spine x. Sections are centred here; all widths are even so mirror symmetry
 ## is exact.
-const SPINE := 40
+const SPINE := 64
 
 ## Smallest legal section: BSP may leave it unsplit, so it must clear the
 ## fightable-room floor (>=8x6 and >=60 tiles).
@@ -203,8 +203,45 @@ static func _env_at(arch: StringName, t: float) -> float:
 	return 1.0
 
 
+## Class is room count (#2); footprint falls out of it. Roll the count in the
+## class band, size the hull from it, and reroll the whole ship if the packed
+## count still lands outside the band (#5, Q1 + Q3 fallback).
+const ROOM_BAND := {&"small": Vector2i(4, 6), &"medium": Vector2i(8, 11), &"large": Vector2i(14, 18)}
+const ROOM_TARGET := 175   # mean of the 140–220 band
+const SKELETON_OVERHEAD := 1.15   # corridor + shared walls
+const FIGHT_CORE := 10
+const FLOOR_AREA := 140
+const CEILING_AREA := 260
+const MAX_REROLLS := 8
+
+
 static func _hull_pack(ship_class: StringName, rng: RandomNumberGenerator) -> Dictionary:
-	var target: int = AREA[ship_class] * rng.randf_range(0.9, 1.1)
+	var band: Vector2i = ROOM_BAND[ship_class]
+	var want := rng.randi_range(band.x, band.y)
+	var scale := 1.0
+	var plan := {}
+	for attempt in MAX_REROLLS:
+		plan = _hull_pack_once(ship_class, rng, want, scale)
+		var got := 0
+		for room: Dictionary in plan.rooms:
+			if not room.get("corridor", false):
+				got += 1
+		plan.room_count = got
+		if got >= band.x and got <= band.y:
+			if attempt > 0:
+				plan.sentence += " / resize×%d" % attempt
+			return plan
+		# FEEDBACK: same count, hull area rescaled by the miss. Overheads
+		# (solid fills, nose, hub, band walls) vary per hull, so the flat
+		# allowance can't be right for every seed; this converges instead.
+		scale *= clampf(pow(float(want) / float(maxi(got, 1)), 0.6), 0.75, 1.5)
+	plan.sentence += " / OUT OF BAND after %d resizes" % MAX_REROLLS
+	return plan
+
+
+static func _hull_pack_once(ship_class: StringName, rng: RandomNumberGenerator, room_count: int,
+		area_scale := 1.0) -> Dictionary:
+	var target: int = int(room_count * ROOM_TARGET * SKELETON_OVERHEAD * area_scale * rng.randf_range(0.95, 1.05))
 
 	var arch_pool: Array[StringName] = [&"wedge", &"hammerhead", &"saucer", &"block"]
 	if ship_class != &"small":
@@ -219,7 +256,7 @@ static func _hull_pack(ship_class: StringName, rng: RandomNumberGenerator) -> Di
 			aspect = rng.randf_range(2.2, 3.0)
 		&"boomtail":
 			aspect = rng.randf_range(2.3, 3.0)
-	var beam := clampi(_even(int(round(sqrt(target / (0.8 * aspect))))), 16, 40)
+	var beam := clampi(_even(int(round(sqrt(target / (0.8 * aspect))))), 16, 56)
 	var length := maxi(int(round(target / (0.8 * beam))), 30)
 
 	var features: Array[String] = []
@@ -281,7 +318,7 @@ static func _hull_pack(ship_class: StringName, rng: RandomNumberGenerator) -> Di
 			hull_rows[y] = _merge_iv(hull_rows[y] + [Vector2i(c - mh, c + mh)])
 
 	# Fore-aft bands: [prongs] wall bridge wall mid wall engine.
-	var bridge_len := rng.randi_range(7, 12)
+	var bridge_len := rng.randi_range(10, 14)
 	var engine_len := rng.randi_range(8, 13)
 	var prong_len := 0
 	var notch_w := 0
@@ -293,7 +330,12 @@ static func _hull_pack(ship_class: StringName, rng: RandomNumberGenerator) -> Di
 		prong_len = clampi(int(length * rng.randf_range(0.12, 0.2)), 6, 14)
 		notch_w = rng.randi_range(2, 4) * 2
 		notch_c = SPINE + rng.randi_range(-5, 5)
+	# BRIDGE AFT OF THE TAPER (#5, Q4): the Skeleton's fore end starts at the
+	# first row where the hull is >= 12 wide, so the Bridge can hold a 10x10
+	# fight core. Rows forward of it are solid nose (or prong notches).
 	var b0 := prong_len + 1 if prong_len > 0 else 0
+	while b0 < length - 1 and _row_width(hull_rows[b0]) < 12:
+		b0 += 1
 	var m0 := b0 + bridge_len + 1
 	var m1 := length - engine_len - 1
 	while m1 - m0 < 14:
@@ -343,7 +385,7 @@ static func _hull_pack(ship_class: StringName, rng: RandomNumberGenerator) -> Di
 			skeleton = &"chain"
 		elif roll < 0.45 and beam >= 28:
 			skeleton = &"ring"
-	if skeleton == &"ring" and m1 - m0 < 22:
+	if skeleton == &"ring" and m1 - m0 < 26:
 		skeleton = &"spine"
 
 	var hub_half := 0
@@ -351,9 +393,12 @@ static func _hull_pack(ship_class: StringName, rng: RandomNumberGenerator) -> Di
 	var hub_y1 := 0
 	var core := Rect2i()
 	if skeleton == &"ring":
-		var core_half := rng.randi_range(4, 6)
+		# Core is the Bridge and must clear the floor: 10-12 wide, 14-16 long.
+		# Flanks outboard of the ring only survive where the hull is wide
+		# enough; thin ones are filled solid by the sliver rule (#5, Q6).
+		var core_half := rng.randi_range(5, 6)
 		hub_half = core_half + 4
-		var core_len := rng.randi_range(8, 12)
+		var core_len := rng.randi_range(14, 16)
 		hub_y0 = m0 + (m1 - m0 - core_len - 8) / 2
 		hub_y1 = hub_y0 + core_len + 8
 		core = Rect2i(cx - core_half, hub_y0 + 4, core_half * 2, core_len)
@@ -400,9 +445,9 @@ static func _hull_pack(ship_class: StringName, rng: RandomNumberGenerator) -> Di
 
 	if skeleton == &"chain":
 		var y := m0
-		while m1 - y >= 6:
-			var band_len := mini(rng.randi_range(6, 15), m1 - y)
-			if m1 - (y + band_len + 1) < 6:
+		while m1 - y >= 10:
+			var band_len := mini(rng.randi_range(10, 20), m1 - y)
+			if m1 - (y + band_len + 1) < 10:
 				band_len = m1 - y
 			var role: StringName = SIDE_ROLES[rng.randi_range(0, 3)]
 			for comp: Dictionary in _components(region_tiles.call(y, y + band_len, neg_inf, pos_inf)):
@@ -421,7 +466,7 @@ static func _hull_pack(ship_class: StringName, rng: RandomNumberGenerator) -> Di
 			for x in range(carve.position.x, carve.end.x):
 				for y2 in range(carve.position.y, carve.end.y):
 					corr.erase(Vector2i(x, y2))
-		rooms.append({tiles = corr, role = &"medbay"})
+		rooms.append({tiles = corr, role = &"medbay", corridor = true})
 		seeded.append({tile = Vector2i(cx - 1, m0 - 1), horizontal = true, width = 2})
 		seeded.append({tile = Vector2i(cx - 1, m1), horizontal = true, width = 2})
 		if skeleton == &"ring":
@@ -433,20 +478,22 @@ static func _hull_pack(ship_class: StringName, rng: RandomNumberGenerator) -> Di
 			seeded.append({tile = Vector2i(cx - 1, core.position.y - 1), horizontal = true, width = 2})
 			seeded.append({tile = Vector2i(cx - 1, core.end.y), horizontal = true, width = 2})
 
-		# ASYMMETRY: flanks are banded independently AND in different styles —
-		# one side can be a few big bays while the other is a run of cabins.
+		# ASYMMETRY: flanks are banded independently AND in different styles.
+		# BAYS ONLY (#5, Q2): every band is >= 10 deep so it can hold a 10x10
+		# fight core; the cabin-run style (6-9 deep) is gone. "Uneven flanks"
+		# is now short bays vs long bays, not cabins vs bays.
 		var styles: Array[Vector2i] = []
 		for k in 2:
-			styles.append(Vector2i(6, 9) if rng.randf() < 0.5 else Vector2i(11, 17))
+			styles.append(Vector2i(10, 13) if rng.randf() < 0.5 else Vector2i(14, 20))
 		if styles[0] != styles[1]:
 			features.append("uneven flanks")
 		for side_i in 2:
 			var sgn: int = -1 if side_i == 0 else 1
 			var style: Vector2i = styles[side_i]
 			var y := m0
-			while m1 - y >= 6:
+			while m1 - y >= 10:
 				var band_len := mini(rng.randi_range(style.x, style.y), m1 - y)
-				if m1 - (y + band_len + 1) < 6:
+				if m1 - (y + band_len + 1) < 10:
 					band_len = m1 - y
 				var band_end := y + band_len
 				var side_tiles: Dictionary
@@ -498,16 +545,44 @@ static func _hull_pack(ship_class: StringName, rng: RandomNumberGenerator) -> Di
 	for comp: Dictionary in _components(eng):
 		rooms.append({tiles = comp, role = &"engine"})
 
+	# CEILING (#5, Q5): a Room over 260 tiles is split along its long axis if
+	# both halves still clear the floor.
+	var split_count := _split_big(rooms)
+	if split_count > 0:
+		features.append("split×%d" % split_count)
+
+	# SLIVER RULE (#5, Q3): a Room that fails the fightable floor is merged
+	# into the neighbour it shares the longest wall with (never the corridor),
+	# and whatever still fails is filled solid — machinery bulk behind the
+	# hull plating.
+	var repair := _repair_slivers(rooms)
+	if repair.merged > 0:
+		features.append("merged×%d" % repair.merged)
+	if repair.filled > 0:
+		features.append("solid×%d" % repair.filled)
+	var fit := _fit_count(rooms, ROOM_BAND[ship_class])
+	if fit.split > 0:
+		features.append("fit-split×%d" % fit.split)
+	if fit.merged > 0:
+		features.append("fit-merge×%d" % fit.merged)
+
 	# STITCH: union-find over seeded doors, then punch extra doors through
 	# shared walls until every room is reachable. Guarantees connectivity for
 	# any hull the mass union produced.
 	var doors := _stitch(rooms, seeded, rng)
+	var stranded := 0
+	for room: Dictionary in rooms:
+		if room.get("stranded", false):
+			stranded += 1
+	if stranded > 0:
+		features.append("stranded×%d" % stranded)
 
 	var out_rooms: Array[Dictionary] = []
 	for room: Dictionary in rooms:
 		if room.tiles.is_empty():
 			continue
-		out_rooms.append({rects = _rects_from_tiles(room.tiles), role = room.role})
+		out_rooms.append({rects = _rects_from_tiles(room.tiles), role = room.role,
+				corridor = room.get("corridor", false)})
 
 	var sentence := "%s / %s" % [arch, skeleton]
 	if not features.is_empty():
@@ -614,9 +689,9 @@ static func _stitch(rooms: Array[Dictionary], seeded: Array[Dictionary],
 			# Unreachable rooms: delete them rather than strand the walker.
 			var main: int = find.call(0)
 			for i in rooms.size():
-				if find.call(i) != main:
+				if find.call(i) != main and not rooms[i].tiles.is_empty():
 					rooms[i].tiles = {}
-			push_warning("proto stitch: deleted unreachable rooms")
+					rooms[i].stranded = true
 			break
 		var pick: Dictionary = cands[rng.randi_range(0, cands.size() - 1)]
 		var across := Vector2i(0, 1) if pick.horizontal else Vector2i(1, 0)
@@ -634,6 +709,206 @@ static func _stitch(rooms: Array[Dictionary], seeded: Array[Dictionary],
 		doors.append({tile = tile, horizontal = pick.horizontal, width = width})
 		parent[find.call(pick.a)] = find.call(pick.b)
 	return doors
+
+
+## Widest single interval on a hull row.
+static func _row_width(ivs: Array) -> int:
+	var w := 0
+	for iv: Vector2i in ivs:
+		w = maxi(w, iv.y - iv.x)
+	return w
+
+
+## Side of the largest axis-aligned square inside the tile set.
+static func _largest_square(tiles: Dictionary) -> int:
+	var best := 0
+	var memo := {}
+	var keys: Array = tiles.keys()
+	keys.sort_custom(func(a: Vector2i, b: Vector2i) -> bool: return a.y < b.y or (a.y == b.y and a.x < b.x))
+	for t: Vector2i in keys:
+		var v: int = 1 + mini(memo.get(t + Vector2i.UP, 0),
+				mini(memo.get(t + Vector2i.LEFT, 0), memo.get(t + Vector2i(-1, -1), 0)))
+		memo[t] = v
+		best = maxi(best, v)
+	return best
+
+
+## The fightable floor from #12: inscribed 10x10 core AND >= 140 tiles.
+static func _passes_floor(tiles: Dictionary) -> bool:
+	return tiles.size() >= FLOOR_AREA and _largest_square(tiles) >= FIGHT_CORE
+
+
+## Try to cut one Room along the long axis of its bounding box (a few
+## offsets) so every piece clears the floor. Returns the pieces, or [] if no
+## cut works.
+static func _try_split(tiles: Dictionary) -> Array[Dictionary]:
+	var b := _bounds(tiles)
+	var along_x: bool = b.size.x >= b.size.y
+	var mid: int = (b.position.x + b.end.x) / 2 if along_x else (b.position.y + b.end.y) / 2
+	for off: int in [0, -1, 1, -2, 2, -3, 3]:
+		var cut := mid + off
+		var rest := {}
+		for t: Vector2i in tiles:
+			if (t.x if along_x else t.y) != cut:
+				rest[t] = true
+		var parts := _components(rest)
+		if parts.size() < 2:
+			continue
+		var all_ok := true
+		for p: Dictionary in parts:
+			if not _passes_floor(p):
+				all_ok = false
+				break
+		if all_ok:
+			return parts
+	return []
+
+
+## Rooms over the ceiling are cut if every resulting piece clears the floor.
+static func _split_big(rooms: Array[Dictionary]) -> int:
+	var count := 0
+	var i := 0
+	while i < rooms.size():
+		var room: Dictionary = rooms[i]
+		i += 1
+		if room.get("corridor", false) or room.tiles.size() <= CEILING_AREA:
+			continue
+		var parts := _try_split(room.tiles)
+		if parts.is_empty():
+			continue
+		room.tiles = parts[0]
+		for k in range(1, parts.size()):
+			rooms.append({tiles = parts[k], role = room.role})
+		count += 1
+	return count
+
+
+## Merge Room i into the neighbour it shares the longest wall with (never the
+## corridor, never over `cap`). The shared wall tiles become floor. Returns
+## false if no neighbour qualifies.
+static func _merge_into_neighbour(rooms: Array[Dictionary], i: int, cap: int) -> bool:
+	var owner := _owner_map(rooms)
+	var shared := {}
+	for t: Vector2i in rooms[i].tiles:
+		for step: Vector2i in [Vector2i.UP, Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT]:
+			var w := t + step
+			if owner.has(w):
+				continue
+			var j: int = owner.get(w + step, -1)
+			if j < 0 or j == i or rooms[j].get("corridor", false):
+				continue
+			if not shared.has(j):
+				shared[j] = {}
+			shared[j][w] = true
+	var best := -1
+	var best_len := 0
+	for j: int in shared:
+		var n: int = shared[j].size()
+		if n >= 3 and n > best_len and rooms[i].tiles.size() + rooms[j].tiles.size() + n <= cap:
+			best = j
+			best_len = n
+	if best < 0:
+		return false
+	for t: Vector2i in rooms[i].tiles:
+		rooms[best].tiles[t] = true
+	for w: Vector2i in shared[best]:
+		rooms[best].tiles[w] = true
+	rooms[i].tiles = {}
+	return true
+
+
+## Merge failing patches into a neighbour; fill whatever still fails solid.
+static func _repair_slivers(rooms: Array[Dictionary]) -> Dictionary:
+	var merged := 0
+	var filled := 0
+	var changed := true
+	while changed:
+		changed = false
+		# Smallest failing patch first, so slivers glue onto real Rooms
+		# rather than onto each other's failures.
+		var failing: Array[int] = []
+		for i in rooms.size():
+			if not rooms[i].tiles.is_empty() and not rooms[i].get("corridor", false) \
+					and not _passes_floor(rooms[i].tiles):
+				failing.append(i)
+		failing.sort_custom(func(a: int, b: int) -> bool: return rooms[a].tiles.size() < rooms[b].tiles.size())
+		for i in failing:
+			if _merge_into_neighbour(rooms, i, CEILING_AREA):
+				merged += 1
+				changed = true
+				break
+	for room: Dictionary in rooms:
+		if not room.tiles.is_empty() and not room.get("corridor", false) and not _passes_floor(room.tiles):
+			room.tiles = {}
+			filled += 1
+	return {merged = merged, filled = filled}
+
+
+## COUNT FIT (#5, Q1): under the band, split the largest Rooms; over it, merge
+## the smallest into a neighbour. Returns {split, merged}; the caller rerolls
+## only if the count is still out.
+static func _fit_count(rooms: Array[Dictionary], band: Vector2i) -> Dictionary:
+	var split := 0
+	var merged := 0
+	var guard := 40
+	while guard > 0:
+		guard -= 1
+		var live: Array[int] = []
+		for i in rooms.size():
+			if not rooms[i].tiles.is_empty() and not rooms[i].get("corridor", false):
+				live.append(i)
+		live.sort_custom(func(a: int, b: int) -> bool: return rooms[a].tiles.size() > rooms[b].tiles.size())
+		if live.size() < band.x:
+			var done := false
+			for i in live:
+				var parts := _try_split(rooms[i].tiles)
+				if parts.is_empty():
+					continue
+				rooms[i].tiles = parts[0]
+				for k in range(1, parts.size()):
+					rooms.append({tiles = parts[k], role = rooms[i].role})
+				split += 1
+				done = true
+				break
+			if not done:
+				break
+		elif live.size() > band.y:
+			live.reverse()
+			var done := false
+			for cap: int in [CEILING_AREA, CEILING_AREA + 60]:
+				for i in live:
+					if _merge_into_neighbour(rooms, i, cap):
+						merged += 1
+						done = true
+						break
+				if done:
+					break
+			if not done:
+				break
+		else:
+			break
+	return {split = split, merged = merged}
+
+
+static func _owner_map(rooms: Array[Dictionary]) -> Dictionary:
+	var owner := {}
+	for i in rooms.size():
+		for t: Vector2i in rooms[i].tiles:
+			owner[t] = i
+	return owner
+
+
+static func _bounds(tiles: Dictionary) -> Rect2i:
+	var x0 := 1 << 30
+	var y0 := 1 << 30
+	var x1 := -(1 << 30)
+	var y1 := -(1 << 30)
+	for t: Vector2i in tiles:
+		x0 = mini(x0, t.x)
+		y0 = mini(y0, t.y)
+		x1 = maxi(x1, t.x + 1)
+		y1 = maxi(y1, t.y + 1)
+	return Rect2i(x0, y0, x1 - x0, y1 - y0)
 
 
 ## Split a tile set into 4-connected components.
