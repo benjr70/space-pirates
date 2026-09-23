@@ -2,7 +2,13 @@ extends Node3D
 ## PROTOTYPE — walk the shared cover-and-sightline vocabulary (issue #13).
 ##
 ##   flatpak run org.godotengine.Godot --path . res://scenes/proto_cover_walk.tscn \
-##       -- seed=1 bare=0
+##       -- seed=1 bare=0 density=2
+##
+## density=1 was walked first and NOT FELT against bare=1: one crate per
+## doorway and seven along the corridor vanish in first person. density=2
+## makes every breaker an L of crates and every corridor alcove a pair, and
+## adds free-standing cover islands scaled to Room area; density=3 doubles
+## the islands. The knob is the question now.
 ##
 ## Four packed Rooms and a corridor, furnished by ONE generic rule set that
 ## every Role interior generator would inherit. No Role flavour: the question
@@ -36,6 +42,7 @@ const CORE_ISLANDS := 2
 
 var walk_seed := 1
 var bare := false
+var density := 2
 var _rng := RandomNumberGenerator.new()
 ## Room index -> {tile: char}, for the ASCII plan.
 var _plan := {}
@@ -61,6 +68,8 @@ func _ready() -> void:
 				walk_seed = int(kv[1])
 			"bare":
 				bare = int(kv[1]) != 0
+			"density":
+				density = int(kv[1])
 	_rng.seed = walk_seed
 
 	var layout := _make_layout()
@@ -73,7 +82,7 @@ func _ready() -> void:
 	_spawn_extras(main, layout)
 	_place_crew(main, layout)
 	_print_plan(layout)
-	print("cover walk seed=%d bare=%s" % [walk_seed, bare])
+	print("cover walk seed=%d bare=%s density=%d" % [walk_seed, bare, density])
 
 
 # ---------------------------------------------------------------------------
@@ -241,6 +250,12 @@ func _rule_breakers(layout: ShipLayout, index: int, openings: Array[Opening]) ->
 			var tile: Vector2i = base + o.lateral * (BREAKER_SIDESTEP * attempt)
 			if _add_prop(layout, index, &"crate", tile, "#", ONE):
 				_breakers[index][tile] = true
+				if density >= 2:
+					# An L: one more crate deeper in, one further to the side,
+					# so the breaker reads as a piece of furniture, not a pebble.
+					for extra: Vector2i in [tile + o.normal, tile + o.lateral * signi(attempt)]:
+						if _add_prop(layout, index, &"crate", extra, "#", ONE):
+							_breakers[index][extra] = true
 				placed = true
 				break
 		if not placed:
@@ -352,12 +367,41 @@ func _rule_core_budget(layout: ShipLayout, index: int) -> void:
 		push_warning("room %d: %d prop islands inside the Fight Core (budget %d)" % [index, islands, CORE_ISLANDS])
 
 
+## Rule 9: islands. Free-standing cover in the open floor, one per ~70 tiles
+## at density 2 and ~35 at density 3, placed at least 3 tiles from any other
+## solid piece and outside every apron, so the middle of a big Room is not a
+## shooting gallery. Islands are crate pairs (a 2-tile block) so they read.
+func _rule_islands(layout: ShipLayout, index: int) -> void:
+	if density < 2:
+		return
+	var rect := layout.rooms[index].rect
+	var want := rect.get_area() / (70 if density == 2 else 35)
+	var placed := 0
+	for attempt in 60:
+		if placed >= want:
+			return
+		var t := Vector2i(_rng.randi_range(rect.position.x + 2, rect.end.x - 4),
+				_rng.randi_range(rect.position.y + 2, rect.end.y - 3))
+		var clear := true
+		for dx in range(-2, 4):
+			for dy in range(-2, 3):
+				var n := t + Vector2i(dx, dy)
+				if _plan[index].has(n) and _plan[index][n] != ",":
+					clear = false
+		if not clear:
+			continue
+		if _add_prop(layout, index, &"crate", t, "#", ONE):
+			_add_prop(layout, index, &"crate", t + Vector2i.RIGHT, "#", ONE)
+			placed += 1
+
+
 func _furnish_room(layout: ShipLayout, index: int, consoles: int, containers: Array) -> void:
 	var openings := _openings(layout, index)
 	_rule_aprons(layout, index, openings)
 	if not bare:
 		_rule_breakers(layout, index, openings)
 		_rule_lane_cutters(layout, index, openings)
+		_rule_islands(layout, index)
 	_rule_containers(layout, index, openings, containers)
 	_rule_wall_furniture(layout, index, consoles)
 	_rule_core_budget(layout, index)
@@ -378,8 +422,13 @@ func _furnish_corridor(layout: ShipLayout, index: int) -> void:
 	while y < rect.end.y - 1:
 		var x := rect.position.x if side == 0 else rect.end.x - 1
 		_add_prop(layout, index, &"crate", Vector2i(x, y), "#", ONE)
+		if density >= 2:
+			_add_prop(layout, index, &"crate", Vector2i(x, y + 1), "#", ONE)
+		if density >= 3:
+			var inward := 1 if side == 0 else -1
+			_add_prop(layout, index, &"crate", Vector2i(x + inward, y), "#", ONE)
 		side = 1 - side
-		y += CORRIDOR_STAGGER
+		y += CORRIDOR_STAGGER if density < 2 else CORRIDOR_STAGGER - 1
 
 
 ## Rule 7: crew spawn behind cover, deepest cover first, on the far side of the
