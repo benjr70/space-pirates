@@ -169,13 +169,19 @@ func _openings(layout: ShipLayout, index: int) -> Array[Opening]:
 	return out
 
 
-func _furnish_all(layout: ShipLayout) -> void:
+## Per-Room bookkeeping. Other prototypes reuse the rules by instancing this
+## script without adding it to the tree, calling this, then the rules.
+func _init_rooms(layout: ShipLayout) -> void:
 	for i in layout.rooms.size():
 		_plan[i] = {}
 		_extra_props[i] = []
 		_spawns[i] = []
 		_breakers[i] = {}
 		_pieces[i] = {}
+
+
+func _furnish_all(layout: ShipLayout) -> void:
+	_init_rooms(layout)
 	_furnish_corridor(layout, 0)
 	_furnish_room(layout, 1, 0, [])              # entry bay: no containers, one crew
 	_furnish_room(layout, 2, 1, [1])             # quarters: one footlocker-sized container
@@ -449,8 +455,10 @@ func _place_crew_spawns(layout: ShipLayout, index: int) -> void:
 		for c in cover:
 			if used.has(c):
 				continue
-			var nearest := _nearest_opening(c, openings)
-			var away := c + nearest.normal
+			# A rect with no doorway of its own (a multi-rect Room's annex):
+			# stand on the side of the cover away from the rect's centre.
+			var away := c + (_nearest_opening(c, openings).normal if not openings.is_empty()
+					else Vector2i((Vector2(c) - Vector2(room.rect.get_center())).sign()).clamp(Vector2i(-1, -1), Vector2i(1, 1)))
 			if _free(layout, index, away):
 				spot = away
 				used[c] = true
