@@ -3,11 +3,6 @@ extends SceneTree
 ##
 ##   flatpak run org.godotengine.Godot --headless --path . --script res://tests/test_layouts.gd
 
-## A room smaller than this cannot hold a fight -- the pirate, a couple of
-## crewmates and a few hostiles all need somewhere to move.
-const MIN_ROOM_SIZE := Vector2i(8, 6)
-const MIN_ROOM_AREA := 60
-
 var failures: Array[String] = []
 var checks := 0
 
@@ -45,6 +40,13 @@ func _initialize() -> void:
 	var layout := PlayerShipLayout.create()
 	_check_rooms_disjoint(layout)
 	_check_rooms_fightable(layout)
+	_check_ship_name(layout)
+	# The corridor rule needs a corridor Room, which the pirate ship lacks.
+	var with_corridor := RoomDataChecks.corridor_layout()
+	_check_rooms_disjoint(with_corridor)
+	_check_rooms_fightable(with_corridor)
+	_check_doors(with_corridor)
+	_check_connectivity(with_corridor)
 	_check_doors(layout)
 	_check_connectivity(layout)
 
@@ -286,9 +288,9 @@ func _physics_crew() -> void:
 ## Cover must actually be cover: something solid between it and the target, and
 ## a clear walk to it.
 func _check_cover() -> void:
-	# Crates sit around tile (1,21); stand the two of them either side.
-	player.global_position = ShipBuilder.tile_to_world(Vector2i(1, 20))
-	gunman.global_position = ShipBuilder.tile_to_world(Vector2i(1, 24))
+	# Crates sit around tile (1,27); stand the two of them either side.
+	player.global_position = ShipBuilder.tile_to_world(Vector2i(1, 26))
+	gunman.global_position = ShipBuilder.tile_to_world(Vector2i(1, 30))
 	gunman._last_seen = player.global_position
 
 	var spot: Vector2 = gunman._find_cover_point()
@@ -364,14 +366,19 @@ func _check_rooms_disjoint(layout: ShipLayout) -> void:
 					_expect(not a.grow(1).intersects(b), "rooms %d and %d are flush; need a 1-tile wall gap" % [i, j])
 
 
+## One floor for every Room: [method RoomData.meets_floor]. Non-corridor Rooms
+## hold a 10x10 Fight Core and 140 to 260 tiles; corridors are 3 wide throughout.
 func _check_rooms_fightable(layout: ShipLayout) -> void:
 	for i in layout.rooms.size():
-		var size := layout.rooms[i].bounds().size
-		var area := layout.rooms[i].area()
-		_expect(size.x >= MIN_ROOM_SIZE.x and size.y >= MIN_ROOM_SIZE.y,
-				"room %d is %s tiles, below the %s minimum for a fight" % [i, size, MIN_ROOM_SIZE])
-		_expect(area >= MIN_ROOM_AREA,
-				"room %d has %d floor tiles, want at least %d" % [i, area, MIN_ROOM_AREA])
+		var room := layout.rooms[i]
+		_expect(room.meets_floor(),
+				"room %d (%s, %s, %d tiles) fails the fightable floor" % [i, room.role, room.bounds().size, room.area()])
+
+
+## The stored name is bare; "The" is a display rule.
+func _check_ship_name(layout: ShipLayout) -> void:
+	_expect(layout.ship_name == "Pirate", "hand-authored ship stores '%s', want 'Pirate'" % layout.ship_name)
+	_expect(layout.display_name() == "The Pirate", "hand-authored ship displays as '%s'" % layout.display_name())
 
 
 func _check_doors(layout: ShipLayout) -> void:

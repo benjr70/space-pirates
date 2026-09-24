@@ -14,11 +14,19 @@ extends Resource
 ## The clear axis-aligned rectangle every non-corridor Room must contain
 ## somewhere for a first-person firefight to work. Walk-tested, not derived.
 const FIGHT_CORE := Vector2i(10, 10)
+## Fewest floor tiles a non-corridor Room may have; 10x14 is the walk-tested
+## minimum and this is its area.
+const MIN_AREA := 140
+## Most floor tiles any Room may have before it reads as a warehouse.
+const MAX_AREA := 260
+## Corridors skip the Fight Core and must be this wide along their length.
+const CORRIDOR_WIDTH := 3
 
 ## The floor: at least one rect, pairwise non-overlapping and abutting so the
 ## union is one open space.
 @export var rects: Array[Rect2i] = [Rect2i(0, 0, 4, 4)]
-## What the room is for: &"bridge", &"engine", &"cargo", &"medbay", &"quarters".
+## What the room is for: &"bridge", &"engine", &"cargo", &"medbay", &"quarters",
+## &"shield", &"armory", or &"corridor" for a Skeleton's walkway.
 @export var role: StringName = &"quarters"
 ## How many hostile crew start in this room. The generator will set this from
 ## a threat budget later.
@@ -84,6 +92,39 @@ func has_tile(tile: Vector2i) -> bool:
 func center_tile() -> Vector2:
 	var core := largest_rect()
 	return Vector2(core.position) + Vector2(core.size) / 2.0
+
+
+## The one fightable floor every Room must meet: a corridor is
+## [constant CORRIDOR_WIDTH] wide along its whole length; anything else holds
+## a [constant FIGHT_CORE] and at least [constant MIN_AREA] tiles. No Room of
+## any Role exceeds [constant MAX_AREA].
+func meets_floor() -> bool:
+	if area() > MAX_AREA:
+		return false
+	if role == &"corridor":
+		return has_clear_width(CORRIDOR_WIDTH)
+	return area() >= MIN_AREA and has_fight_core()
+
+
+## Whether every floor tile sits inside some clear `width`-square block of
+## floor: the shape is at least `width` wide everywhere, stubs included. A
+## square block is deliberately stricter than "wide": a run shorter than
+## `width` along its own length fails too, so no corridor ends in a notch.
+func has_clear_width(width: int) -> bool:
+	var floor_set := tiles()
+	var core := Vector2i(width, width)
+	for tile: Vector2i in floor_set:
+		var covered := false
+		for dx in range(width):
+			for dy in range(width):
+				if _fits_at(tile - Vector2i(dx, dy), core, floor_set):
+					covered = true
+					break
+			if covered:
+				break
+		if not covered:
+			return false
+	return true
 
 
 ## Whether a clear `core`-sized rectangle fits somewhere inside the floor

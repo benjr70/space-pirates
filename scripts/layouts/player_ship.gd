@@ -1,9 +1,9 @@
 class_name PlayerShipLayout
 extends RefCounted
 ## The pirate's own ship, hand-authored -- the same five compartments as before,
-## sized so a boarding fight has room to happen: every room holds a dozen-odd
-## combatants with space to circle, and doorways are wide enough that a fight
-## spills through them instead of queuing single file.
+## sized to the fightable floor every ship must meet: each Room holds a clear
+## 10x10 Fight Core and at least 140 tiles, and doorways are wide enough that
+## a fight spills through them instead of queuing single file.
 ##
 ## Rooms sit one tile apart so the gap between them becomes their shared wall,
 ## which is where doorways get punched. Two hatches open the hull: one on the
@@ -16,50 +16,50 @@ extends RefCounted
 
 static func create() -> ShipLayout:
 	var layout := ShipLayout.new()
-	layout.ship_name = "The Pirate"
+	layout.ship_name = "Pirate"
 	layout.rooms = [
-		_room(Rect2i(0, 0, 21, 8), &"bridge", 2, [
+		_room(Rect2i(0, 0, 21, 10), &"bridge", 2, [
 			{"type": &"console", "tile": Vector2i(10, 1)},
 			{"type": &"console", "tile": Vector2i(4, 1)},
 			{"type": &"console", "tile": Vector2i(16, 1)},
 		]),
-		_room(Rect2i(0, 9, 10, 10), &"medbay", 1, [
-			{"type": &"cryopod", "tile": Vector2i(1, 12)},
-			{"type": &"cryopod", "tile": Vector2i(8, 12)},
-			{"type": &"console", "tile": Vector2i(4, 17)},
+		_room(Rect2i(0, 11, 10, 14), &"medbay", 1, [
+			{"type": &"cryopod", "tile": Vector2i(1, 14)},
+			{"type": &"cryopod", "tile": Vector2i(8, 14)},
+			{"type": &"console", "tile": Vector2i(4, 23)},
 		]),
-		_room(Rect2i(11, 9, 10, 10), &"quarters", 2, [
-			{"type": &"cryopod", "tile": Vector2i(19, 12)},
-			{"type": &"crate", "tile": Vector2i(12, 17)},
-			{"type": &"crate", "tile": Vector2i(13, 17)},
+		_room(Rect2i(11, 11, 10, 14), &"quarters", 2, [
+			{"type": &"cryopod", "tile": Vector2i(19, 14)},
+			{"type": &"crate", "tile": Vector2i(12, 23)},
+			{"type": &"crate", "tile": Vector2i(13, 23)},
 		]),
-		_room(Rect2i(0, 20, 21, 12), &"cargo", 0, [
-			{"type": &"crate", "tile": Vector2i(1, 21)},
-			{"type": &"crate", "tile": Vector2i(2, 21)},
-			{"type": &"crate", "tile": Vector2i(1, 22)},
-			{"type": &"crate", "tile": Vector2i(19, 21)},
-			{"type": &"crate", "tile": Vector2i(19, 22)},
-			{"type": &"crate", "tile": Vector2i(2, 30)},
-			{"type": &"crate", "tile": Vector2i(3, 30)},
-			{"type": &"crate", "tile": Vector2i(18, 30)},
+		_room(Rect2i(0, 26, 21, 12), &"cargo", 0, [
+			{"type": &"crate", "tile": Vector2i(1, 27)},
+			{"type": &"crate", "tile": Vector2i(2, 27)},
+			{"type": &"crate", "tile": Vector2i(1, 28)},
+			{"type": &"crate", "tile": Vector2i(19, 27)},
+			{"type": &"crate", "tile": Vector2i(19, 28)},
+			{"type": &"crate", "tile": Vector2i(2, 36)},
+			{"type": &"crate", "tile": Vector2i(3, 36)},
+			{"type": &"crate", "tile": Vector2i(18, 36)},
 		]),
-		_room(Rect2i(0, 33, 21, 8), &"engine", 2, [
-			{"type": &"engine_console", "tile": Vector2i(5, 34)},
-			{"type": &"engine_console", "tile": Vector2i(15, 34)},
-			{"type": &"crate", "tile": Vector2i(10, 39)},
+		_room(Rect2i(0, 39, 21, 10), &"engine", 2, [
+			{"type": &"engine_console", "tile": Vector2i(5, 40)},
+			{"type": &"engine_console", "tile": Vector2i(15, 40)},
+			{"type": &"crate", "tile": Vector2i(10, 45)},
 		]),
 	]
 	layout.doors = [
-		_door(0, 1, Vector2i(3, 8), true, 3),
-		_door(0, 2, Vector2i(15, 8), true, 3),
-		_door(1, 2, Vector2i(10, 13), false, 3, true),
-		_door(1, 3, Vector2i(3, 19), true, 3),
-		_door(2, 3, Vector2i(15, 19), true, 3),
-		_door(3, 4, Vector2i(9, 32), true, 4),
+		_door(0, 1, Vector2i(3, 10), true, 3),
+		_door(0, 2, Vector2i(15, 10), true, 3),
+		_door(1, 2, Vector2i(10, 15), false, 3, true),
+		_door(1, 3, Vector2i(3, 25), true, 3),
+		_door(2, 3, Vector2i(15, 25), true, 3),
+		_door(3, 4, Vector2i(9, 38), true, 4),
 	]
 	layout.hatches = [
-		_hatch(3, Vector2i(21, 27)),
-		_hatch(1, Vector2i(-1, 15)),
+		_hatch(3, Vector2i(21, 33)),
+		_hatch(1, Vector2i(-1, 17)),
 	]
 	return layout
 

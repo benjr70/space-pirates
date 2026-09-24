@@ -13,8 +13,21 @@ extends Resource
 @export var hatches: Array[HatchData] = []
 ## Seed this ship was generated from; 0 means hand-authored.
 @export var gen_seed: int = 0
-## Display name, e.g. "Rusty Hauler".
+## The stored name, bare: "Rusty Hauler" or "ISV Rusty Hauler". Never holds
+## "The"; see [method display_name].
 @export var ship_name: String = "Unnamed"
+
+## Registry prefixes a name may carry. A prefixed ship is not "The" anything.
+const REGISTRY_PREFIXES: Array[String] = ["ISV", "MV", "FV", "RSV", "CSS"]
+
+
+## What the pirate reads: "The Rusty Hauler", or the name as stored when it
+## carries a registry prefix.
+func display_name() -> String:
+	var first := ship_name.get_slice(" ", 0)
+	if ship_name.contains(" ") and first in REGISTRY_PREFIXES:
+		return ship_name
+	return "The " + ship_name
 
 
 ## Every tile occupied by walkable floor, including door and hatch gaps.
