@@ -115,7 +115,7 @@ static func _check_floor_rule(expect: Callable) -> void:
 	room.rects = [Rect2i(0, 0, 21, 13)]
 	expect.call(not room.meets_floor(), "floor: a 21x13 room (273 tiles) passes the 260 ceiling")
 	room.role = &"corridor"
-	expect.call(not room.meets_floor(), "floor: a 273-tile corridor passes the 260 ceiling")
+	expect.call(room.meets_floor(), "floor: a 273-tile corridor is held to a ceiling a ring corridor cannot meet; corridors are exempt")
 
 
 ## Corridors are exempt from the Fight Core and instead must be at least 3

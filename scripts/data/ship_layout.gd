@@ -13,6 +13,13 @@ extends Resource
 @export var hatches: Array[HatchData] = []
 ## Seed this ship was generated from; 0 means hand-authored.
 @export var gen_seed: int = 0
+## Ship Class it was advertised and generated as: small, medium or large.
+## Empty for the hand-authored ship.
+@export var ship_class: StringName = &""
+## The one roll in [0, 1] that positions both Budgets inside their Class bands.
+@export var richness: float = 0.0
+## The generator's one-line account of its roll and repairs, for the dumper.
+@export var gen_sentence: String = ""
 ## The stored name, bare: "Rusty Hauler" or "ISV Rusty Hauler". Never holds
 ## "The"; see [method display_name].
 @export var ship_name: String = "Unnamed"

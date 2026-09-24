@@ -96,14 +96,13 @@ func center_tile() -> Vector2:
 
 ## The one fightable floor every Room must meet: a corridor is
 ## [constant CORRIDOR_WIDTH] wide along its whole length; anything else holds
-## a [constant FIGHT_CORE] and at least [constant MIN_AREA] tiles. No Room of
-## any Role exceeds [constant MAX_AREA].
+## a [constant FIGHT_CORE] and [constant MIN_AREA] to [constant MAX_AREA]
+## tiles. A corridor is a walkway, not a warehouse, so a ring or a long spine
+## may run past the ceiling.
 func meets_floor() -> bool:
-	if area() > MAX_AREA:
-		return false
 	if role == &"corridor":
 		return has_clear_width(CORRIDOR_WIDTH)
-	return area() >= MIN_AREA and has_fight_core()
+	return area() >= MIN_AREA and area() <= MAX_AREA and has_fight_core()
 
 
 ## Whether every floor tile sits inside some clear `width`-square block of
