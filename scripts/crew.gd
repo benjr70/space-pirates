@@ -365,26 +365,22 @@ func _candidate_points() -> Array[Vector2]:
 	var room := layout.room_at(ShipBuilder.world_to_tile(global_position))
 	if room == -1:
 		room = home_room
-	var rect: Rect2i = layout.rooms[room].rect
-	for x in range(rect.position.x, rect.end.x):
-		for y in range(rect.position.y, rect.end.y):
-			var point := ShipBuilder.tile_to_world(Vector2i(x, y))
-			if global_position.distance_to(point) > cover_search_radius:
-				continue
-			if _solid(point):
-				continue
-			points.append(point)
+	for tile: Vector2i in layout.rooms[room].tiles():
+		var point := ShipBuilder.tile_to_world(tile)
+		if global_position.distance_to(point) > cover_search_radius:
+			continue
+		if _solid(point):
+			continue
+		points.append(point)
 	return points
 
 
 func _random_point_in_room(room: int) -> Vector2:
 	if layout == null or room < 0 or room >= layout.rooms.size():
 		return global_position
-	var rect: Rect2i = layout.rooms[room].rect
+	var tiles := layout.rooms[room].tiles().keys()
 	for _attempt in 8:
-		var tile := Vector2i(
-				_rng.randi_range(rect.position.x, rect.end.x - 1),
-				_rng.randi_range(rect.position.y, rect.end.y - 1))
+		var tile: Vector2i = tiles[_rng.randi_range(0, tiles.size() - 1)]
 		var point := ShipBuilder.tile_to_world(tile)
 		if not _solid(point):
 			return point

@@ -9,7 +9,7 @@ static func run(expect: Callable) -> void:
 	_check_two_rects_union(expect)
 	_check_fight_core_across_seam(expect)
 	_check_fight_core_needs_union_not_bounds(expect)
-	_check_rects_win_over_rect(expect)
+	_check_center_stands_on_floor(expect)
 
 
 static func _room(rects: Array[Rect2i]) -> RoomData:
@@ -18,12 +18,11 @@ static func _room(rects: Array[Rect2i]) -> RoomData:
 	return room
 
 
-## A hand-authored Room sets only `rect`; every helper must read it as the
-## whole shape so nothing downstream changes.
+## A hand-authored Room is one rect; every helper must read it as the whole
+## shape.
 static func _check_single_rect(expect: Callable) -> void:
-	var room := RoomData.new()
-	room.rect = Rect2i(3, 5, 10, 14)
-	expect.call(room.shape() == [Rect2i(3, 5, 10, 14)], "single rect: shape is not [rect]")
+	var room := _room([Rect2i(3, 5, 10, 14)])
+	expect.call(room.shape() == [Rect2i(3, 5, 10, 14)], "single rect: shape is not the rect")
 	expect.call(room.bounds() == Rect2i(3, 5, 10, 14), "single rect: bounds differ from rect")
 	expect.call(room.area() == 140, "single rect: area %d, expected 140" % room.area())
 	expect.call(room.tiles().size() == 140, "single rect: %d tiles, expected 140" % room.tiles().size())
@@ -34,11 +33,11 @@ static func _check_single_rect(expect: Callable) -> void:
 	expect.call(room.center_tile() == Vector2(8, 12), "single rect: centre %s, expected (8, 12)" % room.center_tile())
 	expect.call(room.has_fight_core(), "10x14 room fails the Fight Core it was walk-tested to hold")
 
-	room.rect = Rect2i(0, 0, 6, 10)
+	room.rects = [Rect2i(0, 0, 6, 10)]
 	expect.call(not room.has_fight_core(), "6x10 room passes the Fight Core it was rejected on")
-	room.rect = Rect2i(0, 0, 9, 9)
+	room.rects = [Rect2i(0, 0, 9, 9)]
 	expect.call(not room.has_fight_core(), "9x9 room passes a 10x10 Fight Core")
-	room.rect = Rect2i(-4, -4, 10, 10)
+	room.rects = [Rect2i(-4, -4, 10, 10)]
 	expect.call(room.has_fight_core(), "exact 10x10 room at negative origin fails the Fight Core")
 
 
@@ -80,9 +79,12 @@ static func _check_fight_core_needs_union_not_bounds(expect: Callable) -> void:
 	expect.call(not room.has_fight_core(Vector2i(6, 11)), "L-shaped room passes a 6x11 core its arms cannot hold")
 
 
-## Once `rects` is set, the legacy `rect` no longer describes the shape.
-static func _check_rects_win_over_rect(expect: Callable) -> void:
-	var room := _room([Rect2i(20, 20, 4, 4)])
-	expect.call(not room.has_tile(Vector2i(1, 1)), "rects set: default rect still counted as floor")
-	expect.call(room.has_tile(Vector2i(21, 21)), "rects set: rects tile not counted as floor")
-	expect.call(room.center_tile() == Vector2(22, 22), "rects set: centre %s read from rect, not rects" % room.center_tile())
+## The centre is a standing spot, so it is the centre of the largest rect,
+## never the centre of a bounding box that may be wall for an L-shaped Room.
+static func _check_center_stands_on_floor(expect: Callable) -> void:
+	var room := _room([Rect2i(0, 0, 10, 5), Rect2i(0, 5, 5, 12)])
+	expect.call(room.center_tile() == Vector2(2.5, 11), "L: centre %s, expected the bigger arm's centre (2.5, 11)" % room.center_tile())
+	expect.call(room.has_tile(Vector2i(room.center_tile().floor())), "L: centre tile is not floor")
+
+	var alcove := _room([Rect2i(10, 0, 6, 4), Rect2i(0, 0, 10, 10)])
+	expect.call(alcove.center_tile() == Vector2(5, 5), "block + alcove: centre %s, expected the block's (5, 5)" % alcove.center_tile())

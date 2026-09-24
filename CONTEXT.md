@@ -14,11 +14,19 @@ generated from a seed is not a distinction anything downstream cares about.
 
 One compartment of a ship, described in tile coordinates. A Room's floor is its
 walkable area; the wall ring around it is implied. Hand-authored Rooms are
-single rectangles; generated Rooms may be a union of abutting rects forming one
-open space, clipped against the Hull.
+usually single rectangles; any Room may be a union of abutting rects forming
+one open space (generated ones are clipped against the Hull).
 
 Every non-corridor Room must clear the Fight Core floor — the minimum was
 walk-tested in first person, not derived on paper.
+
+## Seam
+
+The shared edge between two abutting rects of the same Room. A Seam is open
+floor, never wall: the builder walls the ring around each rect and then
+removes anything that is floor, so the Seam disappears into the Room. Each rect
+is convex, so crew steer straight inside one and cross a Seam at a chosen
+point when their route needs the neighbouring rect.
 
 ## Fight Core
 

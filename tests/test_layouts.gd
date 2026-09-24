@@ -354,39 +354,44 @@ func _check_crew_dies() -> void:
 func _check_rooms_disjoint(layout: ShipLayout) -> void:
 	for i in layout.rooms.size():
 		for j in range(i + 1, layout.rooms.size()):
-			var a := layout.rooms[i].rect
-			var b := layout.rooms[j].rect
-			_expect(not a.intersects(b), "rooms %d and %d overlap (%s / %s)" % [i, j, a, b])
-			# Rooms must also not touch, or they would share no wall tile.
-			_expect(not a.grow(1).intersects(b), "rooms %d and %d are flush; need a 1-tile wall gap" % [i, j])
+			for a in layout.rooms[i].shape():
+				for b in layout.rooms[j].shape():
+					_expect(not a.intersects(b), "rooms %d and %d overlap (%s / %s)" % [i, j, a, b])
+					# Rooms must also not touch, or they would share no wall tile.
+					_expect(not a.grow(1).intersects(b), "rooms %d and %d are flush; need a 1-tile wall gap" % [i, j])
 
 
 func _check_rooms_fightable(layout: ShipLayout) -> void:
 	for i in layout.rooms.size():
-		var size := layout.rooms[i].rect.size
+		var size := layout.rooms[i].bounds().size
+		var area := layout.rooms[i].area()
 		_expect(size.x >= MIN_ROOM_SIZE.x and size.y >= MIN_ROOM_SIZE.y,
 				"room %d is %s tiles, below the %s minimum for a fight" % [i, size, MIN_ROOM_SIZE])
-		_expect(size.x * size.y >= MIN_ROOM_AREA,
-				"room %d has %d floor tiles, want at least %d" % [i, size.x * size.y, MIN_ROOM_AREA])
+		_expect(area >= MIN_ROOM_AREA,
+				"room %d has %d floor tiles, want at least %d" % [i, area, MIN_ROOM_AREA])
 
 
 func _check_doors(layout: ShipLayout) -> void:
 	var floor_set := {}
 	for room in layout.rooms:
-		for x in range(room.rect.position.x, room.rect.end.x):
-			for y in range(room.rect.position.y, room.rect.end.y):
-				floor_set[Vector2i(x, y)] = true
+		floor_set.merge(room.tiles())
 
 	for d in layout.doors:
 		_expect(d.room_a >= 0 and d.room_a < layout.rooms.size(), "door has bad room_a %d" % d.room_a)
 		_expect(d.room_b >= 0 and d.room_b < layout.rooms.size(), "door has bad room_b %d" % d.room_b)
 		_expect(d.width >= 1, "door at %s has width %d" % [d.tile, d.width])
-		var ring_a: Rect2i = layout.rooms[d.room_a].rect.grow(1)
-		var ring_b: Rect2i = layout.rooms[d.room_b].rect.grow(1)
 		for tile in d.tiles():
 			_expect(not floor_set.has(tile), "doorway tile %s sits on floor, not on a wall" % tile)
-			_expect(ring_a.has_point(tile) and ring_b.has_point(tile),
+			_expect(_on_wall_ring(layout.rooms[d.room_a], tile) and _on_wall_ring(layout.rooms[d.room_b], tile),
 					"doorway tile %s is not on the wall shared by rooms %d and %d" % [tile, d.room_a, d.room_b])
+
+
+## Whether `tile` lies in the one-tile ring around any rect of the room.
+func _on_wall_ring(room: RoomData, tile: Vector2i) -> bool:
+	for rect in room.shape():
+		if rect.grow(1).has_point(tile):
+			return true
+	return false
 
 
 func _check_connectivity(layout: ShipLayout) -> void:
@@ -490,7 +495,7 @@ func _check_built_geometry(layout: ShipLayout) -> void:
 	var misplaced := 0
 	for member in crew_holder.get_children():
 		var tile := ShipBuilder.world_to_tile(member.global_position)
-		if not layout.rooms[member.home_room].rect.has_point(tile):
+		if not layout.rooms[member.home_room].has_tile(tile):
 			misplaced += 1
 		_expect(member.layout == layout, "crew was not handed the ship layout")
 		_expect(member.z_index < fog.z_index,

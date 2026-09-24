@@ -17,9 +17,7 @@ extends Resource
 func floor_tiles() -> Dictionary:
 	var tiles := {}
 	for room in rooms:
-		for x in range(room.rect.position.x, room.rect.end.x):
-			for y in range(room.rect.position.y, room.rect.end.y):
-				tiles[Vector2i(x, y)] = true
+		tiles.merge(room.tiles())
 	for door in doors:
 		for tile in door.tiles():
 			tiles[tile] = true
@@ -29,6 +27,6 @@ func floor_tiles() -> Dictionary:
 ## Which room contains a tile, or -1. Linear scan -- ships have tens of rooms.
 func room_at(tile: Vector2i) -> int:
 	for i in rooms.size():
-		if rooms[i].rect.has_point(tile):
+		if rooms[i].has_tile(tile):
 			return i
 	return -1

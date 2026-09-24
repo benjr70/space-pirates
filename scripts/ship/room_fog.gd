@@ -28,20 +28,26 @@ func setup(layout: ShipLayout) -> void:
 			doorways[tile] = true
 
 	for i in layout.rooms.size():
-		# Grown by one so a room's walls stay hidden with it.
-		var rect := layout.rooms[i].rect.grow(1)
+		# Each rect grown by one so a room's walls stay hidden with it.
 		var holder := Node2D.new()
 		add_child(holder)
-		for y in range(rect.position.y, rect.end.y):
-			_shade_row(holder, rect, y, doorways)
+		var covered := {}
+		for part in layout.rooms[i].shape():
+			var rect := part.grow(1)
+			for y in range(rect.position.y, rect.end.y):
+				_shade_row(holder, rect, y, doorways, covered)
 		_overlays[i] = holder
 
 
-## Covers one row of a room as a few wide strips, broken wherever a doorway sits.
-func _shade_row(holder: Node2D, rect: Rect2i, y: int, doorways: Dictionary) -> void:
+## Covers one row of a rect as a few wide strips, broken wherever a doorway
+## sits or a tile is already shaded by a sibling rect of the same room.
+func _shade_row(holder: Node2D, rect: Rect2i, y: int, doorways: Dictionary, covered: Dictionary) -> void:
 	var run_start := -1
 	for x in range(rect.position.x, rect.end.x + 1):
-		var shaded := x < rect.end.x and not doorways.has(Vector2i(x, y))
+		var tile := Vector2i(x, y)
+		var shaded := x < rect.end.x and not doorways.has(tile) and not covered.has(tile)
+		if shaded:
+			covered[tile] = true
 		if shaded and run_start == -1:
 			run_start = x
 		elif not shaded and run_start != -1:

@@ -82,9 +82,8 @@ static func build(layout: ShipLayout, parent: Node2D) -> void:
 
 	for room in layout.rooms:
 		var atlas: Vector2i = FLOOR_ATLAS.get(room.role, DEFAULT_FLOOR_ATLAS)
-		for x in range(room.rect.position.x, room.rect.end.x):
-			for y in range(room.rect.position.y, room.rect.end.y):
-				floor_layer.set_cell(Vector2i(x, y), SOURCE_ID, atlas)
+		for tile: Vector2i in room.tiles():
+			floor_layer.set_cell(tile, SOURCE_ID, atlas)
 
 	for door in layout.doors:
 		for tile in door.tiles():
@@ -129,18 +128,20 @@ static func build(layout: ShipLayout, parent: Node2D) -> void:
 	fog.setup(layout)
 
 
-## Every tile that should hold wall: the one-tile ring around each room, minus
-## anything that is floor somewhere (which is what makes two rooms placed a tile
-## apart end up sharing a single wall between them).
+## Every tile that should hold wall: the one-tile ring around each rect of each
+## room, minus anything that is floor somewhere (which is what makes two rooms
+## placed a tile apart share a single wall, and leaves the seam between a
+## room's own rects open).
 static func wall_tiles(layout: ShipLayout, floors: Dictionary) -> Dictionary:
 	var walls := {}
 	for room in layout.rooms:
-		var ring := room.rect.grow(1)
-		for x in range(ring.position.x, ring.end.x):
-			for y in range(ring.position.y, ring.end.y):
-				var tile := Vector2i(x, y)
-				if not floors.has(tile):
-					walls[tile] = true
+		for rect in room.shape():
+			var ring := rect.grow(1)
+			for x in range(ring.position.x, ring.end.x):
+				for y in range(ring.position.y, ring.end.y):
+					var tile := Vector2i(x, y)
+					if not floors.has(tile):
+						walls[tile] = true
 	return walls
 
 
@@ -159,10 +160,16 @@ static func wall_atlas(tile: Vector2i, walls: Dictionary) -> Vector2i:
 
 
 ## Spreads crew across a room, keeping clear of the tiles its props sit on.
+## A multi-rect room deals crew round-robin across its rects, so a crew of
+## any size straddles the seams.
 static func crew_spawn_position(room: RoomData, index: int) -> Vector2:
-	var inner := room.rect.grow(-1)
+	var parts := room.shape()
+	var rect: Rect2i = parts[index % parts.size()]
+	@warning_ignore("integer_division")
+	index = index / parts.size()
+	var inner := rect.grow(-1)
 	if inner.size.x < 1 or inner.size.y < 1:
-		inner = room.rect
+		inner = rect
 
 	var taken := {}
 	for prop in room.props:

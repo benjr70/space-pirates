@@ -7,20 +7,17 @@ extends Resource
 ## should share a wall are placed with exactly one tile of gap between them;
 ## that gap tile becomes the shared wall.
 ##
-## Hand-authored Rooms set only [member rect]. Generated Rooms list their
-## maximal-rect decomposition in [member rects] instead. Read the shape through
-## [method shape] and the helpers below, never off either field directly.
+## Hand-authored Rooms usually list one rect; generated Rooms list their
+## maximal-rect decomposition. Read the shape through [method shape] and the
+## helpers below.
 
 ## The clear axis-aligned rectangle every non-corridor Room must contain
 ## somewhere for a first-person firefight to work. Walk-tested, not derived.
 const FIGHT_CORE := Vector2i(10, 10)
 
-## Single-rect floor. Retained through the multi-rect migration; ignored the
-## moment [member rects] is non-empty.
-@export var rect: Rect2i = Rect2i(0, 0, 4, 4)
-## Multi-rect floor: at least one rect once set, pairwise non-overlapping and
-## abutting so the union is one open space. Empty means "just `rect`".
-@export var rects: Array[Rect2i] = []
+## The floor: at least one rect, pairwise non-overlapping and abutting so the
+## union is one open space.
+@export var rects: Array[Rect2i] = [Rect2i(0, 0, 4, 4)]
 ## What the room is for: &"bridge", &"engine", &"cargo", &"medbay", &"quarters".
 @export var role: StringName = &"quarters"
 ## How many hostile crew start in this room. The generator will set this from
@@ -31,12 +28,20 @@ const FIGHT_CORE := Vector2i(10, 10)
 @export var props: Array[Dictionary] = []
 
 
-## The rects making up the floor: `rects` when set, else `[rect]`.
+## The rects making up the floor.
 func shape() -> Array[Rect2i]:
-	if rects.is_empty():
-		var single: Array[Rect2i] = [rect]
-		return single
 	return rects
+
+
+## The largest rect, first on ties: the open part of the Room, where anything
+## that wants a guaranteed standing spot (lights, spawns, the pirate) goes.
+## Not the Fight Core, which is a size requirement rather than a place.
+func largest_rect() -> Rect2i:
+	var best: Rect2i = rects[0]
+	for r in rects:
+		if r.size.x * r.size.y > best.size.x * best.size.y:
+			best = r
+	return best
 
 
 ## Bounding box of the whole floor.
@@ -74,11 +79,11 @@ func has_tile(tile: Vector2i) -> bool:
 	return false
 
 
-## Centre of the bounding box. For an L-shaped Room this may miss the floor;
-## consumers that need a standing spot should pick a tile with [method has_tile].
+## Centre of the Room's [method largest_rect]: always over floor, unlike the
+## centre of an L-shaped Room's bounding box.
 func center_tile() -> Vector2:
-	var box := bounds()
-	return Vector2(box.position) + Vector2(box.size) / 2.0
+	var core := largest_rect()
+	return Vector2(core.position) + Vector2(core.size) / 2.0
 
 
 ## Whether a clear `core`-sized rectangle fits somewhere inside the floor

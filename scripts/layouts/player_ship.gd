@@ -61,7 +61,7 @@ static func create() -> ShipLayout:
 
 static func _room(rect: Rect2i, role: StringName, crew: int, props: Array) -> RoomData:
 	var room := RoomData.new()
-	room.rect = rect
+	room.rects = [rect]
 	room.role = role
 	room.crew_count = crew
 	room.props.assign(props)
