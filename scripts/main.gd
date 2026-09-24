@@ -15,7 +15,8 @@ var tracker: RoomTracker
 func _ready() -> void:
 	layout = layout_override if layout_override != null else PlayerShipLayout.create()
 	ShipBuilder.build(layout, ship)
-	player.global_position = ShipBuilder.room_center_world(layout.rooms[layout.entry_room])
+	var boarding_room: int = layout.hatches[0].room
+	player.global_position = ShipBuilder.room_center_world(layout.rooms[boarding_room])
 	player.spawn_point = player.global_position
 
 	var fog: RoomFog = ship.get_node("Fog")
@@ -24,4 +25,4 @@ func _ready() -> void:
 	add_child(tracker)
 	tracker.setup(layout, player)
 	tracker.room_changed.connect(func(room: int, _previous: int) -> void: fog.reveal(room))
-	fog.reveal(layout.entry_room)
+	fog.reveal(boarding_room)

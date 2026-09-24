@@ -35,6 +35,8 @@ var gunman: Crew
 var bystander: Crew
 var frames := 0
 var escapes := 0
+## The room the pirate boards into: behind the ship's first hatch.
+var boarding_room := -1
 
 
 func _initialize() -> void:
@@ -52,6 +54,7 @@ func _initialize() -> void:
 	player.set_physics_process(false)
 	floors = layout.floor_tiles()
 	built_layout = layout
+	boarding_room = layout.hatches[0].room
 
 
 func _physics_process(_delta: float) -> bool:
@@ -182,7 +185,7 @@ func _physics_locked_door() -> void:
 
 ## Stand in the middle of the cargo hold and shoot at the far wall.
 func _begin_shooting_phase() -> void:
-	var room: RoomData = built_layout.rooms[built_layout.entry_room]
+	var room: RoomData = built_layout.rooms[boarding_room]
 	player.global_position = ShipBuilder.room_center_world(room)
 	player.velocity = Vector2.ZERO
 	player.aim_at_mouse = false
@@ -233,7 +236,7 @@ func _begin_crew_phase() -> void:
 	for stray in main.get_node("Projectiles").get_children():
 		stray.free()
 
-	var room: RoomData = built_layout.rooms[built_layout.entry_room]
+	var room: RoomData = built_layout.rooms[boarding_room]
 	player.global_position = ShipBuilder.room_center_world(room)
 	player.velocity = Vector2.ZERO
 	player.health.reset()
@@ -243,7 +246,7 @@ func _begin_crew_phase() -> void:
 
 	gunman = crew_scene.instantiate()
 	gunman.layout = built_layout
-	gunman.home_room = built_layout.entry_room
+	gunman.home_room = boarding_room
 	gunman.target = player
 	gunman.spread_degrees = 0.0
 	gunman.position = player.global_position + Vector2(180.0, 0.0)
@@ -253,7 +256,7 @@ func _begin_crew_phase() -> void:
 	# position: friendly shots must pass straight through it.
 	bystander = crew_scene.instantiate()
 	bystander.layout = built_layout
-	bystander.home_room = built_layout.entry_room
+	bystander.home_room = boarding_room
 	bystander.position = player.global_position + Vector2(90.0, 0.0)
 	holder.add_child(bystander)
 	bystander.set_physics_process(false)
@@ -404,17 +407,18 @@ func _check_connectivity(layout: ShipLayout) -> void:
 		adjacency[d.room_a].append(d.room_b)
 		adjacency[d.room_b].append(d.room_a)
 
-	var seen := {layout.entry_room: true}
-	var queue := [layout.entry_room]
-	while not queue.is_empty():
-		var room: int = queue.pop_front()
-		for neighbour in adjacency[room]:
-			if not seen.has(neighbour):
-				seen[neighbour] = true
-				queue.append(neighbour)
-
-	_expect(seen.size() == layout.rooms.size(),
-			"only %d of %d rooms reachable from the entry room through unlocked doors" % [seen.size(), layout.rooms.size()])
+	_expect(layout.hatches.size() >= 2, "ship has %d hatches, want at least 2" % layout.hatches.size())
+	for hatch in layout.hatches:
+		var seen := {hatch.room: true}
+		var queue := [hatch.room]
+		while not queue.is_empty():
+			var room: int = queue.pop_front()
+			for neighbour in adjacency[room]:
+				if not seen.has(neighbour):
+					seen[neighbour] = true
+					queue.append(neighbour)
+		_expect(seen.size() == layout.rooms.size(),
+				"only %d of %d rooms reachable from hatch room %d through unlocked doors" % [seen.size(), layout.rooms.size(), hatch.room])
 
 
 func _check_built_geometry(layout: ShipLayout) -> void:
@@ -435,9 +439,16 @@ func _check_built_geometry(layout: ShipLayout) -> void:
 	_expect(clashes == 0, "%d tiles are both floor and wall" % clashes)
 
 	# Walls must fully enclose the floor: every floor tile's neighbours are floor or wall.
+	# A hatch tile opens onto space by design; everything else must be enclosed.
+	var hatch_tiles := {}
+	for h in layout.hatches:
+		for tile in h.tiles():
+			hatch_tiles[tile] = true
 	var walls := ShipBuilder.wall_tiles(layout, expected_floor)
 	var leaks := 0
 	for tile in expected_floor:
+		if hatch_tiles.has(tile):
+			continue
 		for step in [Vector2i.UP, Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT]:
 			var n: Vector2i = tile + step
 			if not expected_floor.has(n) and not walls.has(n):
@@ -481,9 +492,9 @@ func _check_built_geometry(layout: ShipLayout) -> void:
 	var probe: Projectile = load("res://scenes/projectile.tscn").instantiate()
 	_expect(probe.z_index < fog.z_index, "shots draw over the fog")
 	probe.free()
-	_expect(fog.is_revealed(layout.entry_room), "entry room is still dark")
+	_expect(fog.is_revealed(boarding_room), "entry room is still dark")
 	for i in layout.rooms.size():
-		if i != layout.entry_room:
+		if i != boarding_room:
 			_expect(not fog.is_revealed(i), "room %d was revealed before being entered" % i)
 
 	var crew_holder: Node2D = ship.get_node("Crew")

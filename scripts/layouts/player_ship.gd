@@ -6,7 +6,9 @@ extends RefCounted
 ## spills through them instead of queuing single file.
 ##
 ## Rooms sit one tile apart so the gap between them becomes their shared wall,
-## which is where doorways get punched.
+## which is where doorways get punched. Two hatches open the hull: one on the
+## starboard side of the cargo hold, the boarding point a raid defaults to, and
+## one on the port side of the medbay, so there is a second way off the ship.
 ##
 ## The crew counts are here so there is something to fight while the raid loop
 ## is still being built -- the pirate's own ship is standing in for a target.
@@ -55,7 +57,10 @@ static func create() -> ShipLayout:
 		_door(2, 3, Vector2i(15, 19), true, 3),
 		_door(3, 4, Vector2i(9, 32), true, 4),
 	]
-	layout.entry_room = 3
+	layout.hatches = [
+		_hatch(3, Vector2i(21, 27)),
+		_hatch(1, Vector2i(-1, 15)),
+	]
 	return layout
 
 
@@ -66,6 +71,16 @@ static func _room(rect: Rect2i, role: StringName, crew: int, props: Array) -> Ro
 	room.crew_count = crew
 	room.props.assign(props)
 	return room
+
+
+## A hatch through a side wall: two tiles tall, running along Y.
+static func _hatch(room: int, tile: Vector2i) -> HatchData:
+	var hatch := HatchData.new()
+	hatch.room = room
+	hatch.tile = tile
+	hatch.horizontal = false
+	hatch.width = 2
+	return hatch
 
 
 static func _door(a: int, b: int, tile: Vector2i, horizontal: bool, width: int, locked := false) -> DoorData:
