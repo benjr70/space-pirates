@@ -38,6 +38,8 @@ var escapes := 0
 
 
 func _initialize() -> void:
+	RoomDataChecks.run(_expect)
+
 	var layout := PlayerShipLayout.create()
 	_check_rooms_disjoint(layout)
 	_check_rooms_fightable(layout)
