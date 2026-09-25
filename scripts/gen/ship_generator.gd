@@ -7,8 +7,9 @@ extends RefCounted
 ##
 ## Stages, in order, each fixed before the next runs: Class and Richness
 ## roll, Hull silhouette ([HullGrammar]), Room packing ([RoomPacker]) with the
-## count-first area loop, Door stitching ([DoorStitcher]). Hatches, Roles,
-## Budgets, interiors and names are later stages and land on their own.
+## count-first area loop, Door stitching ([DoorStitcher]), Hatch placement
+## ([HatchPlacer]) and Role assignment ([RoleAssigner]). Budgets, interiors
+## and names are later stages and land on their own.
 
 const CLASSES: Array[StringName] = [&"small", &"medium", &"large"]
 ## Counted (non-corridor) Room count per Class. Nothing rolls 7 or 12 to 13.
@@ -37,9 +38,14 @@ class Report:
 	var resizes := 0
 	## Archetype re-rolls it took after the resizes ran out.
 	var rerolls := 0
+	## Counted Room count inside the Class band.
 	var in_band := true
+	## Whether Hatches were placed, at some relaxation level.
+	var hatches_placed := true
 	var counted_rooms := 0
 	var stranded := 0
+	## Hatch placement relaxation level that was needed (see [HatchPlacer.Result]).
+	var hatch_relaxed := 0
 
 
 ## The ship for a seed. Convenience over [method generate_report].
@@ -62,7 +68,10 @@ static func generate_report(ship_class: StringName, seed: int) -> Report:
 	var hull: HullGrammar.Hull
 	var pack: RoomPacker.Result
 	var doors: Array[RoomPacker.Gap] = []
+	var layout: ShipLayout
+	var hatches: HatchPlacer.Result
 	var landed := false
+	var counted_in_band := false
 	for reroll in MAX_REROLLS + 1:
 		var archetype := HullGrammar.roll_archetype(ship_class, rng)
 		var scale := 1.0
@@ -83,6 +92,13 @@ static func generate_report(ship_class: StringName, seed: int) -> Report:
 				doors = DoorStitcher.stitch(pack.patches, pack.seeded, rng)
 				got = pack.counted_rooms()
 				landed = _landed(pack, band)
+			counted_in_band = landed
+			if landed:
+				# Hatches need Rooms far enough apart; a ship that cannot hold
+				# them is rerolled like one that missed the band.
+				layout = _assemble(ship_class, seed, richness, pack, doors)
+				hatches = HatchPlacer.place(layout, ship_class, rng, _pinned_roles(pack).size())
+				landed = hatches.relaxed >= 0
 			if landed:
 				break
 			if got < band.x:
@@ -98,9 +114,15 @@ static func generate_report(ship_class: StringName, seed: int) -> Report:
 
 	if not landed:
 		doors = DoorStitcher.stitch(pack.patches, pack.seeded, rng)
-	report.layout = _assemble(ship_class, seed, richness, pack, doors)
+		layout = _assemble(ship_class, seed, richness, pack, doors)
+		hatches = HatchPlacer.place(layout, ship_class, rng, _pinned_roles(pack).size())
+	layout.hatches = hatches.hatches
+	RoleAssigner.assign(layout, ship_class, rng, _pinned_roles(pack))
+	report.layout = layout
+	report.hatch_relaxed = hatches.relaxed
+	report.hatches_placed = hatches.relaxed >= 0
 	report.counted_rooms = pack.counted_rooms()
-	report.in_band = landed
+	report.in_band = counted_in_band
 	for patch in pack.patches:
 		if patch.stranded:
 			report.stranded += 1
@@ -112,6 +134,10 @@ static func generate_report(ship_class: StringName, seed: int) -> Report:
 		features.append("resize×%d" % report.resizes)
 	if report.rerolls > 0:
 		features.append("reroll×%d" % report.rerolls)
+	if report.hatch_relaxed > 0:
+		features.append("hatches relaxed×%d" % report.hatch_relaxed)
+	elif report.hatch_relaxed < 0:
+		features.append("NO HATCHES")
 	if not report.in_band:
 		features.append("OUT OF BAND")
 	report.sentence = hull.sentence()
@@ -119,6 +145,20 @@ static func generate_report(ship_class: StringName, seed: int) -> Report:
 		report.sentence += " / " + ", ".join(features)
 	report.layout.gen_sentence = report.sentence
 	return report
+
+
+## Rooms whose packer tag survives Role assignment, by their index in the
+## assembled layout (standing patches in order): {room: role}.
+static func _pinned_roles(pack: RoomPacker.Result) -> Dictionary:
+	var out := {}
+	var index := 0
+	for patch in pack.patches:
+		if patch.is_empty():
+			continue
+		if patch.pinned:
+			out[index] = patch.role
+		index += 1
+	return out
 
 
 ## Whether a pack has landed: counted Rooms in the Class band, with a Bridge
@@ -166,7 +206,7 @@ static func _assemble(ship_class: StringName, seed: int, richness: float,
 	return layout
 
 
-## The aft-most Room by centre: where a raid boards until Hatches land.
+## The aft-most Room by centre: where a raid boards a ship with no Hatches.
 static func aft_most_room(layout: ShipLayout) -> int:
 	var best := 0
 	for i in layout.rooms.size():

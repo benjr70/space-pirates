@@ -27,6 +27,10 @@ func _initialize() -> void:
 		var most_resizes := 0
 		var rerolls := 0
 		var out_of_band := 0
+		var armories := 0
+		var armory_capable := 0
+		var relaxed := 0
+		var relaxed_twice := 0
 		for seed in range(FIRST_SEED, FIRST_SEED + SEEDS_PER_CLASS):
 			var started := Time.get_ticks_usec()
 			var report := ShipGenerator.generate_report(ship_class, seed)
@@ -37,6 +41,14 @@ func _initialize() -> void:
 			rerolls += report.rerolls
 			if not report.in_band:
 				out_of_band += 1
+			if _has_role(report.layout, &"armory"):
+				armories += 1
+			if _can_hold_armory(report.layout):
+				armory_capable += 1
+			if report.hatch_relaxed > 0:
+				relaxed += 1
+			if report.hatch_relaxed > 1:
+				relaxed_twice += 1
 			_ship_failures.clear()
 			_check_ship(report, ship_class)
 			_expect(took <= TIME_BUDGET_MS, "generation took %.0f ms, over the %.0f ms budget" % [took, TIME_BUDGET_MS])
@@ -49,8 +61,20 @@ func _initialize() -> void:
 					print("--- first failing %s seed %d: %s" % [ship_class, seed, report.sentence])
 					print(ShipDumper.ascii(report.layout))
 					print(ShipDumper.listing(report.layout))
-		print("%s: %d seeds, slowest %.0f ms, resizes mean %.2f max %d, archetype rerolls %d, out of band %d" % [
-				ship_class, SEEDS_PER_CLASS, slowest, float(resizes) / SEEDS_PER_CLASS, most_resizes, rerolls, out_of_band])
+		print("%s: %d seeds, slowest %.0f ms, resizes mean %.2f max %d, archetype rerolls %d, out of band %d, armory rate %d%% (%d%% could hold one), hatches relaxed on %d (%d to half separation)" % [
+				ship_class, SEEDS_PER_CLASS, slowest, float(resizes) / SEEDS_PER_CLASS, most_resizes, rerolls, out_of_band,
+				armories * 100 / SEEDS_PER_CLASS, armory_capable * 100 / SEEDS_PER_CLASS, relaxed, relaxed_twice])
+		# Sweep-level: the small-ship Armory rate, and how often Hatch placement
+		# had to relax (small ships with one usable flank cannot help it).
+		_ship_failures.clear()
+		if ship_class == &"small":
+			_expect(armories * 100 >= 25 * SEEDS_PER_CLASS and armories * 100 <= 45 * SEEDS_PER_CLASS,
+					"small ships rolled an Armory %d%% of the time, want 25%% to 45%%" % (armories * 100 / SEEDS_PER_CLASS))
+		var relax_ceiling := 40 if ship_class == &"small" else 5
+		_expect(relaxed * 100 <= relax_ceiling * SEEDS_PER_CLASS,
+				"hatches relaxed on %d%% of ships, ceiling %d%%" % [relaxed * 100 / SEEDS_PER_CLASS, relax_ceiling])
+		for f in _ship_failures:
+			failures.append("%s sweep: %s" % [ship_class, f])
 	_report()
 	quit(1 if failures.size() > 0 else 0)
 
@@ -67,6 +91,7 @@ func _check_ship(report: ShipGenerator.Report, ship_class: StringName) -> void:
 	_check_doors(layout)
 	_check_connectivity(layout)
 	_check_asymmetry(layout)
+	_check_hatches(layout, ship_class, report.hatch_relaxed)
 	_check_roles(layout, ship_class)
 	var lanes := DoorStitcher.lanes_across_corridors(layout)
 	_expect(lanes.is_empty(), "lanes cross a corridor: %s" % ", ".join(lanes))
@@ -140,7 +165,7 @@ func _check_doors(layout: ShipLayout) -> void:
 					"door %d tile %s does not sit between rooms %d and %d" % [i, t, d.room_a, d.room_b])
 
 
-## Every Room reachable from every other through Doors (Hatches come later).
+## Every Room reachable from every Hatch Room through Doors.
 func _check_connectivity(layout: ShipLayout) -> void:
 	var adjacency := {}
 	for i in layout.rooms.size():
@@ -150,15 +175,19 @@ func _check_connectivity(layout: ShipLayout) -> void:
 			continue
 		adjacency[d.room_a].append(d.room_b)
 		adjacency[d.room_b].append(d.room_a)
-	var seen := {0: true}
-	var queue := [0]
-	while not queue.is_empty():
-		var room: int = queue.pop_front()
-		for n in adjacency[room]:
-			if not seen.has(n):
-				seen[n] = true
-				queue.append(n)
-	_expect(seen.size() == layout.rooms.size(), "only %d of %d rooms reachable through doors" % [seen.size(), layout.rooms.size()])
+	var starts: Array[int] = [0]
+	for h in layout.hatches:
+		starts.append(h.room)
+	for start in starts:
+		var seen := {start: true}
+		var queue := [start]
+		while not queue.is_empty():
+			var room: int = queue.pop_front()
+			for n in adjacency[room]:
+				if not seen.has(n):
+					seen[n] = true
+					queue.append(n)
+		_expect(seen.size() == layout.rooms.size(), "only %d of %d rooms reachable from room %d through doors" % [seen.size(), layout.rooms.size(), start])
 
 
 ## The floor is not mirror-symmetric about the fore-aft axis.
@@ -177,8 +206,66 @@ func _check_asymmetry(layout: ShipLayout) -> void:
 	_expect(not same, "floor is mirror-symmetric about the fore-aft axis")
 
 
+## Hatches: count in the Class band, each a two-wide gap in Hull reachable
+## from outside opening into exactly one Room, at most one per Room, none on
+## the Bridge, an Engine or a Corridor, exactly one Hatch Room a Cargo, and
+## every pair separated along the Hull and by at least two Rooms inside.
+func _check_hatches(layout: ShipLayout, ship_class: StringName, relaxed: int) -> void:
+	var band: Vector2i = HatchPlacer.HATCH_BAND[ship_class]
+	var n := layout.hatches.size()
+	_expect(n >= 2 and n <= 4 and n >= band.x and n <= band.y, "%d hatches, band is %s" % [n, band])
+	if n == 0:
+		return
+	var wall_set := ShipGraph.walls(layout, ShipGraph.floor_without_hatches(layout))
+	var out_set := ShipGraph.outside(ShipGraph.floor_without_hatches(layout), wall_set)
+	var hull := ShipGraph.hull_tiles(layout)
+	var rooms_with := {}
+	var cargo_hatches := 0
+	for h in layout.hatches:
+		_expect(h.width == 2, "hatch at %s is %d wide" % [h.tile, h.width])
+		_expect(h.room >= 0 and h.room < layout.rooms.size(), "hatch at %s has room %d" % [h.tile, h.room])
+		if h.room < 0 or h.room >= layout.rooms.size():
+			continue
+		var room := layout.rooms[h.room]
+		_expect(not ShipGraph.is_fixed_role(room.role), "hatch at %s opens into the %s" % [h.tile, room.role])
+		_expect(not rooms_with.has(h.room), "room %d holds two hatches" % h.room)
+		rooms_with[h.room] = true
+		if room.role == &"cargo":
+			cargo_hatches += 1
+		var step := h.inward(room)
+		_expect(step != Vector2i.ZERO, "hatch at %s does not face room %d" % [h.tile, h.room])
+		for t in h.tiles():
+			_expect(hull.has(t), "hatch tile %s is not a hull tile" % t)
+			_expect(room.has_tile(t + step) and out_set.has(t - step),
+					"hatch tile %s does not run from outside into room %d" % [t, h.room])
+			var touching := {}
+			for side in TileShapes.SIDES:
+				var r := layout.room_at(t + side)
+				if r != -1:
+					touching[r] = true
+			_expect(touching.size() == 1 and touching.has(h.room), "hatch tile %s touches rooms %s" % [t, touching.keys()])
+	_expect(cargo_hatches == 1, "%d hatch rooms are cargo, want exactly one" % cargo_hatches)
+	# The separation rules, at the relaxation level the placer had to reach:
+	# strict, then without the Flow Distance floor, then half the Hull separation.
+	var separation := HatchPlacer.separation(hull.size(), n, relaxed)
+	var adjacency := ShipGraph.adjacency(layout)
+	for i in n:
+		for j in range(i + 1, n):
+			var a := layout.hatches[i]
+			var b := layout.hatches[j]
+			var along := ShipGraph.hull_distance(hull, a.tile, b.tile)
+			_expect(along >= separation, "hatches %d and %d are %d hull tiles apart, want %.0f" % [i, j, along, separation])
+			if relaxed >= 1:
+				continue
+			var dist := ShipGraph.distances(layout, [a.room], adjacency)
+			_expect(dist[b.room] < 0 or dist[b.room] >= HatchPlacer.FLOW_FLOOR,
+					"hatch rooms %d and %d are %d doors apart" % [a.room, b.room, dist[b.room]])
+
+
 ## Counted Room count in the Class band; exactly one Bridge, fore of every
-## Engine; at least one Engine, aft of the ship's midline; Roles in the set.
+## Engine; at least one Engine, aft of the ship's midline; every Role count
+## inside the multiplicity table; no Armory in a Hatch Room; the Armory the
+## deepest Room by Flow Distance.
 func _check_roles(layout: ShipLayout, ship_class: StringName) -> void:
 	var band: Vector2i = ShipGenerator.ROOM_BAND[ship_class]
 	var counted := 0
@@ -187,12 +274,14 @@ func _check_roles(layout: ShipLayout, ship_class: StringName) -> void:
 	var floors := layout.floor_tiles()
 	var box := TileShapes.bounds(floors)
 	var midline := (box.position.y + box.end.y) / 2.0
+	var tally := {}
 	for i in layout.rooms.size():
 		var role := layout.rooms[i].role
 		_expect(role in [&"bridge", &"engine", &"corridor", &"cargo", &"quarters", &"medbay", &"shield", &"armory"],
 				"room %d has role %s" % [i, role])
 		if role != &"corridor":
 			counted += 1
+			tally[role] = tally.get(role, 0) + 1
 		if role == &"bridge":
 			bridges.append(i)
 		if role == &"engine":
@@ -200,6 +289,31 @@ func _check_roles(layout: ShipLayout, ship_class: StringName) -> void:
 	_expect(counted >= band.x and counted <= band.y, "%d counted rooms, band is %s" % [counted, band])
 	_expect(bridges.size() == 1, "%d bridges" % bridges.size())
 	_expect(engines.size() >= 1, "no engine room")
+	var ranges: Dictionary = RoleAssigner.RANGES[ship_class]
+	for role in ranges:
+		var r: Vector2i = ranges[role]
+		var have: int = tally.get(role, 0)
+		_expect(have >= r.x and have <= r.y, "%d %s rooms, table allows %d to %d" % [have, role, r.x, r.y])
+	var hatch_rooms := {}
+	for h in layout.hatches:
+		hatch_rooms[h.room] = true
+	# The deepest Room an Armory may take: not the Bridge, an Engine, a
+	# Corridor or a Hatch Room.
+	var flow := ShipGraph.flow_distances(layout)
+	var deepest := 0
+	for i in layout.rooms.size():
+		if not ShipGraph.is_fixed_role(layout.rooms[i].role) and not hatch_rooms.has(i):
+			deepest = maxi(deepest, flow[i])
+	for i in layout.rooms.size():
+		if layout.rooms[i].role != &"armory":
+			continue
+		_expect(not hatch_rooms.has(i), "armory room %d holds a hatch" % i)
+	var armory_flow := -1
+	for i in layout.rooms.size():
+		if layout.rooms[i].role == &"armory":
+			armory_flow = maxi(armory_flow, flow[i])
+	if armory_flow >= 0:
+		_expect(armory_flow == deepest, "deepest armory is %d doors in, the deepest room is %d" % [armory_flow, deepest])
 	if bridges.size() != 1:
 		return
 	var bridge_y := layout.rooms[bridges[0]].center_tile().y
@@ -224,6 +338,26 @@ func _check_roles(layout: ShipLayout, ship_class: StringName) -> void:
 		if _opens_onto(layout, e, corridors):
 			engine_on_corridor = true
 	_expect(engine_on_corridor, "no engine room has a door onto the corridor")
+
+
+## Whether some Room other than the Bridge, an Engine, a Corridor or a Hatch
+## Room exists for an Armory to take.
+func _can_hold_armory(layout: ShipLayout) -> bool:
+	var hatch_rooms := {}
+	for h in layout.hatches:
+		hatch_rooms[h.room] = true
+	for i in layout.rooms.size():
+		if not ShipGraph.is_fixed_role(layout.rooms[i].role) and not hatch_rooms.has(i):
+			return true
+	return false
+
+
+## Whether any Room carries the Role.
+func _has_role(layout: ShipLayout, role: StringName) -> bool:
+	for room in layout.rooms:
+		if room.role == role:
+			return true
+	return false
 
 
 ## Whether a Room has a Door onto any of the given Rooms.

@@ -22,6 +22,8 @@ class Patch:
 	var tiles := {}
 	var role: StringName = &"quarters"
 	var stranded := false
+	## The Role is a packer tag that survives assignment (a ring's fore cap).
+	var pinned := false
 	## The floor verdict is cached against the tile count: every edit here
 	## (merge, split, pod, fill) changes the count.
 	var _floor_checked_at := -1
@@ -246,9 +248,12 @@ static func _carve_bands(hull: HullGrammar.Hull, rng: RandomNumberGenerator, out
 			out.patches.append(Patch.new(comp, &"cargo"))
 
 	# The fore cap: the Bridge, or Quarters when a ring puts the Bridge at its
-	# core. Its Door onto the corridor lands on the axis, so cuts centre there.
+	# core. Its Door onto the corridor lands on the axis, so cuts centre
+	# there, and only the piece on the axis carries the ring's Quarters tag.
 	for comp in _region_components(hull, hull.bridge_y0, m0 - 1, neg_inf, pos_inf, hull.cx):
-		out.patches.append(Patch.new(comp, &"quarters" if hull.skeleton == &"ring" else &"bridge"))
+		var cap := Patch.new(comp, &"quarters" if hull.skeleton == &"ring" else &"bridge")
+		cap.pinned = hull.skeleton == &"ring" and comp.has(Vector2i(hull.cx - 1, m0 - 2))
+		out.patches.append(cap)
 
 	if hull.skeleton == &"chain":
 		_carve_chain(hull, rng, out, neg_inf, pos_inf)
