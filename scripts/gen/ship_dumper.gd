@@ -1,10 +1,15 @@
 class_name ShipDumper
 extends RefCounted
 ## ASCII plan of a [ShipLayout], so a seed is legible in a terminal: '#'
-## wall, '.' floor, '+' doorway, 'H' hatch, with each Room's first tile
+## wall or crate, '.' floor, '+' doorway, 'H' hatch, '=' console, 'P'
+## cryopod, '$' Container, 'L' locker, 'x' crew, with each Room's centre
 ## lettered by Role. Fore is at the LEFT: the plan is rotated a quarter turn
 ## so terminal glyph aspect shows true proportion.
 
+const PROP_GLYPH := {
+	&"crate": "#", &"console": "=", &"engine_console": "=", &"cryopod": "P",
+	&"container": "$", &"locker": "L",
+}
 const ROLE_GLYPH := {
 	&"bridge": "B", &"engine": "E", &"corridor": "C", &"cargo": "c",
 	&"quarters": "q", &"medbay": "m", &"shield": "s", &"armory": "a",
@@ -22,6 +27,12 @@ static func ascii(layout: ShipLayout) -> String:
 		for t in hatch.tiles():
 			marks[t] = "H"
 	for room in layout.rooms:
+		for prop in room.props:
+			var glyph: String = PROP_GLYPH.get(prop.type, "?")
+			for off in Interiors.footprint(prop.type, prop.get("rotated", false)):
+				marks[prop.tile + off] = glyph
+		for t in room.crew_spawns:
+			marks[t] = "x"
 		var at := Vector2i(room.center_tile().floor())
 		marks[at] = ROLE_GLYPH.get(room.role, "?")
 	var walls := {}

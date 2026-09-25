@@ -37,8 +37,13 @@ const CORRIDOR_WIDTH := 3
 ## first. Interior generation places them as props; Corridors hold none.
 @export var containers: Array[int] = []
 ## Props to spawn, as [{type = StringName, tile = Vector2i}]. `tile` is the tile
-## the prop is centred on, so odd-sized props line up with the grid.
+## the prop is centred on, so odd-sized props line up with the grid. A
+## Container prop also carries `gold`; a Breaker crate carries `breaker = true`
+## and crew never take cover behind it.
 @export var props: Array[Dictionary] = []
+## Where each hostile crew member starts, one tile per body, chosen by
+## interior generation behind cover. Empty means spread them across the floor.
+@export var crew_spawns: Array[Vector2i] = []
 
 
 ## The rects making up the floor.

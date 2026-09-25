@@ -35,6 +35,9 @@ const PROP_SCENES := {
 	&"cryopod": preload("res://scenes/props/prop_cryopod.tscn"),
 	&"crate": preload("res://scenes/props/prop_crate.tscn"),
 	&"engine_console": preload("res://scenes/props/prop_engine_console.tscn"),
+	# Containers stand in as crates until the 2D builder is retired.
+	&"container": preload("res://scenes/props/prop_crate.tscn"),
+	&"locker": preload("res://scenes/props/prop_crate.tscn"),
 }
 
 

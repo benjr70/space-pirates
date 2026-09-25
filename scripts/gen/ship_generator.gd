@@ -8,9 +8,9 @@ extends RefCounted
 ## Stages, in order, each fixed before the next runs: Class and Richness
 ## roll, Hull silhouette ([HullGrammar]), Room packing ([RoomPacker]) with the
 ## count-first area loop, Door stitching ([DoorStitcher]), Hatch placement
-## ([HatchPlacer]), Role assignment ([RoleAssigner]) and the Threat and
-## Loot Budgets ([Budgets]). Interiors and names are later stages and land
-## on their own.
+## ([HatchPlacer]), Role assignment ([RoleAssigner]), the Threat and Loot
+## Budgets ([Budgets]) and the shared interior vocabulary ([Interiors]).
+## Role flavour and names are later stages and land on their own.
 
 const CLASSES: Array[StringName] = [&"small", &"medium", &"large"]
 ## Counted (non-corridor) Room count per Class. Nothing rolls 7 or 12 to 13.
@@ -120,6 +120,7 @@ static func generate_report(ship_class: StringName, seed: int) -> Report:
 	layout.hatches = hatches.hatches
 	RoleAssigner.assign(layout, ship_class, rng, _pinned_roles(pack))
 	Budgets.apply(layout, ship_class)
+	Interiors.furnish(layout, rng)
 	report.layout = layout
 	report.hatch_relaxed = hatches.relaxed
 	report.hatches_placed = hatches.relaxed >= 0

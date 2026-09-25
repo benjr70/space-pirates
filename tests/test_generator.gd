@@ -94,6 +94,7 @@ func _check_ship(report: ShipGenerator.Report, ship_class: StringName) -> void:
 	_check_hatches(layout, ship_class, report.hatch_relaxed)
 	_check_roles(layout, ship_class)
 	_check_budgets(layout, ship_class)
+	_check_interiors(layout)
 	var lanes := DoorStitcher.lanes_across_corridors(layout)
 	_expect(lanes.is_empty(), "lanes cross a corridor: %s" % ", ".join(lanes))
 
@@ -417,6 +418,100 @@ func _check_budgets(layout: ShipLayout, ship_class: StringName) -> void:
 			"richness does not move both budgets the same way")
 
 
+## Interiors: every prop on its Room's floor, none on a Door or Hatch tile
+## or the tile in front on either side; every floor tile reachable from every
+## doorway across prop-free tiles, per Room across all its rects; crew spawn
+## points equal crew_count, distinct, on prop-free floor, never beside a
+## Breaker; Container gold in a Room sums to its Loot Share; a Breaker
+## crate stands three tiles in from every doorway that has room for one.
+func _check_interiors(layout: ShipLayout) -> void:
+	var front := {}
+	for d in layout.doors:
+		var across := Vector2i.DOWN if d.horizontal else Vector2i.RIGHT
+		for t in d.tiles():
+			front[t] = true
+			front[t + across] = true
+			front[t - across] = true
+	for h in layout.hatches:
+		var across := Vector2i.DOWN if h.horizontal else Vector2i.RIGHT
+		for t in h.tiles():
+			front[t] = true
+			front[t + across] = true
+			front[t - across] = true
+	for i in layout.rooms.size():
+		var room := layout.rooms[i]
+		var floors := room.tiles()
+		var solid := {}
+		var breakers := {}
+		var gold := 0
+		for prop in room.props:
+			for off in Interiors.footprint(prop.type, prop.get("rotated", false)):
+				var t: Vector2i = prop.tile + off
+				_expect(floors.has(t), "room %d prop %s at %s is off its floor" % [i, prop.type, t])
+				_expect(not front.has(t), "room %d prop %s at %s blocks a doorway" % [i, prop.type, t])
+				_expect(not solid.has(t), "room %d has two props on %s" % [i, t])
+				solid[t] = true
+				if prop.get("breaker", false):
+					breakers[t] = true
+			if prop.type in [&"container", &"locker"]:
+				gold += prop.get("gold", 0)
+				_expect(prop.get("gold", 0) > 0, "room %d has a container with no gold" % i)
+		_expect(gold == room.loot_share, "room %d containers hold %d gold for a share of %d" % [i, gold, room.loot_share])
+		var openings := Interiors.openings(layout, i)
+		# Reachability from every doorway across prop-free tiles.
+		var starts: Array[Vector2i] = []
+		for o in openings:
+			var t: Vector2i = o.tiles[0] + o.normal
+			_expect(floors.has(t) and not solid.has(t), "room %d doorway at %s opens onto a prop or a wall" % [i, o.tiles[0]])
+			if floors.has(t) and not solid.has(t):
+				starts.append(t)
+		if not starts.is_empty():
+			var seen := {starts[0]: true}
+			var stack: Array[Vector2i] = [starts[0]]
+			while not stack.is_empty():
+				var c: Vector2i = stack.pop_back()
+				for side in TileShapes.SIDES:
+					var n := c + side
+					if floors.has(n) and not solid.has(n) and not seen.has(n):
+						seen[n] = true
+						stack.append(n)
+			var walkable := floors.size() - solid.size()
+			_expect(seen.size() == walkable, "room %d: %d floor tiles unreachable behind props" % [i, walkable - seen.size()])
+			for s in starts:
+				_expect(seen.has(s), "room %d doorway at %s cannot reach the rest of the room" % [i, s])
+		# Crew spawns.
+		_expect(room.crew_spawns.size() == room.crew_count,
+				"room %d has %d spawn points for %d crew" % [i, room.crew_spawns.size(), room.crew_count])
+		var distinct := {}
+		for t in room.crew_spawns:
+			_expect(floors.has(t) and not solid.has(t), "room %d crew spawn %s is not on prop-free floor" % [i, t])
+			_expect(not distinct.has(t), "room %d spawns two crew on %s" % [i, t])
+			distinct[t] = true
+			for side in TileShapes.SIDES:
+				_expect(not breakers.has(t + side), "room %d crew stand behind a breaker at %s" % [i, t])
+		# Breakers three tiles in from doorways of non-corridor Rooms, wherever
+		# a tile there is floor outside every doorway's Apron with floor either
+		# side of it, so a crate leaves a way past (a one-tile passage cannot).
+		if room.role == &"corridor":
+			continue
+		var aprons := {}
+		for o in openings:
+			for t in o.apron(Interiors.APRON_DEPTH):
+				aprons[t] = true
+		for o in openings:
+			var base := Vector2i(o.centre.round()) + o.normal * Interiors.BREAKER_DEPTH
+			var fits := false
+			var has := false
+			for k: int in [-3, -2, -1, 1, 2, 3]:
+				var t := base + o.lateral * k
+				if floors.has(t) and not aprons.has(t) and floors.has(t + o.lateral) and floors.has(t - o.lateral):
+					fits = true
+				if breakers.has(t):
+					has = true
+			if fits:
+				_expect(has, "room %d doorway at %s has no breaker crate three tiles in" % [i, o.tiles[0]])
+
+
 ## Whether some Room other than the Bridge, an Engine, a Corridor or a Hatch
 ## Room exists for an Armory to take.
 func _can_hold_armory(layout: ShipLayout) -> bool:
@@ -481,7 +576,7 @@ func _check_deterministic(report: ShipGenerator.Report, ship_class: StringName, 
 func _fingerprint(layout: ShipLayout) -> String:
 	var parts: Array[String] = [layout.ship_name, str(layout.richness)]
 	for room in layout.rooms:
-		parts.append("%s%s c%d l%d %s" % [room.role, room.rects, room.crew_count, room.loot_share, room.containers])
+		parts.append("%s%s c%d l%d %s %s %s" % [room.role, room.rects, room.crew_count, room.loot_share, room.containers, room.props, room.crew_spawns])
 	for door in layout.doors:
 		parts.append("%d-%d@%s/%s/%d" % [door.room_a, door.room_b, door.tile, door.horizontal, door.width])
 	for hatch in layout.hatches:
