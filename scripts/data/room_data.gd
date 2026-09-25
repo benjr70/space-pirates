@@ -28,9 +28,14 @@ const CORRIDOR_WIDTH := 3
 ## What the room is for: &"bridge", &"engine", &"cargo", &"medbay", &"quarters",
 ## &"shield", &"armory", or &"corridor" for a Skeleton's walkway.
 @export var role: StringName = &"quarters"
-## How many hostile crew start in this room. The generator will set this from
-## a threat budget later.
+## How many hostile crew start in this Room: its Threat Share of the ship's
+## Threat Budget. Hand-authored ships set it directly.
 @export var crew_count: int = 0
+## This Room's Loot Share of the ship's Loot Budget, in gold units.
+@export var loot_share: int = 0
+## The Containers the Loot Share becomes, as the gold each holds, largest
+## first. Interior generation places them as props; Corridors hold none.
+@export var containers: Array[int] = []
 ## Props to spawn, as [{type = StringName, tile = Vector2i}]. `tile` is the tile
 ## the prop is centred on, so odd-sized props line up with the grid.
 @export var props: Array[Dictionary] = []

@@ -64,12 +64,13 @@ static func summary(report: ShipGenerator.Report) -> String:
 			report.sentence]
 
 
-## One line per Room and Door: index, Role, area, rects; Door ends and tile.
+## One line per Room and Door: index, Role, area, crew, gold and Containers,
+## rects; Door ends and tile.
 static func listing(layout: ShipLayout) -> String:
 	var lines: Array[String] = []
 	for i in layout.rooms.size():
 		var room := layout.rooms[i]
-		lines.append("room %2d  %-9s %4d tiles  %s" % [i, room.role, room.area(), room.rects])
+		lines.append("room %2d  %-9s %4d tiles  crew %d  gold %2d %s  %s" % [i, room.role, room.area(), room.crew_count, room.loot_share, room.containers, room.rects])
 	for i in layout.doors.size():
 		var door := layout.doors[i]
 		lines.append("door %2d  %d-%d at %s %s w%d" % [i, door.room_a, door.room_b, door.tile,

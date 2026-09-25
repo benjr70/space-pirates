@@ -93,6 +93,7 @@ func _check_ship(report: ShipGenerator.Report, ship_class: StringName) -> void:
 	_check_asymmetry(layout)
 	_check_hatches(layout, ship_class, report.hatch_relaxed)
 	_check_roles(layout, ship_class)
+	_check_budgets(layout, ship_class)
 	var lanes := DoorStitcher.lanes_across_corridors(layout)
 	_expect(lanes.is_empty(), "lanes cross a corridor: %s" % ", ".join(lanes))
 
@@ -340,6 +341,82 @@ func _check_roles(layout: ShipLayout, ship_class: StringName) -> void:
 	_expect(engine_on_corridor, "no engine room has a door onto the corridor")
 
 
+## Threat: the crew sum to a Budget in the Class band, no Room over its cap,
+## the Bridge and every Armory at their floors when the Budget allows, at
+## most a third of counted Rooms empty, Hatch Rooms at half weight (a Hatch
+## Room never out-crews the same Role without a Hatch by more than one).
+## Loot: the Shares sum to a Budget in band, every Armory at least 3 and
+## every Cargo at least 1, each Room's Containers sum to its Share with at
+## most 6, Corridors hold none. Richness moves both Budgets the same way.
+func _check_budgets(layout: ShipLayout, ship_class: StringName) -> void:
+	var counted: Array[int] = []
+	var crew := 0
+	var loot := 0
+	var empties := 0
+	var hatch_rooms := {}
+	for h in layout.hatches:
+		hatch_rooms[h.room] = true
+	for i in layout.rooms.size():
+		var room := layout.rooms[i]
+		crew += room.crew_count
+		loot += room.loot_share
+		_expect(room.crew_count >= 0 and room.loot_share >= 0, "room %d has negative shares" % i)
+		var cap := Budgets.CREW_CAP_BIG if room.area() >= Budgets.BIG_ROOM else Budgets.CREW_CAP
+		_expect(room.crew_count <= cap, "room %d (%s) holds %d crew, cap %d" % [i, room.role, room.crew_count, cap])
+		var gold := 0
+		for g in room.containers:
+			gold += g
+			_expect(g > 0, "room %d has an empty container" % i)
+		_expect(gold == room.loot_share, "room %d containers hold %d gold for a share of %d" % [i, gold, room.loot_share])
+		_expect(room.containers.size() <= Budgets.MAX_CONTAINERS, "room %d holds %d containers" % [i, room.containers.size()])
+		var size: Vector2i = Budgets.CONTAINER_SIZE.get(room.role, Vector2i(1, 1))
+		for g in room.containers:
+			_expect(g >= size.x and (g <= size.y or room.containers.size() == Budgets.MAX_CONTAINERS),
+					"room %d (%s) has a %d-gold container outside %s" % [i, room.role, g, size])
+		if room.role == &"corridor":
+			_expect(room.containers.is_empty() and room.loot_share == 0, "corridor %d holds loot" % i)
+			continue
+		counted.append(i)
+		if room.crew_count == 0:
+			empties += 1
+	var threat_band: Vector2i = Budgets.THREAT_BAND[ship_class]
+	var loot_band: Vector2i = Budgets.LOOT_BAND[ship_class]
+	_expect(crew >= threat_band.x and crew <= threat_band.y, "crew total %d, band %s" % [crew, threat_band])
+	_expect(loot >= loot_band.x and loot <= loot_band.y, "loot total %d, band %s" % [loot, loot_band])
+	_expect(crew == Budgets.threat_total(ship_class, counted.size(), layout.richness),
+			"crew total %d is not the Threat Budget for richness %.2f" % [crew, layout.richness])
+	_expect(loot == Budgets.loot_total(ship_class, counted.size(), layout.richness),
+			"loot total %d is not the Loot Budget for richness %.2f" % [loot, layout.richness])
+	_expect(empties * 3 <= counted.size(), "%d of %d counted rooms are empty" % [empties, counted.size()])
+	# Hatch Rooms weigh half: one never out-crews a Room of the same Role
+	# without a Hatch by more than a body.
+	for i in counted:
+		if not hatch_rooms.has(i):
+			continue
+		for j in counted:
+			if hatch_rooms.has(j) or layout.rooms[j].role != layout.rooms[i].role:
+				continue
+			_expect(layout.rooms[i].crew_count <= layout.rooms[j].crew_count + 1,
+					"hatch room %d holds %d crew, room %d of the same role %d" % [i, layout.rooms[i].crew_count, j, layout.rooms[j].crew_count])
+	for i in counted:
+		var room := layout.rooms[i]
+		if room.role == &"bridge":
+			_expect(room.crew_count >= Budgets.BRIDGE_FLOOR, "bridge holds %d crew" % room.crew_count)
+		if room.role == &"armory":
+			_expect(room.crew_count >= Budgets.ARMORY_FLOOR, "armory %d holds %d crew" % [i, room.crew_count])
+			_expect(room.loot_share >= Budgets.ARMORY_LOOT_FLOOR, "armory %d holds %d gold" % [i, room.loot_share])
+		if room.role == &"cargo":
+			_expect(room.loot_share >= Budgets.CARGO_LOOT_FLOOR, "cargo %d holds %d gold" % [i, room.loot_share])
+	# Richness: poorer and richer rolls of this ship move both Budgets together.
+	var poorer_threat := Budgets.threat_total(ship_class, counted.size(), 0.0)
+	var richer_threat := Budgets.threat_total(ship_class, counted.size(), 1.0)
+	var poorer_loot := Budgets.loot_total(ship_class, counted.size(), 0.0)
+	var richer_loot := Budgets.loot_total(ship_class, counted.size(), 1.0)
+	_expect(richer_threat >= poorer_threat and richer_loot >= poorer_loot
+			and crew >= poorer_threat and crew <= richer_threat and loot >= poorer_loot and loot <= richer_loot,
+			"richness does not move both budgets the same way")
+
+
 ## Whether some Room other than the Bridge, an Engine, a Corridor or a Hatch
 ## Room exists for an Armory to take.
 func _can_hold_armory(layout: ShipLayout) -> bool:
@@ -404,7 +481,7 @@ func _check_deterministic(report: ShipGenerator.Report, ship_class: StringName, 
 func _fingerprint(layout: ShipLayout) -> String:
 	var parts: Array[String] = [layout.ship_name, str(layout.richness)]
 	for room in layout.rooms:
-		parts.append("%s%s" % [room.role, room.rects])
+		parts.append("%s%s c%d l%d %s" % [room.role, room.rects, room.crew_count, room.loot_share, room.containers])
 	for door in layout.doors:
 		parts.append("%d-%d@%s/%s/%d" % [door.room_a, door.room_b, door.tile, door.horizontal, door.width])
 	for hatch in layout.hatches:
