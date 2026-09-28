@@ -9,8 +9,9 @@ extends RefCounted
 ## roll, Hull silhouette ([HullGrammar]), Room packing ([RoomPacker]) with the
 ## count-first area loop, Door stitching ([DoorStitcher]), Hatch placement
 ## ([HatchPlacer]), Role assignment ([RoleAssigner]), the Threat and Loot
-## Budgets ([Budgets]) and the shared interior vocabulary ([Interiors]).
-## Role flavour and names are later stages and land on their own.
+## Budgets ([Budgets]) and interiors ([Interiors]: the shared vocabulary,
+## then each Role's row of the flavour table, [RoleFlavour]). Names are a
+## later stage and land on their own.
 
 const CLASSES: Array[StringName] = [&"small", &"medium", &"large"]
 ## Counted (non-corridor) Room count per Class. Nothing rolls 7 or 12 to 13.

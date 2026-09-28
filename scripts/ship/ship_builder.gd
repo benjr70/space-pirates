@@ -196,6 +196,9 @@ static func crew_spawn_position(room: RoomData, index: int) -> Vector2:
 
 static func _spawn_prop(prop: Dictionary, parent: Node2D) -> void:
 	var type: StringName = prop.get("type", &"")
+	# Kinds named only in the Role flavour table are built as their placeholder.
+	if not PROP_SCENES.has(type):
+		type = RoleFlavour.placeholder(type)
 	if not PROP_SCENES.has(type):
 		push_warning("ShipBuilder: unknown prop type %s" % type)
 		return

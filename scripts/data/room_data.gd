@@ -38,12 +38,19 @@ const CORRIDOR_WIDTH := 3
 @export var containers: Array[int] = []
 ## Props to spawn, as [{type = StringName, tile = Vector2i}]. `tile` is the tile
 ## the prop is centred on, so odd-sized props line up with the grid. A
-## Container prop also carries `gold`; a Breaker crate carries `breaker = true`
-## and crew never take cover behind it.
+## Container prop also carries `gold`, whatever its kind; a Breaker crate
+## carries `breaker = true` and crew never take cover behind it; a prop
+## turned a quarter turn carries `rotated = true`. Kinds named only in the
+## Role flavour table (safe, generator, cabinet, footlocker) are built as
+## the placeholder [RoleFlavour] maps them to.
 @export var props: Array[Dictionary] = []
 ## Where each hostile crew member starts, one tile per body, chosen by
 ## interior generation behind cover. Empty means spread them across the floor.
 @export var crew_spawns: Array[Vector2i] = []
+## Which way each body in [member crew_spawns] faces at its spawn, one entry
+## per spawn: a unit tile step, or zero for no preference. Crew at a station
+## face into the Room; crew behind cover face the doorway.
+@export var crew_facings: Array[Vector2i] = []
 
 
 ## The rects making up the floor.

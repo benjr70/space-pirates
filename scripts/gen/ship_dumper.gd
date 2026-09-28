@@ -2,7 +2,7 @@ class_name ShipDumper
 extends RefCounted
 ## ASCII plan of a [ShipLayout], so a seed is legible in a terminal: '#'
 ## wall or crate, '.' floor, '+' doorway, 'H' hatch, '=' console, 'P'
-## cryopod, '$' Container, 'L' locker, 'x' crew, with each Room's centre
+## cryopod, '$' Container of any kind but a locker, 'L' locker, 'x' crew, with each Room's centre
 ## lettered by Role. Fore is at the LEFT: the plan is rotated a quarter turn
 ## so terminal glyph aspect shows true proportion.
 
@@ -28,7 +28,9 @@ static func ascii(layout: ShipLayout) -> String:
 			marks[t] = "H"
 	for room in layout.rooms:
 		for prop in room.props:
-			var glyph: String = PROP_GLYPH.get(prop.type, "?")
+			var glyph: String = PROP_GLYPH.get(prop.type, PROP_GLYPH.get(RoleFlavour.placeholder(prop.type), "?"))
+			if prop.has("gold") and glyph != "L":
+				glyph = "$"
 			for off in Interiors.footprint(prop.type, prop.get("rotated", false)):
 				marks[prop.tile + off] = glyph
 		for t in room.crew_spawns:

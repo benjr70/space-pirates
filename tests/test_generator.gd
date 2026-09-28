@@ -10,6 +10,7 @@ extends SceneTree
 ## Change the seed range only deliberately: it is the regression corpus.
 
 const FIRST_SEED := 1
+## The full sweep; `-- seeds=N` after the script narrows it for a quick run.
 const SEEDS_PER_CLASS := 100
 ## Per-ship budget, so the pre-raid view can generate targets live.
 const TIME_BUDGET_MS := 200.0
@@ -17,9 +18,17 @@ const TIME_BUDGET_MS := 200.0
 var failures: Array[String] = []
 var checks := 0
 var _ship_failures: Array[String] = []
+var seeds_per_class := SEEDS_PER_CLASS
 
 
 func _initialize() -> void:
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("seeds="):
+			seeds_per_class = maxi(int(arg.trim_prefix("seeds=")), 1)
+	_ship_failures.clear()
+	_check_data_driven()
+	for f in _ship_failures:
+		failures.append("flavour table: %s" % f)
 	for ship_class in ShipGenerator.CLASSES:
 		var dumped := false
 		var slowest := 0.0
@@ -31,7 +40,8 @@ func _initialize() -> void:
 		var armory_capable := 0
 		var relaxed := 0
 		var relaxed_twice := 0
-		for seed in range(FIRST_SEED, FIRST_SEED + SEEDS_PER_CLASS):
+		var bare_bridges := 0
+		for seed in range(FIRST_SEED, FIRST_SEED + seeds_per_class):
 			var started := Time.get_ticks_usec()
 			var report := ShipGenerator.generate_report(ship_class, seed)
 			var took := (Time.get_ticks_usec() - started) / 1000.0
@@ -49,6 +59,8 @@ func _initialize() -> void:
 				relaxed += 1
 			if report.hatch_relaxed > 1:
 				relaxed_twice += 1
+			if _count_props(report.layout, &"bridge", &"console") == 0:
+				bare_bridges += 1
 			_ship_failures.clear()
 			_check_ship(report, ship_class)
 			_expect(took <= TIME_BUDGET_MS, "generation took %.0f ms, over the %.0f ms budget" % [took, TIME_BUDGET_MS])
@@ -62,17 +74,20 @@ func _initialize() -> void:
 					print(ShipDumper.ascii(report.layout))
 					print(ShipDumper.listing(report.layout))
 		print("%s: %d seeds, slowest %.0f ms, resizes mean %.2f max %d, archetype rerolls %d, out of band %d, armory rate %d%% (%d%% could hold one), hatches relaxed on %d (%d to half separation)" % [
-				ship_class, SEEDS_PER_CLASS, slowest, float(resizes) / SEEDS_PER_CLASS, most_resizes, rerolls, out_of_band,
-				armories * 100 / SEEDS_PER_CLASS, armory_capable * 100 / SEEDS_PER_CLASS, relaxed, relaxed_twice])
+				ship_class, seeds_per_class, slowest, float(resizes) / seeds_per_class, most_resizes, rerolls, out_of_band,
+				armories * 100 / seeds_per_class, armory_capable * 100 / seeds_per_class, relaxed, relaxed_twice])
 		# Sweep-level: the small-ship Armory rate, and how often Hatch placement
 		# had to relax (small ships with one usable flank cannot help it).
 		_ship_failures.clear()
 		if ship_class == &"small":
-			_expect(armories * 100 >= 25 * SEEDS_PER_CLASS and armories * 100 <= 45 * SEEDS_PER_CLASS,
-					"small ships rolled an Armory %d%% of the time, want 25%% to 45%%" % (armories * 100 / SEEDS_PER_CLASS))
+			_expect(armories * 100 >= 25 * seeds_per_class and armories * 100 <= 45 * seeds_per_class,
+					"small ships rolled an Armory %d%% of the time, want 25%% to 45%%" % (armories * 100 / seeds_per_class))
 		var relax_ceiling := 40 if ship_class == &"small" else 5
-		_expect(relaxed * 100 <= relax_ceiling * SEEDS_PER_CLASS,
-				"hatches relaxed on %d%% of ships, ceiling %d%%" % [relaxed * 100 / SEEDS_PER_CLASS, relax_ceiling])
+		_expect(relaxed * 100 <= relax_ceiling * seeds_per_class,
+				"hatches relaxed on %d%% of ships, ceiling %d%%" % [relaxed * 100 / seeds_per_class, relax_ceiling])
+		# Flavour at sweep level: the Bridge bank fits on nearly every ship.
+		_expect(bare_bridges * 100 <= 5 * seeds_per_class,
+				"%d%% of bridges hold no console bank, ceiling 5%%" % (bare_bridges * 100 / seeds_per_class))
 		for f in _ship_failures:
 			failures.append("%s sweep: %s" % [ship_class, f])
 	_report()
@@ -95,6 +110,7 @@ func _check_ship(report: ShipGenerator.Report, ship_class: StringName) -> void:
 	_check_roles(layout, ship_class)
 	_check_budgets(layout, ship_class)
 	_check_interiors(layout)
+	_check_flavour(layout)
 	var lanes := DoorStitcher.lanes_across_corridors(layout)
 	_expect(lanes.is_empty(), "lanes cross a corridor: %s" % ", ".join(lanes))
 
@@ -453,9 +469,9 @@ func _check_interiors(layout: ShipLayout) -> void:
 				solid[t] = true
 				if prop.get("breaker", false):
 					breakers[t] = true
-			if prop.type in [&"container", &"locker"]:
-				gold += prop.get("gold", 0)
-				_expect(prop.get("gold", 0) > 0, "room %d has a container with no gold" % i)
+			if prop.has("gold"):
+				gold += prop.gold
+				_expect(prop.gold > 0, "room %d has a container with no gold" % i)
 		_expect(gold == room.loot_share, "room %d containers hold %d gold for a share of %d" % [i, gold, room.loot_share])
 		var openings := Interiors.openings(layout, i)
 		# Reachability from every doorway across prop-free tiles.
@@ -510,6 +526,127 @@ func _check_interiors(layout: ShipLayout) -> void:
 					has = true
 			if fits:
 				_expect(has, "room %d doorway at %s has no breaker crate three tiles in" % [i, o.tiles[0]])
+
+
+## Role flavour, read from the table: Containers take the Role's kind;
+## Bridge crew stand at the console bank one tile off the fore wall facing
+## aft; Engine crew stand behind the engine consoles at the aft wall; Shield
+## crew ring the generator; Medbay and Quarters carry cryopods; every crew
+## spawn has a facing entry.
+func _check_flavour(layout: ShipLayout) -> void:
+	for i in layout.rooms.size():
+		var room := layout.rooms[i]
+		_expect(room.crew_facings.size() == room.crew_spawns.size(),
+				"room %d has %d facings for %d spawns" % [i, room.crew_facings.size(), room.crew_spawns.size()])
+		var row := RoleFlavour.row(room.role)
+		var kind := StringName(row.container)
+		for prop in room.props:
+			if prop.has("gold") and kind != &"none":
+				_expect(prop.type == kind, "room %d (%s) holds a %s container, table says %s" % [i, room.role, prop.type, kind])
+		var solid := {}
+		for prop in room.props:
+			for off in Interiors.footprint(prop.type, prop.get("rotated", false)):
+				solid[prop.tile + off] = prop.type
+		match room.role:
+			&"bridge":
+				var consoles := _count_props(layout, &"bridge", &"console")
+				var at_station := 0
+				for k in mini(room.crew_spawns.size(), consoles):
+					var t: Vector2i = room.crew_spawns[k]
+					if solid.get(t + Vector2i.DOWN, &"") == &"console" and room.crew_facings[k] == Vector2i.DOWN:
+						at_station += 1
+				_expect(at_station == mini(room.crew_spawns.size(), consoles),
+						"bridge: %d of %d crew stand at a fore-wall console facing aft" % [at_station, mini(room.crew_spawns.size(), consoles)])
+				# The bank stands one tile off the fore wall; only a wall too
+				# ragged for any console lets them fall back to the long walls.
+				var banked := 0
+				for prop in room.props:
+					if prop.type == &"console" and room.has_tile(prop.tile + Vector2i.UP) \
+							and not room.has_tile(prop.tile + Vector2i.UP * 2):
+						banked += 1
+				_expect(banked == consoles or banked == 0, "bridge: %d of %d consoles stand off the fore wall" % [banked, consoles])
+			&"engine":
+				var consoles := _count_props(layout, &"engine", &"engine_console")
+				_expect(consoles >= 1, "engine room %d has no engine console" % i)
+				var at_station := 0
+				var behind := 0
+				for k in room.crew_spawns.size():
+					var t: Vector2i = room.crew_spawns[k]
+					if solid.get(t + Vector2i.UP, &"") == &"engine_console" and room.crew_facings[k] == Vector2i.UP:
+						at_station += 1
+				for prop in room.props:
+					if prop.type == &"engine_console" and room.has_tile(prop.tile + Vector2i.DOWN) \
+							and not room.has_tile(prop.tile + Vector2i.DOWN * 2):
+						behind += 1
+				if behind > 0:
+					_expect(at_station >= mini(room.crew_spawns.size(), 1),
+							"engine room %d: no crew stands behind an aft-wall engine console" % i)
+			&"shield":
+				var generator := Vector2i.ZERO
+				var generators := 0
+				for prop in room.props:
+					if prop.type == &"generator":
+						generators += 1
+						generator = prop.tile
+				_expect(generators == 1, "shield room %d holds %d generators" % [i, generators])
+				if generators == 1:
+					var ringed := 0
+					for k in room.crew_spawns.size():
+						var t: Vector2i = room.crew_spawns[k]
+						var d := t - generator
+						if maxi(absi(d.x), absi(d.y) - 1) == 1 and room.crew_facings[k] != Vector2i.ZERO:
+							ringed += 1
+					_expect(ringed == room.crew_spawns.size(), "shield room %d: %d of %d crew ring the generator" % [i, ringed, room.crew_spawns.size()])
+			&"medbay":
+				_expect(_count_props(layout, &"medbay", &"cryopod") >= 1, "medbay %d has no cryopod" % i)
+			&"quarters":
+				_expect(_count_props(layout, &"quarters", &"cryopod") >= 2, "quarters %d has fewer than two bunks" % i)
+			&"cargo":
+				var containers := 0
+				var paired := 0
+				for prop in room.props:
+					if not prop.has("gold"):
+						continue
+					containers += 1
+					for side in TileShapes.SIDES:
+						if solid.get(prop.tile + side, &"") == prop.type:
+							paired += 1
+							break
+				if containers >= 2:
+					_expect(paired >= 2, "cargo %d: %d containers but none run in pairs" % [i, containers])
+
+
+## How many props of a type the Rooms of a Role hold.
+func _count_props(layout: ShipLayout, role: StringName, type: StringName) -> int:
+	var n := 0
+	for room in layout.rooms:
+		if room.role != role:
+			continue
+		for prop in room.props:
+			if prop.type == type:
+				n += 1
+	return n
+
+
+## The table is data: swapping the Bridge row for one with no consoles and
+## no islands changes the furnished ship, and putting it back restores it.
+func _check_data_driven() -> void:
+	var layout := ShipGenerator.generate(&"medium", FIRST_SEED)
+	var before := _fingerprint(layout)
+	var table: Dictionary = RoleFlavour.table().duplicate(true)
+	var bridge: Dictionary = table.roles.bridge
+	bridge.consoles = [0, 0]
+	bridge.islands = "none"
+	bridge.light = [0.1, 0.2, 0.3]
+	RoleFlavour.use(table)
+	_expect(RoleFlavour.light(&"bridge").is_equal_approx(Color(0.1, 0.2, 0.3)), "swapped table does not tint the bridge")
+	var swapped := ShipGenerator.generate(&"medium", FIRST_SEED)
+	_expect(_count_props(swapped, &"bridge", &"console") == 0, "bridge still holds consoles with a row of none")
+	_expect(_fingerprint(swapped) != before, "swapping the bridge row left the ship unchanged")
+	RoleFlavour.reset()
+	_expect(_fingerprint(ShipGenerator.generate(&"medium", FIRST_SEED)) == before, "restoring the table did not restore the ship")
+	for role in [&"bridge", &"engine", &"shield", &"armory", &"cargo", &"medbay", &"quarters", &"corridor"]:
+		_expect(RoleFlavour.table().roles.has(String(role)), "no flavour row for %s" % role)
 
 
 ## Whether some Room other than the Bridge, an Engine, a Corridor or a Hatch
@@ -576,7 +713,7 @@ func _check_deterministic(report: ShipGenerator.Report, ship_class: StringName, 
 func _fingerprint(layout: ShipLayout) -> String:
 	var parts: Array[String] = [layout.ship_name, str(layout.richness)]
 	for room in layout.rooms:
-		parts.append("%s%s c%d l%d %s %s %s" % [room.role, room.rects, room.crew_count, room.loot_share, room.containers, room.props, room.crew_spawns])
+		parts.append("%s%s c%d l%d %s %s %s %s" % [room.role, room.rects, room.crew_count, room.loot_share, room.containers, room.props, room.crew_spawns, room.crew_facings])
 	for door in layout.doors:
 		parts.append("%d-%d@%s/%s/%d" % [door.room_a, door.room_b, door.tile, door.horizontal, door.width])
 	for hatch in layout.hatches:

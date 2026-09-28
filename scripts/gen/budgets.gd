@@ -23,9 +23,18 @@ const LOOT_WEIGHT := {&"armory": 4.0, &"cargo": 3.0, &"bridge": 1.0, &"quarters"
 		&"medbay": 1.0, &"engine": 0.5, &"shield": 0.5, &"corridor": 0.0}
 const ARMORY_LOOT_FLOOR := 3
 const CARGO_LOOT_FLOOR := 1
+## The one tuning constant from Loot units to the gold the pirate sees: a
+## Container's `gold` is in units, its displayed value is
+## [method displayed_gold].
+const GOLD_PER_UNIT := 10
 ## Gold per Container by Role: a range rolled per Container.
 const CONTAINER_SIZE := {&"armory": Vector2i(3, 5), &"cargo": Vector2i(1, 2)}
 const MAX_CONTAINERS := 6
+
+
+## The gold the pirate sees for a Container of [param units].
+static func displayed_gold(units: int) -> int:
+	return units * GOLD_PER_UNIT
 
 
 ## Set every Room's crew_count, loot_share and containers on [param layout].

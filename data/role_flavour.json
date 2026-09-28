@@ -1,0 +1,83 @@
+{
+	"placeholders": {
+		"safe": "locker",
+		"generator": "cryopod",
+		"cabinet": "console",
+		"footlocker": "container"
+	},
+	"roles": {
+		"bridge": {
+			"container": "safe",
+			"signature": "console_bank",
+			"wall": "fore",
+			"islands": "crates",
+			"consoles": [3, 4],
+			"crew": "stations",
+			"light": [0.85, 0.92, 1.0]
+		},
+		"engine": {
+			"container": "none",
+			"signature": "engine_consoles",
+			"wall": "aft",
+			"islands": "engine_stubs",
+			"consoles": [2, 2],
+			"crew": "stations",
+			"light": [1.0, 0.6, 0.3]
+		},
+		"shield": {
+			"container": "none",
+			"signature": "generator",
+			"wall": "centre",
+			"islands": "crates",
+			"consoles": [1, 2],
+			"crew": "ring",
+			"light": [0.5, 0.65, 1.0]
+		},
+		"armory": {
+			"container": "locker",
+			"signature": "locker_wall",
+			"wall": "far",
+			"islands": "crates",
+			"consoles": [0, 1],
+			"crew": "deepest",
+			"light": [0.9, 0.35, 0.3]
+		},
+		"cargo": {
+			"container": "container",
+			"signature": "crate_runs",
+			"wall": "far",
+			"runs": [2, 4],
+			"islands": "crates_doubled",
+			"consoles": [0, 0],
+			"crew": "deepest",
+			"light": [0.9, 0.9, 0.85]
+		},
+		"medbay": {
+			"container": "cabinet",
+			"signature": "cryopod_row",
+			"wall": "long",
+			"islands": "cryopods",
+			"consoles": [1, 1],
+			"crew": "deepest",
+			"light": [1.0, 1.0, 1.0]
+		},
+		"quarters": {
+			"container": "footlocker",
+			"signature": "bunk_pairs",
+			"wall": "long",
+			"islands": "cryopod_pairs",
+			"consoles": [0, 1],
+			"crew": "deepest",
+			"light": [1.0, 0.85, 0.65]
+		},
+		"corridor": {
+			"container": "none",
+			"signature": "alcoves",
+			"wall": "long",
+			"islands": "none",
+			"consoles": [0, 0],
+			"crew": "alcoves",
+			"light": [0.6, 0.6, 0.6]
+		}
+	}
+}
