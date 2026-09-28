@@ -65,16 +65,20 @@ static func ascii(layout: ShipLayout) -> String:
 	return "\n".join(lines)
 
 
-## One-line summary: seed, Class, name, Room count, Doors, floor tiles and size.
+## Summary: seed, Class, name, Room count, Doors, floor tiles, size, the
+## sentence, and any invariant the emitted ship still violates.
 static func summary(report: ShipGenerator.Report) -> String:
 	var layout := report.layout
 	var bounds := layout.rooms[0].bounds()
 	for room in layout.rooms:
 		bounds = bounds.merge(room.bounds())
-	return "seed %d  class %s  \"%s\"  |  %d rooms (%d counted), %d doors, %d floor tiles, %dx%d m\n%s" % [
+	var out := "seed %d  class %s  \"%s\"  |  %d rooms (%d counted), %d doors, %d floor tiles, %dx%d m\n%s" % [
 			layout.gen_seed, layout.ship_class, layout.display_name(), layout.rooms.size(), report.counted_rooms,
 			layout.doors.size(), layout.floor_tiles().size(), bounds.size.x, bounds.size.y,
 			report.sentence]
+	for v in report.violations:
+		out += "\nVIOLATED  " + v
+	return out
 
 
 ## One line per Room and Door: index, Role, area, crew, gold and Containers,

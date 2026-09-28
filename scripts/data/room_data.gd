@@ -147,6 +147,10 @@ func has_clear_width(width: int) -> bool:
 ## union -- it may straddle the seam between rects. Props are not considered;
 ## this is the shape invariant only.
 func has_fight_core(core: Vector2i = FIGHT_CORE) -> bool:
+	# A rect that holds the core on its own settles it without a scan.
+	for r in shape():
+		if r.size.x >= core.x and r.size.y >= core.y:
+			return true
 	var floor_set := tiles()
 	var box := bounds()
 	for origin in floor_set:

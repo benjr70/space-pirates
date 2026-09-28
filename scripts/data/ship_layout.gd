@@ -22,6 +22,10 @@ extends Resource
 @export var archetype: StringName = &""
 ## The one roll in [0, 1] that positions both Budgets inside their Class bands.
 @export var richness: float = 0.0
+## How far the Hatch separation rules were relaxed to place this ship's
+## Hatches: 0 strict, 1 without the Flow Distance floor, 2 at half the
+## Hull separation too. A fact about the ship the invariants read.
+@export var hatch_relaxation: int = 0
 ## The generator's one-line account of its roll and repairs, for the dumper.
 @export var gen_sentence: String = ""
 ## The stored name, bare: "Rusty Hauler" or "ISV Rusty Hauler". Never holds

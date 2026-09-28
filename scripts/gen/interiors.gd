@@ -618,8 +618,10 @@ static func _add(plan: Plan, type: StringName, tile: Vector2i, shape: Array[Vect
 	for off in footprint:
 		plan.solid[tile + off] = true
 	# A one-tile piece whose free neighbours run round it in one unbroken arc
-	# can pocket nothing; anything else is checked by flood fill.
-	if not _single_arc(plan, tile, footprint) and not _all_reachable(plan):
+	# can pocket nothing; a piece whose free neighbours all still meet each
+	# other nearby cuts nothing either; anything else is checked by flood fill.
+	if not _single_arc(plan, tile, footprint) and not _ring_meets_locally(plan, tile, footprint) \
+			and not _all_reachable(plan):
 		for off in footprint:
 			plan.solid.erase(tile + off)
 		return false
@@ -657,6 +659,45 @@ static func _single_arc(plan: Plan, tile: Vector2i, footprint: Array[Vector2i]) 
 		if free[k] and not free[(k + RING.size() - 1) % RING.size()]:
 			runs += 1
 	return runs <= 1
+
+
+## How far a local search may wander to join a piece's free neighbours.
+const LOCAL_REACH := 7
+
+
+## Whether every free tile touching the footprint still reaches every other
+## within [constant LOCAL_REACH] steps of the anchor. A piece that leaves
+## its own neighbours joined splits nothing and pockets nothing, since any
+## piece of floor it cut off would have to touch it; when the search runs
+## out of reach without joining them, the caller floods the whole Room.
+static func _ring_meets_locally(plan: Plan, tile: Vector2i, footprint: Array[Vector2i]) -> bool:
+	var ring := {}
+	for off in footprint:
+		for side in TileShapes.SIDES:
+			var n := tile + off + side
+			if plan.floor.has(n) and not plan.solid.has(n):
+				ring[n] = true
+	if ring.size() <= 1:
+		return true
+	var start: Vector2i = ring.keys()[0]
+	var seen := {start: true}
+	var stack: Array[Vector2i] = [start]
+	var found := 1
+	while not stack.is_empty():
+		var c: Vector2i = stack.pop_back()
+		for side in TileShapes.SIDES:
+			var n := c + side
+			if seen.has(n) or not plan.floor.has(n) or plan.solid.has(n):
+				continue
+			if absi(n.x - tile.x) > LOCAL_REACH or absi(n.y - tile.y) > LOCAL_REACH:
+				continue
+			seen[n] = true
+			stack.append(n)
+			if ring.has(n):
+				found += 1
+				if found == ring.size():
+					return true
+	return false
 
 
 ## Whether every prop-free floor tile is reachable from every doorway.

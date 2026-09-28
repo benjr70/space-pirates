@@ -126,7 +126,12 @@ static func floor_without_hatches(layout: ShipLayout) -> Dictionary:
 static func hull_tiles(layout: ShipLayout) -> Dictionary:
 	var floors := floor_without_hatches(layout)
 	var wall_set := walls(layout, floors)
-	var out_set := outside(floors, wall_set)
+	return hull_from(wall_set, outside(floors, wall_set))
+
+
+## The Hull read off a wall set and the outside already flooded, for a
+## caller that holds both.
+static func hull_from(wall_set: Dictionary, out_set: Dictionary) -> Dictionary:
 	var hull := {}
 	for t: Vector2i in wall_set:
 		for side in TileShapes.SIDES:
@@ -172,8 +177,3 @@ static func hull_distances(hull: Dictionary, from: Vector2i) -> Dictionary:
 					dist[n] = dist[t] + 1
 					queue.append(n)
 	return dist
-
-
-## Steps along the Hull from one Hull tile to another, or -1.
-static func hull_distance(hull: Dictionary, from: Vector2i, to: Vector2i) -> int:
-	return hull_distances(hull, from).get(to, -1)

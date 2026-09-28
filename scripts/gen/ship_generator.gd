@@ -24,10 +24,13 @@ const SKELETON_OVERHEAD := 1.8
 ## How many times the Hull is rescaled and repacked when the counted Room
 ## count misses the Class band.
 const MAX_RESIZES := 8
-## When that many resizes cannot land the band, the archetype is re-rolled
-## and the resizes start over, this many times at most: the count is not a
-## smooth function of area, and some silhouettes cannot hold some counts.
-const MAX_REROLLS := 2
+## A ship that fails any invariant ([ShipInvariants]) is rerolled from
+## scratch, archetype included, on a sub-seed derived from the ship seed,
+## this many times at most; the seed stays the ship's identity. The count
+## is not a smooth function of area and some silhouettes cannot hold some
+## counts, so a reroll is also how a Hull that never lands the band is
+## replaced.
+const MAX_REROLLS := 8
 
 
 ## What a generation run reports beyond the layout, for the harness and dumper.
@@ -36,10 +39,16 @@ class Report:
 	var layout: ShipLayout
 	## Archetype, Skeleton, features and repairs, in one line.
 	var sentence := ""
-	## Hull rescales it took to land the Room count in band.
+	## The Skeleton the Hull rolled: spine, ring or chain.
+	var skeleton: StringName = &""
+	## Hull rescales it took to land the Room count in band, on the emitted attempt.
 	var resizes := 0
-	## Archetype re-rolls it took after the resizes ran out.
+	## Whole-ship rerolls it took to emit a valid ship (see [constant MAX_REROLLS]).
 	var rerolls := 0
+	## Invariants the emitted ship still fails: empty for every ship the
+	## generator is allowed to hand out, non-empty only when every reroll
+	## failed too.
+	var violations: Array[String] = []
 	## Counted Room count inside the Class band.
 	var in_band := true
 	## Whether Hatches were placed, at some relaxation level.
@@ -55,11 +64,24 @@ static func generate(ship_class: StringName, seed: int) -> ShipLayout:
 	return generate_report(ship_class, seed).layout
 
 
-## The ship for a seed with the account of how it was generated.
+## The ship for a seed with the account of how it was generated: the seed's
+## own roll first, then, while the emitted ship fails an invariant, a
+## fresh roll on the next sub-seed of the seed, up to [constant MAX_REROLLS]
+## times. The last attempt is emitted either way, with its violations.
 static func generate_report(ship_class: StringName, seed: int) -> Report:
 	assert(ship_class in CLASSES, "unknown ship class %s" % ship_class)
+	var report: Report
+	for attempt in MAX_REROLLS + 1:
+		report = _attempt(ship_class, seed, attempt)
+		if report.violations.is_empty():
+			break
+	return report
+
+
+## One roll of every stage on the seed's [param attempt]-th sub-seed.
+static func _attempt(ship_class: StringName, seed: int, attempt: int) -> Report:
 	var rng := RandomNumberGenerator.new()
-	rng.seed = rng_seed(ship_class, seed)
+	rng.seed = rng_seed(ship_class, seed, attempt)
 	var band: Vector2i = ROOM_BAND[ship_class]
 	var want := rng.randi_range(band.x, band.y)
 	var richness := rng.randf()
@@ -67,71 +89,75 @@ static func generate_report(ship_class: StringName, seed: int) -> Report:
 	# Count first: size the Hull from the wanted count, and when the packed
 	# count misses the band rescale the area by the miss and repack.
 	var report := Report.new()
+	report.rerolls = attempt
 	var hull: HullGrammar.Hull
 	var pack: RoomPacker.Result
 	var doors: Array[RoomPacker.Gap] = []
 	var layout: ShipLayout
 	var hatches: HatchPlacer.Result
 	var landed := false
-	var counted_in_band := false
-	for reroll in MAX_REROLLS + 1:
-		var archetype := HullGrammar.roll_archetype(ship_class, rng)
-		var scale := 1.0
-		# The count is not smooth in area, so once a scale has come in under
-		# the band and another over it, the next tries lie between them.
-		var under_scale := 0.0
-		var over_scale := 0.0
-		report.rerolls = reroll
-		for attempt in MAX_RESIZES:
-			var target := int(want * ROOM_TARGET * SKELETON_OVERHEAD * scale * rng.randf_range(0.95, 1.05))
-			hull = HullGrammar.roll(ship_class, rng, target, archetype)
-			pack = RoomPacker.pack(hull, ship_class, band, rng)
-			var got := pack.counted_rooms()
-			report.resizes = attempt
+	var archetype := HullGrammar.roll_archetype(ship_class, rng)
+	var scale := 1.0
+	# The count is not smooth in area, so once a scale has come in under
+	# the band and another over it, the next tries lie between them.
+	var under_scale := 0.0
+	var over_scale := 0.0
+	for resize in MAX_RESIZES:
+		var target := int(want * ROOM_TARGET * SKELETON_OVERHEAD * scale * rng.randf_range(0.95, 1.05))
+		hull = HullGrammar.roll(ship_class, rng, target, archetype)
+		pack = RoomPacker.pack(hull, ship_class, band, rng)
+		var got := pack.counted_rooms()
+		report.resizes = resize
+		landed = _landed(pack, band)
+		if landed:
+			# Stitching can strand a Room into Bulk, so the count is read again after it.
+			doors = DoorStitcher.stitch(pack.patches, pack.seeded, rng)
+			got = pack.counted_rooms()
 			landed = _landed(pack, band)
-			if landed:
-				# Stitching can strand a Room into Bulk, so the count is read again after it.
-				doors = DoorStitcher.stitch(pack.patches, pack.seeded, rng)
-				got = pack.counted_rooms()
-				landed = _landed(pack, band)
-			counted_in_band = landed
-			if landed:
-				# Hatches need Rooms far enough apart; a ship that cannot hold
-				# them is rerolled like one that missed the band.
-				layout = _assemble(ship_class, seed, richness, pack, doors)
-				hatches = HatchPlacer.place(layout, ship_class, rng, _pinned_roles(pack).size())
-				landed = hatches.relaxed >= 0
-			if landed:
-				break
-			if got < band.x:
-				under_scale = maxf(under_scale, scale)
-			elif got > band.y:
-				over_scale = scale if over_scale == 0.0 else minf(over_scale, scale)
-			if under_scale > 0.0 and over_scale > under_scale:
-				scale = (under_scale + over_scale) / 2.0
-			else:
-				scale *= clampf(float(want) / float(maxi(got, 1)), 0.6, 1.6)
+		if landed:
+			# Hatches need Rooms far enough apart; a ship that cannot hold
+			# them is resized like one that missed the band.
+			layout = _assemble(ship_class, seed, richness, pack, doors)
+			hatches = HatchPlacer.place(layout, ship_class, rng, _pinned_roles(pack).size())
+			landed = hatches.relaxed >= 0
 		if landed:
 			break
+		if got < band.x:
+			under_scale = maxf(under_scale, scale)
+		elif got > band.y:
+			over_scale = scale if over_scale == 0.0 else minf(over_scale, scale)
+		if under_scale > 0.0 and over_scale > under_scale:
+			scale = (under_scale + over_scale) / 2.0
+		else:
+			# Undamped: the spec's (wanted ÷ got)^0.6 step, clamped 0.75 to
+			# 1.5, was tried and landed the band later on more seeds.
+			scale *= clampf(float(want) / float(maxi(got, 1)), 0.6, 1.6)
 
 	if not landed:
 		doors = DoorStitcher.stitch(pack.patches, pack.seeded, rng)
 		layout = _assemble(ship_class, seed, richness, pack, doors)
 		hatches = HatchPlacer.place(layout, ship_class, rng, _pinned_roles(pack).size())
 	layout.hatches = hatches.hatches
+	layout.hatch_relaxation = maxi(hatches.relaxed, 0)
 	RoleAssigner.assign(layout, ship_class, rng, _pinned_roles(pack))
 	Budgets.apply(layout, ship_class)
 	Interiors.furnish(layout, rng)
 	layout.archetype = hull.arch
 	layout.ship_name = ShipNamer.name_for(ship_class, seed, hull.arch)
 	report.layout = layout
+	report.skeleton = hull.skeleton
 	report.hatch_relaxed = hatches.relaxed
 	report.hatches_placed = hatches.relaxed >= 0
-	report.counted_rooms = pack.counted_rooms()
-	report.in_band = counted_in_band
+	# Read off the emitted ship: the last stitch can still strand a Room.
+	report.counted_rooms = 0
+	for room in layout.rooms:
+		if room.role != &"corridor":
+			report.counted_rooms += 1
+	report.in_band = report.counted_rooms >= band.x and report.counted_rooms <= band.y
 	for patch in pack.patches:
 		if patch.stranded:
 			report.stranded += 1
+	report.violations = ShipInvariants.violations(layout, ship_class)
 
 	var features := pack.features.duplicate()
 	if report.stranded > 0:
@@ -146,6 +172,8 @@ static func generate_report(ship_class: StringName, seed: int) -> Report:
 		features.append("NO HATCHES")
 	if not report.in_band:
 		features.append("OUT OF BAND")
+	if not report.violations.is_empty():
+		features.append("INVALID×%d" % report.violations.size())
 	report.sentence = hull.sentence()
 	if not features.is_empty():
 		report.sentence += " / " + ", ".join(features)
@@ -176,8 +204,11 @@ static func _landed(pack: RoomPacker.Result, band: Vector2i) -> bool:
 
 
 ## The RNG seed for a Class and ship seed: stable across runs and machines.
-static func rng_seed(ship_class: StringName, seed: int) -> int:
-	return hash("%s#%d" % [ship_class, seed])
+## Attempt 0 is the seed's own roll; each reroll takes the next sub-seed.
+static func rng_seed(ship_class: StringName, seed: int, attempt: int = 0) -> int:
+	if attempt == 0:
+		return hash("%s#%d" % [ship_class, seed])
+	return hash("%s#%d#reroll%d" % [ship_class, seed, attempt])
 
 
 ## Turn packed patches and confirmed gaps into a [ShipLayout].
