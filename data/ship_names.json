@@ -1,0 +1,35 @@
+{
+	"prefix_chance": 0.4,
+	"prefixes": ["ISV", "MV", "FV", "RSV", "CSS"],
+	"shapes": {"epithet": 0.45, "proper": 0.35, "place": 0.2},
+	"epithet": {
+		"adjectives": ["Rusty", "Patient", "Idle", "Lucky", "Hollow", "Bitter", "Quiet", "Crooked", "Faithful",
+			"Sullen", "Wandering", "Salted", "Grey", "Iron", "Late", "Nervous", "Restless", "Stubborn", "Tidy",
+			"Brass", "Weary", "Blind", "Merry", "Cold", "Honest", "Slow", "Second", "Borrowed", "Humble", "Loud"],
+		"nouns": ["Hauler", "Widow", "Drifter", "Lantern", "Pilgrim", "Gambler", "Orphan", "Beggar", "Sparrow",
+			"Anvil", "Kettle", "Mule", "Vagrant", "Debtor", "Tinker", "Ferryman", "Hound", "Moth", "Compass",
+			"Ledger", "Harrow", "Shepherd", "Cousin", "Bargain", "Penny", "Sermon", "Rumour", "Wager", "Herring"]
+	},
+	"archetypes": {
+		"wedge": {"adjectives": ["Keen", "Narrow"], "nouns": ["Wedge", "Spear", "Needle", "Dart"]},
+		"hammerhead": {"adjectives": ["Blunt", "Heavy"], "nouns": ["Hammer", "Mallet", "Maul"]},
+		"saucer": {"adjectives": ["Round", "Flat"], "nouns": ["Dish", "Saucer", "Platter", "Coin"]},
+		"block": {"adjectives": ["Square", "Stout"], "nouns": ["Brick", "Slab", "Block", "Tombstone"]},
+		"boomtail": {"adjectives": ["Trailing"], "nouns": ["Comet", "Kite", "Tadpole", "Boom"]}
+	},
+	"classes": {
+		"small": {"adjectives": ["Little"], "nouns": ["Pup", "Skiff", "Minnow", "Sprat"]},
+		"medium": {"adjectives": [], "nouns": ["Yeoman", "Tender", "Packet"]},
+		"large": {"adjectives": ["Great"], "nouns": ["Mother", "Titan", "Leviathan", "Bulwark"]}
+	},
+	"proper": ["Kestrel", "Halcyon", "Mara Vance", "Orrin Vale", "Calloway", "Persephone", "Tamsin Reyes",
+		"Bellwether", "Corvid", "Ithaca", "Marlowe", "Ondine", "Saffron", "Tobias Crane", "Vesper", "Wren",
+		"Ysolde", "Antares", "Brannock", "Delphine", "Ezra Holt", "Galatea", "Juniper", "Lysander", "Nell Ashby"],
+	"place": {
+		"places": ["Vesta", "Ceres", "Orrin", "Kepler", "Tannhauser", "Ludd", "Meridian", "Pallas", "Hesper",
+			"Cinder", "Junction", "Calder", "Ember", "Tarsus", "Wickham"],
+		"things": ["Tide", "Hand", "Promise", "Debt", "Wake", "Dawn", "Mercy", "Reach", "Gate", "Fortune",
+			"Crossing", "Folly", "Answer", "Ghost", "Bounty"],
+		"possessive_chance": 0.5
+	}
+}

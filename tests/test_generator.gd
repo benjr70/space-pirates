@@ -19,6 +19,10 @@ var failures: Array[String] = []
 var checks := 0
 var _ship_failures: Array[String] = []
 var seeds_per_class := SEEDS_PER_CLASS
+## Name tallies over the whole sweep: prefixed ships and ships per shape.
+var _prefixed := 0
+var _shapes := {}
+var _named := 0
 
 
 func _initialize() -> void:
@@ -90,6 +94,10 @@ func _initialize() -> void:
 				"%d%% of bridges hold no console bank, ceiling 5%%" % (bare_bridges * 100 / seeds_per_class))
 		for f in _ship_failures:
 			failures.append("%s sweep: %s" % [ship_class, f])
+	_ship_failures.clear()
+	_check_name_distribution()
+	for f in _ship_failures:
+		failures.append("name sweep: %s" % f)
 	_report()
 	quit(1 if failures.size() > 0 else 0)
 
@@ -111,6 +119,7 @@ func _check_ship(report: ShipGenerator.Report, ship_class: StringName) -> void:
 	_check_budgets(layout, ship_class)
 	_check_interiors(layout)
 	_check_flavour(layout)
+	_check_name(report, ship_class)
 	var lanes := DoorStitcher.lanes_across_corridors(layout)
 	_expect(lanes.is_empty(), "lanes cross a corridor: %s" % ", ".join(lanes))
 
@@ -614,6 +623,84 @@ func _check_flavour(layout: ShipLayout) -> void:
 							break
 				if containers >= 2:
 					_expect(paired >= 2, "cargo %d: %d containers but none run in pairs" % [i, containers])
+
+
+## Words a name may never carry beyond the Roles themselves: a name never
+## says what Rooms a ship rolled.
+const ROLE_SYNONYMS: Array[String] = ["armoury", "hold", "vault", "barracks", "infirmary", "hospital",
+		"reactor", "warehouse", "cockpit", "helm", "arsenal", "magazine"]
+
+
+## Every Role name plus [constant ROLE_SYNONYMS], lower case.
+func _role_words() -> Array[String]:
+	var out: Array[String] = ["corridor"]
+	for role: StringName in RoleAssigner.RANGES[&"large"]:
+		out.append(String(role).to_lower())
+	out.append_array(ROLE_SYNONYMS)
+	return out
+
+
+## The name: non-empty, never starts with "The", equals what the namer rolls
+## for the seed and archetype, carries no Role word, carries an archetype's
+## or a Class's words only on a ship of that archetype or Class, and
+## displays with "The" only when unprefixed.
+func _check_name(report: ShipGenerator.Report, ship_class: StringName) -> void:
+	var layout := report.layout
+	var name := layout.ship_name
+	_expect(not name.is_empty(), "ship has no name")
+	_expect(not name.begins_with("The "), "name '%s' stores the article" % name)
+	_expect(layout.archetype in HullGrammar.ARCHETYPES, "layout carries archetype '%s'" % layout.archetype)
+	var roll := ShipNamer.roll(ship_class, layout.gen_seed, layout.archetype)
+	_expect(name == roll.name, "name '%s' is not the namer's '%s' for this seed" % [name, roll.name])
+	_named += 1
+	if roll.prefix != "":
+		_prefixed += 1
+		_expect(name.begins_with(roll.prefix + " "), "prefixed name '%s' does not start with %s" % [name, roll.prefix])
+		_expect(layout.display_name() == name, "prefixed name displays as '%s'" % layout.display_name())
+	else:
+		_expect(layout.display_name() == "The " + name, "unprefixed name displays as '%s'" % layout.display_name())
+	_shapes[roll.shape] = _shapes.get(roll.shape, 0) + 1
+	var words: Array[String] = []
+	for w in name.split(" "):
+		words.append(w.trim_suffix("'s").to_lower())
+	var role_words := _role_words()
+	for w in words:
+		_expect(not w in role_words, "name '%s' carries the Role word '%s'" % [name, w])
+	for arch in HullGrammar.ARCHETYPES:
+		if arch == layout.archetype:
+			continue
+		for w: String in _flat(ShipNamer.hint_words(ShipNamer.table().archetypes, arch)):
+			_expect(not w.to_lower() in words, "%s ship named '%s' carries the %s word '%s'" % [layout.archetype, name, arch, w])
+	for cls in ShipGenerator.CLASSES:
+		if cls == ship_class:
+			continue
+		for w: String in _flat(ShipNamer.hint_words(ShipNamer.table().classes, cls)):
+			_expect(not w.to_lower() in words, "%s ship named '%s' carries the %s word '%s'" % [ship_class, name, cls, w])
+
+
+## Every word of a {adjectives: [...], nouns: [...]} entry.
+func _flat(entry: Dictionary) -> Array:
+	var out := []
+	for key in entry:
+		out.append_array(entry[key])
+	return out
+
+
+## Over the sweep: prefixed names near 40%, the three shapes near 45/35/20.
+## Eight points is about three sigma at 300 ships; the seeds are fixed, so
+## only a change to the namer's hash string re-rolls the sample.
+func _check_name_distribution() -> void:
+	if _named == 0:
+		return
+	var prefixed := _prefixed * 100 / _named
+	print("names: %d ships, %d%% prefixed, shapes %s" % [_named, prefixed, _shapes])
+	_expect(absi(prefixed - 40) <= 8, "%d%% of names carry a registry prefix, want near 40%%" % prefixed)
+	var want := {"epithet": 45, "proper": 35, "place": 20}
+	for shape: String in want:
+		var got: int = _shapes.get(shape, 0) * 100 / _named
+		_expect(absi(got - want[shape]) <= 8, "%d%% of names are %s, want near %d%%" % [got, shape, want[shape]])
+	for shape in _shapes:
+		_expect(want.has(shape), "unknown name shape '%s'" % shape)
 
 
 ## How many props of a type the Rooms of a Role hold.

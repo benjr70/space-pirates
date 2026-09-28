@@ -10,8 +10,8 @@ extends RefCounted
 ## count-first area loop, Door stitching ([DoorStitcher]), Hatch placement
 ## ([HatchPlacer]), Role assignment ([RoleAssigner]), the Threat and Loot
 ## Budgets ([Budgets]) and interiors ([Interiors]: the shared vocabulary,
-## then each Role's row of the flavour table, [RoleFlavour]). Names are a
-## later stage and land on their own.
+## then each Role's row of the flavour table, [RoleFlavour]) and the name
+## ([ShipNamer]). Validation with bounded reroll lands on its own.
 
 const CLASSES: Array[StringName] = [&"small", &"medium", &"large"]
 ## Counted (non-corridor) Room count per Class. Nothing rolls 7 or 12 to 13.
@@ -122,6 +122,8 @@ static func generate_report(ship_class: StringName, seed: int) -> Report:
 	RoleAssigner.assign(layout, ship_class, rng, _pinned_roles(pack))
 	Budgets.apply(layout, ship_class)
 	Interiors.furnish(layout, rng)
+	layout.archetype = hull.arch
+	layout.ship_name = ShipNamer.name_for(ship_class, seed, hull.arch)
 	report.layout = layout
 	report.hatch_relaxed = hatches.relaxed
 	report.hatches_placed = hatches.relaxed >= 0
@@ -185,7 +187,6 @@ static func _assemble(ship_class: StringName, seed: int, richness: float,
 	layout.gen_seed = seed
 	layout.ship_class = ship_class
 	layout.richness = richness
-	layout.ship_name = "%s target %d" % [ship_class.capitalize(), seed]
 
 	for patch in pack.patches:
 		if patch.is_empty():

@@ -16,6 +16,10 @@ extends Resource
 ## Ship Class it was advertised and generated as: small, medium or large.
 ## Empty for the hand-authored ship.
 @export var ship_class: StringName = &""
+## The archetype of the Hull's main Mass (wedge, hammerhead, saucer, block,
+## boomtail): what the silhouette reads as, and what the name may hint at.
+## Empty for the hand-authored ship.
+@export var archetype: StringName = &""
 ## The one roll in [0, 1] that positions both Budgets inside their Class bands.
 @export var richness: float = 0.0
 ## The generator's one-line account of its roll and repairs, for the dumper.
@@ -24,15 +28,13 @@ extends Resource
 ## "The"; see [method display_name].
 @export var ship_name: String = "Unnamed"
 
-## Registry prefixes a name may carry. A prefixed ship is not "The" anything.
-const REGISTRY_PREFIXES: Array[String] = ["ISV", "MV", "FV", "RSV", "CSS"]
 
 
 ## What the pirate reads: "The Rusty Hauler", or the name as stored when it
-## carries a registry prefix.
+## carries a registry prefix (the pool is [ShipNamer]'s data file).
 func display_name() -> String:
 	var first := ship_name.get_slice(" ", 0)
-	if ship_name.contains(" ") and first in REGISTRY_PREFIXES:
+	if ship_name.contains(" ") and first in ShipNamer.prefixes():
 		return ship_name
 	return "The " + ship_name
 
