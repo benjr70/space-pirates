@@ -31,6 +31,10 @@ var k_clamber_time := 0.5
 var k_clamber_dip := 0.18
 ## How far ahead of the feet the ledge probe looks.
 var k_probe_dist := 0.75
+## Seconds after sprint is released in which a crouch still starts a slide,
+## so a pinky moving from Shift to Ctrl does not lose the slide.
+var k_sprint_grace := 0.25
+var _sprint_grace := 0.0
 ## Clamber only while the jump button is held (Halo's auto clamber is the
 ## `false` case: any airborne approach to a ledge mantles).
 var k_clamber_needs_jump_held := true
@@ -100,6 +104,7 @@ func _physics_process(delta: float) -> void:
 	var sprint_held := Input.is_action_pressed("sprint")
 	if not sprint_held:
 		_sprint_latched = false
+	_sprint_grace = maxf(_sprint_grace - delta, 0.0)
 	var firing := Input.is_action_pressed("shoot") and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
 	if firing and state == State.SPRINT:
 		_sprint_latched = true
@@ -129,7 +134,7 @@ func _physics_process(delta: float) -> void:
 					next = State.SPRINT
 				_set_state(next, "slide ended")
 		elif crouch_held:
-			if state == State.SPRINT:
+			if state == State.SPRINT or (_sprint_grace > 0.0 and state == State.WALK):
 				_start_slide(direction)
 			else:
 				_set_state(State.CROUCH, "crouch held")
@@ -139,6 +144,7 @@ func _physics_process(delta: float) -> void:
 		elif sprint_held and forward_held and not _sprint_latched and not firing:
 			_set_state(State.SPRINT, "sprint held")
 		elif state == State.SPRINT and not (sprint_held and forward_held):
+			_sprint_grace = k_sprint_grace
 			_set_state(State.WALK, "sprint released")
 
 	# --- move ---
