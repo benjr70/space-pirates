@@ -48,3 +48,14 @@ extends Resource
 @export var ads_zoom := 1.3
 ## Multiplier on walking speed while aimed.
 @export var ads_speed := 0.8
+
+@export_group("Viewmodel")
+## The weapon mesh's own skeleton clips, by name on its AnimationPlayer.
+@export var model_fire_clip: StringName = &"PistolArmature|Fire"
+@export var model_reload_clip: StringName = &"PistolArmature|Reload"
+## Racks the slide to close an empty reload; blank for a weapon without one.
+@export var model_rack_clip: StringName = &"PistolArmature|Slide"
+## How long the action cycles on a shot.
+@export var fire_cycle_time := 0.15
+## The empty reload ends with the rack; this much of it is the rack.
+@export var rack_time := 0.3

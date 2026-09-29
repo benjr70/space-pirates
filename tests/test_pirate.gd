@@ -125,6 +125,8 @@ func _run() -> void:
 	_check_clips_exist()
 	await _check_clips_play()
 	await _check_clips_follow_profile()
+	await _check_sidearm_model()
+	await _check_sidearm_clips()
 	await _check_hud_crosshair()
 	await _check_hud_ammo()
 	await _check_hud_dry_click()
@@ -1291,7 +1293,7 @@ func _check_clips_exist() -> void:
 
 
 func _mesh_at_identity() -> bool:
-	var mesh: Node3D = weapon.mesh
+	var mesh: Node3D = weapon.sidearm
 	return mesh.position.is_zero_approx() and mesh.rotation.is_zero_approx()
 
 
@@ -1308,7 +1310,7 @@ func _check_clips_play() -> void:
 	_expect(clips.current_animation == "fire" and clips.is_playing(), "a shot did not play fire, playing %s" % clips.current_animation)
 	await _seconds(0.3)
 	_expect(not clips.is_playing(), "fire clip still playing after 0.3 s")
-	_expect(_mesh_at_identity(), "the mesh is off identity after the fire clip: %s %s" % [weapon.mesh.position, weapon.mesh.rotation_degrees])
+	_expect(_mesh_at_identity(), "the mesh is off identity after the fire clip: %s %s" % [weapon.sidearm.position, weapon.sidearm.rotation_degrees])
 
 	# Tactical reload with rounds left.
 	player.start_reload()
@@ -1327,7 +1329,7 @@ func _check_clips_play() -> void:
 	player.cancel_reload()
 	await _frames(1)
 	_expect(not clips.is_playing(), "the reload cancel left %s playing" % clips.current_animation)
-	_expect(_mesh_at_identity(), "the reload cancel left the mesh at %s %s" % [weapon.mesh.position, weapon.mesh.rotation_degrees])
+	_expect(_mesh_at_identity(), "the reload cancel left the mesh at %s %s" % [weapon.sidearm.position, weapon.sidearm.rotation_degrees])
 
 	# Empty reload on the dry pull.
 	player.ammo = 0
@@ -1366,6 +1368,82 @@ func _check_clips_follow_profile() -> void:
 	_expect(not clips.is_playing(), "the reload clip outlasted the heavy pistol's reload")
 	player.weapon = sidearm
 	await _place(RUNWAY)
+
+
+## --- the Sidearm mesh ---
+
+## The Viewmodel carries the Quaternius pistol: in ADS its front sight sits
+## on the camera axis, from the hip it sits low right, and the shot leaves
+## its muzzle.
+func _check_sidearm_model() -> void:
+	await _place(RUNWAY)
+	var sidearm: Node3D = weapon.get_node_or_null("Sidearm")
+	_expect(sidearm != null, "the Viewmodel has no Sidearm node")
+	if sidearm == null:
+		return
+	_expect(weapon.sidearm == sidearm, "the Viewmodel's Sidearm node is not the pistol model")
+	_expect(sidearm.find_child("Skeleton3D", true, false) != null, "the pistol has no skeleton")
+	var sight: Node3D = weapon.get_node_or_null("SightTip")
+	_expect(sight != null, "no SightTip marker on the Viewmodel")
+	if sight == null:
+		return
+	await _aim(true)
+	await _seconds(0.5)
+	var in_camera: Vector3 = player.camera.to_local(sight.global_position)
+	_expect(absf(in_camera.x) < 0.005 and absf(in_camera.y) < 0.005,
+			"in ADS the front sight sits at (%.3f, %.3f) m off the camera axis" % [in_camera.x, in_camera.y])
+	_expect(in_camera.z < 0.0, "the front sight is behind the camera in ADS")
+	var muzzle_in_camera: Vector3 = player.camera.to_local(player.muzzle.global_position)
+	_expect(absf(muzzle_in_camera.x) < 0.01, "in ADS the muzzle is %.3f m off the axis" % muzzle_in_camera.x)
+	await _aim(false)
+	await _seconds(0.5)
+	in_camera = player.camera.to_local(sight.global_position)
+	_expect(in_camera.x > 0.1 and in_camera.y < -0.05, "from the hip the sight sits at (%.2f, %.2f), not low right" % [in_camera.x, in_camera.y])
+
+
+## The pistol's own clips: the slide cycles on a shot, the magazine on a
+## reload for the Profile's time, and a cancel leaves the skeleton at rest.
+func _check_sidearm_clips() -> void:
+	await _place(RUNWAY)
+	var anim: AnimationPlayer = weapon.sidearm_clips
+	_expect(anim != null, "the Sidearm mesh has no AnimationPlayer")
+	if anim == null:
+		return
+	var profile: WeaponProfile = player.weapon
+	for clip_name in [profile.model_fire_clip, profile.model_reload_clip, profile.model_rack_clip]:
+		_expect(anim.has_animation(clip_name), "the Sidearm mesh lacks the %s clip" % clip_name)
+	_expect(not anim.is_playing(), "a pistol clip is playing at rest: %s" % anim.current_animation)
+	_expect(_fire_and_drop(), "no shot for the pistol fire clip")
+	await _frames(1)
+	_expect(anim.current_animation == profile.model_fire_clip and anim.is_playing(), "a shot played %s on the Sidearm" % anim.current_animation)
+	await _seconds(0.3)
+	_expect(not anim.is_playing(), "the pistol fire clip outlasted 0.3 s")
+	player.start_reload()
+	await _frames(1)
+	_expect(anim.current_animation == profile.model_reload_clip and anim.is_playing(), "a reload played %s on the Sidearm" % anim.current_animation)
+	var wanted: float = anim.get_animation(profile.model_reload_clip).length / profile.reload_tactical
+	_expect(absf(anim.get_playing_speed() - wanted) < 0.01, "the pistol reload runs at %.2fx, want %.2fx" % [anim.get_playing_speed(), wanted])
+	await _seconds(0.4)
+	var skeleton: Skeleton3D = weapon.sidearm.find_child("Skeleton3D", true, false)
+	var magazine := skeleton.find_bone("Magazine")
+	var moved: Vector3 = skeleton.get_bone_pose_position(magazine)
+	_expect(not moved.is_equal_approx(skeleton.get_bone_rest(magazine).origin), "the reload clip is not moving the magazine bone")
+	player.cancel_reload()
+	await _frames(1)
+	_expect(not anim.is_playing(), "the cancel left %s playing on the pistol" % anim.current_animation)
+	_expect(skeleton.get_bone_pose_position(magazine).is_equal_approx(skeleton.get_bone_rest(magazine).origin),
+			"the cancel left the magazine bone at %s" % skeleton.get_bone_pose_position(magazine))
+	# The empty reload: magazine clip, then the rack in its last beat, and
+	# nothing left playing once the reload ends.
+	player.ammo = 0
+	player.fire()
+	await _frames(1)
+	_expect(anim.current_animation == profile.model_reload_clip, "the empty reload played %s on the Sidearm" % anim.current_animation)
+	await _seconds(profile.reload_empty - profile.rack_time / 2.0)
+	_expect(anim.current_animation == profile.model_rack_clip and anim.is_playing(), "near the end of the empty reload the Sidearm plays %s, not the rack" % anim.current_animation)
+	await _seconds(profile.rack_time / 2.0 + 0.1)
+	_expect(not anim.is_playing(), "the Sidearm clip outlasted the empty reload")
+	_clear_shots()
 
 
 ## --- HUD ---

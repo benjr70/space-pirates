@@ -1,7 +1,7 @@
 class_name Viewmodel
 extends Node3D
 ## The weapon as the Pirate sees it: the node under the camera that carries
-## the mesh, moved every frame from what he is doing. Weapon only, no arms.
+## the Sidearm, moved every frame from what he is doing. Weapon only, no arms.
 ##
 ## This is the procedural layer. It owns the Viewmodel's transform:
 ##   pose    hip by default; sights centred under the crosshair in Aim Down
@@ -24,6 +24,13 @@ extends Node3D
 ## clip, a Melee does (the Pirate has already dropped the reload by then),
 ## and a cancel stops the clip and puts the mesh back at rest.
 ##
+## The Sidearm's mesh (Quaternius's Animated Pistol, scaled to life size
+## under `Sidearm`) brings its own skeleton clips: the slide cycles on a
+## shot, the magazine drops and seats on a reload, and the slide racks to
+## close an empty reload. The Weapon Profile names those clips and times
+## them, so they play on the mesh's AnimationPlayer time-scaled the same way
+## as the holder clips, and a cancel resets the bones.
+##
 ## Wall clipping is handled by material flags: every surface is squashed
 ## toward the camera in depth and drawn with its own narrow FOV, so the
 ## weapon never pokes through a wall he stands against. No SubViewport.
@@ -31,9 +38,11 @@ extends Node3D
 @export_group("Poses")
 ## Holder position and rotation for each pose, in camera space. The mesh
 ## faces +Z, so every pose turns it round.
-@export var pose_hip := Vector3(0.25, -0.28, -0.45)
-@export var pose_ads := Vector3(0.0, -0.19, -0.36)
-@export var pose_low := Vector3(0.30, -0.42, -0.40)
+@export var pose_hip := Vector3(0.16, -0.18, -0.30)
+## Calibrated so the Sidearm's front sight (the SightTip marker) sits on the
+## camera axis; only x and y matter for that, z sets how big it looks.
+@export var pose_ads := Vector3(0.0, -0.1076, -0.32)
+@export var pose_low := Vector3(0.20, -0.26, -0.30)
 @export var rotation_hip := Vector3(0.0, 180.0, 0.0)
 @export var rotation_low := Vector3(-35.0, 180.0, 15.0)
 ## How fast the Viewmodel settles toward its target pose.
@@ -83,12 +92,20 @@ const RELOAD_CLIPS: Array[StringName] = [&"reload_tactical", &"reload_empty"]
 ## camera work reads it into its roll target.
 var descope_roll := 0.0
 
-## The clip layer and the mesh it moves.
+## The clip layer and the Sidearm it moves.
 @onready var clips: AnimationPlayer = $Clips
-@onready var mesh: Node3D = $Blaster
+@onready var sidearm: Node3D = $Sidearm
+## The Sidearm mesh's own skeleton clips and bones.
+@onready var sidearm_clips: AnimationPlayer = sidearm.find_child("AnimationPlayer", true, false)
+@onready var _skeleton: Skeleton3D = sidearm.find_child("Skeleton3D", true, false)
+## True while the empty reload's magazine clip runs, so its end racks the slide.
+var _rack_after_reload := false
 
 ## The Pirate: the scene this Viewmodel is built into.
 var _pirate: CharacterBody3D
+## What he is holding, read live so a swapped Profile takes effect.
+var profile: WeaponProfile:
+	get: return _pirate.weapon
 var _camera: Camera3D
 var _sway := Vector2.ZERO
 var _bob_phase := 0.0
@@ -109,6 +126,7 @@ func _ready() -> void:
 	_pirate.reload_started.connect(_on_reload_started)
 	_pirate.reload_cancelled.connect(_stop_clip)
 	_pirate.melee_swung.connect(_on_melee_swung)
+	sidearm_clips.animation_finished.connect(_on_sidearm_clip_finished)
 
 
 ## Everything at rest in the hip pose: what a respawn wants.
@@ -180,13 +198,23 @@ func _on_fired() -> void:
 	_camera_kick = camera_kick_degrees
 	if not _reload_clip_playing():
 		_play_clip("fire")
+		_play_for(sidearm_clips, profile.model_fire_clip, profile.fire_cycle_time)
 
 
-## The clip stretched or squeezed to the Profile's reload time.
+## The clips stretched or squeezed to the Profile's reload time. The empty
+## reload spends its last beat racking the slide, when the Profile has a
+## rack and the reload is long enough to hold one.
 func _on_reload_started(from_empty: bool) -> void:
-	var clip: StringName = RELOAD_CLIPS[1] if from_empty else RELOAD_CLIPS[0]
-	var wanted: float = _pirate.weapon.reload_empty if from_empty else _pirate.weapon.reload_tactical
-	_play_clip(clip, clips.get_animation(clip).length / maxf(wanted, 0.01))
+	var wanted: float = profile.reload_empty if from_empty else profile.reload_tactical
+	_play_for(clips, RELOAD_CLIPS[1] if from_empty else RELOAD_CLIPS[0], wanted)
+	_rack_after_reload = from_empty and profile.model_rack_clip != &"" and wanted > profile.rack_time
+	_play_for(sidearm_clips, profile.model_reload_clip, wanted - (profile.rack_time if _rack_after_reload else 0.0))
+
+
+func _on_sidearm_clip_finished(clip: StringName) -> void:
+	if clip == profile.model_reload_clip and _rack_after_reload:
+		_rack_after_reload = false
+		_play_for(sidearm_clips, profile.model_rack_clip, profile.rack_time)
 
 
 func _on_melee_swung(_target: Node3D, _killed: bool) -> void:
@@ -204,11 +232,22 @@ func _play_clip(clip: StringName, speed: float = 1.0) -> void:
 	clips.play(clip, -1, speed)
 
 
-## Whatever was playing stops, and the mesh sits at rest on the Viewmodel.
+## [param clip] on [param player] from the top, at the speed that makes it
+## last [param seconds].
+func _play_for(player: AnimationPlayer, clip: StringName, seconds: float) -> void:
+	player.stop()
+	player.play(clip, -1, player.get_animation(clip).length / maxf(seconds, 0.01))
+
+
+## Whatever was playing stops, the Sidearm sits at rest on the Viewmodel and
+## its bones go back to their rest pose.
 func _stop_clip() -> void:
 	clips.stop()
-	mesh.position = Vector3.ZERO
-	mesh.rotation = Vector3.ZERO
+	sidearm.position = Vector3.ZERO
+	sidearm.rotation = Vector3.ZERO
+	_rack_after_reload = false
+	sidearm_clips.stop()
+	_skeleton.reset_bone_poses()
 
 
 func _on_descoped() -> void:
