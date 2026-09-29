@@ -90,6 +90,8 @@ func _physics_process(delta: float) -> void:
 		return
 
 	var input := Input.get_vector("move_left", "move_right", "move_up", "move_down")
+	if _input_locked():
+		input = Vector2.ZERO
 	var direction := (global_transform.basis * Vector3(input.x, 0.0, input.y))
 	direction.y = 0.0
 	direction = direction.normalized() if direction.length_squared() > 0.0 else Vector3.ZERO
@@ -156,6 +158,7 @@ func _physics_process(delta: float) -> void:
 				mult = k_sprint_mult
 			elif state == State.CROUCH:
 				mult = k_crouch_speed_mult
+			mult *= _extra_speed_mult()
 			if direction != Vector3.ZERO:
 				flat = flat.move_toward(direction * max_speed * mult, acceleration * delta)
 			else:
@@ -178,6 +181,16 @@ func _physics_process(delta: float) -> void:
 
 	_animate_camera(delta)
 	move_and_slide()
+
+
+## Hook for layers above (a melee lunge ignores movement input for a beat).
+func _input_locked() -> bool:
+	return false
+
+
+## Hook for layers above (ADS slows the walk).
+func _extra_speed_mult() -> float:
+	return 1.0
 
 
 func _set_state(next: State, why: String) -> void:

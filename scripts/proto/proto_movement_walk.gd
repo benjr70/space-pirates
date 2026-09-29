@@ -1,9 +1,15 @@
 extends Node3D
-## PROTOTYPE — walk the sprint / crouch / slide / clamber set (issue #32).
+## PROTOTYPE — walk the sprint / crouch / slide / clamber set (issue #32),
+## now with the pistol, ADS, melee and the Viewmodel on top (issue #36).
 ##
 ##   flatpak run org.godotengine.Godot --path . res://scenes/proto_movement_walk.tscn \
 ##       -- sprint=1.10 fov=0 crouch=1.2 crouchspeed=0.5 slide=0.6 boost=1.15 \
-##          tilt=6 cmin=0.6 cmax=1.6 ctime=0.5 dip=0.18 ceiling=2.5 crew=0 hold=1
+##          tilt=6 cmin=0.6 cmax=1.6 ctime=0.5 dip=0.18 ceiling=3.5 crew=0 hold=1 \
+##          interval=0.12 zoom=1.3 adsspeed=0.8 spread=1 bloom=0.5 mdmg=3 dummies=3
+##
+## Gunplay (#36): LMB fires semi-auto, RMB holds ADS, R reloads, V or mouse 4
+## melees. Three DUMMIES stand in the ledge course facing their blue nose:
+## walk round behind one and melee for the back-hit kill; they get back up.
 ##
 ## Every knob is optional; the defaults are the Halo reference doc's starting
 ## table. `ceiling` stretches the walls and lifts the ceiling GridMap, because
@@ -22,9 +28,12 @@ const KNOB_DEFAULTS := {
 	sprint = 1.10, fov = 0.0, crouch = 1.2, crouchspeed = 0.5,
 	slide = 0.6, boost = 1.15, tilt = 6.0,
 	cmin = 0.6, cmax = 1.6, ctime = 0.5, dip = 0.18,
-	ceiling = 2.5, crew = 0, hold = 1,
+	ceiling = 3.5, crew = 0, hold = 1,
+	interval = 0.12, zoom = 1.3, adsspeed = 0.8, spread = 1.0, bloom = 0.5, mdmg = 3, dummies = 3,
 }
-const PLAYER_SCRIPT := preload("res://scripts/proto/proto_player_movement.gd")
+const PLAYER_SCRIPT := preload("res://scripts/proto/proto_player_gunplay.gd")
+const VIEWMODEL_SCRIPT := preload("res://scripts/proto/proto_viewmodel.gd")
+const DUMMY_HP := 4
 const COVER_SCRIPT := preload("res://scripts/proto/proto_cover_walk.gd")
 const COURSE_ROOM := Rect2i(5, -12, 12, 10)
 
@@ -55,6 +64,7 @@ func _ready() -> void:
 	main.explore_darkness = false
 	player = main.get_node("Player")
 	player.set_script(PLAYER_SCRIPT)
+	player.get_node("Head/Camera3D/Weapon").set_script(VIEWMODEL_SCRIPT)
 	_apply_knobs()
 	add_child(main)
 	cover._spawn_extras(main, layout)
@@ -63,6 +73,7 @@ func _ready() -> void:
 			c.queue_free()
 	_raise_ceiling(main.ship, knobs.ceiling)
 	_build_course(main.ship.get_node("Props"))
+	_build_dummies(main.ship.get_node("Props"))
 	_build_label()
 	print("movement walk knobs: ", knobs)
 	cover.free()
@@ -81,6 +92,12 @@ func _apply_knobs() -> void:
 	player.k_clamber_time = knobs.ctime
 	player.k_clamber_dip = knobs.dip
 	player.k_clamber_needs_jump_held = int(knobs.hold) != 0
+	player.w_interval = knobs.interval
+	player.w_ads_zoom = knobs.zoom
+	player.w_ads_speed = knobs.adsspeed
+	player.w_spread_base_deg = knobs.spread
+	player.w_bloom_deg = knobs.bloom
+	player.m_damage = int(knobs.mdmg)
 
 
 ## Stretch the wall GridMap and lift the ceiling one, so a taller room can be
@@ -143,6 +160,24 @@ func _block(parent: Node3D, origin: Vector3, size: Vector3, text: String) -> Sta
 	return body
 
 
+## Crew-shaped targets on collision layer 2 with a Health node and a facing,
+## so pistol hits, hitmarkers and the back-hit cone can all be felt. They
+## stand in the course room and get back up two seconds after dying.
+func _build_dummies(parent: Node3D) -> void:
+	var spots := [Vector2i(COURSE_ROOM.position.x + 3, COURSE_ROOM.position.y + 6),
+			Vector2i(COURSE_ROOM.position.x + 7, COURSE_ROOM.position.y + 7),
+			Vector2i(COURSE_ROOM.position.x + 10, COURSE_ROOM.position.y + 5)]
+	for i in mini(int(knobs.dummies), spots.size()):
+		var d := CharacterBody3D.new()
+		d.name = "Dummy%d" % (i + 1)
+		d.collision_layer = 2
+		d.collision_mask = 1
+		d.position = ShipBuilder3D.tile_to_world(spots[i])
+		d.rotation.y = [0.0, PI * 0.5, PI][i]
+		d.set_script(load("res://scripts/proto/proto_dummy.gd"))
+		parent.add_child(d)
+
+
 func _build_label() -> void:
 	var layer := CanvasLayer.new()
 	layer.layer = 5
@@ -157,8 +192,12 @@ func _build_label() -> void:
 func _process(_delta: float) -> void:
 	if player == null or label == null:
 		return
-	label.text = "state %s   speed %.2f m/s   capsule %.2f m   fov %.0f\nlast: %s\nprobe: %s\n\nsprint x%.2f  fov %+.0f  crouch %.2f m @ x%.2f  slide %.2fs x%.2f tilt %.0f\nclamber %.1f–%.1f m in %.2fs  dip %.2f  ceiling %.1f  hold=%d" % [
-		player.state_name(), player.flat_speed(), player._capsule.height, player.camera.fov,
+	var vm: Node = player.get_node("Head/Camera3D/Weapon")
+	label.text = "state %s   speed %.2f m/s   capsule %.2f m   fov %.0f   %s\nlast: %s\nprobe: %s\nammo %d/%d %s  spread %.2f deg  clip %s\nshot: %s\nmelee: %s\n\nsprint x%.2f  crouch %.2f m @ x%.2f  slide %.2fs x%.2f  clamber %.1f–%.1f m %.2fs  ceiling %.1f\ninterval %.2f  zoom x%.2f  ads speed x%.2f  spread %.1f+%.1f  melee dmg %d" % [
+		player.state_name(), player.flat_speed(), player._capsule.height, player.camera.fov, "ADS" if player.ads else "hip",
 		player.last_event, player.last_probe,
-		knobs.sprint, knobs.fov, knobs.crouch, knobs.crouchspeed, knobs.slide, knobs.boost, knobs.tilt,
-		knobs.cmin, knobs.cmax, knobs.ctime, knobs.dip, knobs.ceiling, int(knobs.hold)]
+		player.ammo, player.magazine_size, "RELOADING" if player.is_reloading() else "", player.spread_deg(), vm.last_clip,
+		player.last_shot, player.last_melee,
+		knobs.sprint, knobs.crouch, knobs.crouchspeed, knobs.slide, knobs.boost,
+		knobs.cmin, knobs.cmax, knobs.ctime, knobs.ceiling,
+		knobs.interval, knobs.zoom, knobs.adsspeed, knobs.spread, knobs.bloom, int(knobs.mdmg)]
