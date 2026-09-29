@@ -9,6 +9,14 @@ signal hit(target: Node3D)
 @export var damage := 1
 ## Seconds before it gives up, so strays never pile up off in the dark.
 @export var lifetime := 1.6
+## What a bolt sounds like hitting the ship itself, and how loud.
+@export var impact_volume_db := -6.0
+@export var impact_pitch_spread := 0.08
+@export var impact_streams: Array[AudioStream] = [
+	preload("res://assets/audio/kenney_impact/impactMetal_light_000.ogg"),
+	preload("res://assets/audio/kenney_impact/impactMetal_light_001.ogg"),
+	preload("res://assets/audio/kenney_impact/impactMetal_light_002.ogg"),
+]
 
 var direction := Vector3.FORWARD
 ## Whoever fired it, so the shot does not immediately hit them in the back.
@@ -49,5 +57,26 @@ func _on_body_entered(body: Node3D) -> void:
 		return
 	if body.has_method("take_damage"):
 		body.take_damage(damage, shooter)
+	else:
+		_ring_impact()
 	hit.emit(body)
 	queue_free()
+
+
+## A metal impact where the bolt struck, left behind to finish on its own.
+## It frees itself when the sound ends, or after the stream's length where
+## nothing plays (headless), so none pile up.
+func _ring_impact() -> void:
+	if impact_streams.is_empty():
+		return
+	var ring := AudioStreamPlayer3D.new()
+	ring.name = "Impact"
+	ring.stream = impact_streams.pick_random()
+	ring.bus = &"sfx"
+	ring.volume_db = impact_volume_db
+	ring.pitch_scale = randf_range(1.0 - impact_pitch_spread, 1.0 + impact_pitch_spread)
+	ring.finished.connect(ring.queue_free)
+	get_parent().add_child(ring)
+	ring.global_position = global_position
+	ring.play()
+	ring.get_tree().create_timer(ring.stream.get_length() + 0.1).timeout.connect(ring.queue_free)

@@ -59,3 +59,16 @@ extends Resource
 @export var fire_cycle_time := 0.15
 ## The empty reload ends with the rack; this much of it is the rack.
 @export var rack_time := 0.3
+
+
+## Whether a reload from empty ends with the slide racked: the weapon has a
+## rack clip and the reload is long enough to hold one.
+func racks_after(from_empty: bool) -> bool:
+	return from_empty and model_rack_clip != &"" and reload_empty > rack_time
+
+
+## How long the magazine swap itself takes: the reload, less the rack when
+## there is one.
+func swap_time(from_empty: bool) -> float:
+	var total := reload_empty if from_empty else reload_tactical
+	return total - (rack_time if racks_after(from_empty) else 0.0)

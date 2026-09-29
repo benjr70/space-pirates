@@ -9,8 +9,10 @@ extends SceneTree
 ## is refused) and the Viewmodel's procedural layer (poses, sway, bob,
 ## recoil, camera kick and Descope roll, the wall-clipping material flags)
 ## and its clips (which plays on what, what a fire or a melee may interrupt,
-## the reload cancel reset) and the HUD (crosshair opening with spread and
-## collapsing to a dot in ADS, the red zero, the dry click). Runs
+## the reload cancel reset), the HUD (crosshair opening with spread and
+## collapsing to a dot in ADS, the red zero, the dry click) and the sounds
+## (one per event, the reload sequence and its cancel, footsteps only on
+## the move). Runs
 ## on a flat course built here, not on a ship, so every height is exact and
 ## the checks cost seconds.
 ##
@@ -33,6 +35,9 @@ const SLAB_X := -8.0
 const SLAB_CLEARANCE := 1.3
 ## Open floor for the sprint and slide runs.
 const RUNWAY := Vector3(15.0, 0.0, 15.0)
+## A wall past the runway's far end, deep enough that an 80 m/s bolt (1.3 m
+## per physics step) cannot skip it.
+const BACKSTOP_Z := 5.5
 
 var failures: Array[String] = []
 var checks := 0
@@ -51,6 +56,9 @@ var weapon: Viewmodel
 var hud: Hud
 var dry_fires := 0
 var dry_clicks := 0
+var audio: PirateAudio
+## Every sound the pirate's audio played, as [kind, stream].
+var sounds: Array = []
 
 
 ## A body a Melee can hit: on layer 2 with hit points, a team and a facing,
@@ -130,6 +138,10 @@ func _run() -> void:
 	await _check_hud_crosshair()
 	await _check_hud_ammo()
 	await _check_hud_dry_click()
+	await _check_audio_events()
+	await _check_audio_reload()
+	await _check_audio_footsteps()
+	await _check_audio_impact_and_respawn()
 	_report()
 	quit(1 if failures.size() > 0 else 0)
 
@@ -149,6 +161,7 @@ func _build_course() -> void:
 	_box("LowSlab", Vector3(3.0, 0.2, 3.0),
 			Vector3(LOW_BLOCK_X, LOW_BLOCK_HEIGHT + LOW_HEADROOM + 0.1, BLOCK_Z))
 	_box("Slab", Vector3(3.0, 0.2, 3.0), Vector3(SLAB_X, SLAB_CLEARANCE + 0.1, BLOCK_Z))
+	_box("Backstop", Vector3(3.0, 3.4, 3.0), Vector3(RUNWAY.x + 1.0, 1.7, BACKSTOP_Z))
 
 	# A shut door within reach of the 1.1 m block's start position, so the
 	# interact key can be tried mid-clamber.
@@ -168,6 +181,8 @@ func _build_course() -> void:
 	root.add_child(hud)
 	hud.ready.connect(func() -> void: hud.watch(player))
 	hud.dry_click.connect(func() -> void: dry_clicks += 1)
+	audio = player.get_node("Audio")
+	audio.played.connect(func(kind: StringName, stream: AudioStream) -> void: sounds.append([kind, stream]))
 	player.state_changed.connect(func(_from: int, to: int) -> void: states_seen.append(to))
 	player.fired.connect(func() -> void: shots_fired += 1)
 	player.reload_started.connect(func(from_empty: bool) -> void: reloads_started.append(from_empty))
@@ -200,8 +215,11 @@ func _box(box_name: String, size: Vector3, centre: Vector3) -> StaticBody3D:
 
 ## Stand him at `at`, facing -Z, in WALK with nothing held.
 func _place(at: Vector3) -> void:
-	for action in ["move_up", "move_down", "move_left", "move_right", "sprint", "crouch", "jump", "interact", "shoot", "reload", "aim"]:
+	for action in ["move_up", "move_down", "move_left", "move_right", "sprint", "crouch", "jump", "interact", "shoot", "reload", "aim", "melee"]:
 		Input.action_release(action)
+	# A press made in the last check lands a frame late; let it land on the
+	# old life, not the new one.
+	await physics_frame
 	player.spawn_point = at
 	player.respawn()
 	player.rotation.y = 0.0
@@ -216,6 +234,7 @@ func _place(at: Vector3) -> void:
 	swings.clear()
 	dry_fires = 0
 	dry_clicks = 0
+	sounds.clear()
 
 
 func _frames(n: int) -> void:
@@ -848,6 +867,14 @@ func _dummy(hit_points: int, ahead: float, off_axis: float = 0.0, facing: Vector
 
 
 ## One press, then long enough for a lunge to land its strike.
+## Takes the melee dummy off the course, so a walk ahead is not into it.
+func _clear_dummy() -> void:
+	if dummy != null:
+		dummy.free()
+		dummy = null
+		await _frames(1)
+
+
 func _swing() -> void:
 	Input.action_press("melee")
 	await _frames(1)
@@ -1528,6 +1555,191 @@ func _check_hud_dry_click() -> void:
 	await _pull_trigger(1)
 	_expect(dry_clicks == 1 and dry_fires == 1, "a live pull after the reload clicked")
 	_clear_shots()
+
+
+## --- sounds ---
+
+func _sound_kinds() -> Array:
+	var out := []
+	for s in sounds:
+		out.append(s[0])
+	return out
+
+
+func _sounds_of(kind: StringName) -> int:
+	return _sound_kinds().count(kind)
+
+
+## One sound per event: the shot, the dry click, the melee landing, the hit
+## taken; a whiff into air and a swing at a door stay silent.
+func _check_audio_events() -> void:
+	await _place(RUNWAY)
+	await _frames(2)
+	_expect(sounds.is_empty(), "sounds played at rest: %s" % [_sound_kinds()])
+	_expect(_fire_and_drop(), "no shot for the shot sound")
+	await _frames(1)
+	_expect(_sound_kinds() == [&"shot"], "a shot played %s" % [_sound_kinds()])
+	var first_stream: AudioStream = sounds[0][1]
+	_expect(first_stream != null and first_stream.resource_path.contains("ppq_shot"), "the shot played %s" % [first_stream])
+	sounds.clear()
+	await _seconds(0.2)
+	player.ammo = 0
+	await _pull_trigger(30)
+	_expect(_sounds_of(&"dry") == 1, "a held dry pull clicked %d times" % _sounds_of(&"dry"))
+	_expect(_sounds_of(&"shot") == 0, "the dry pull played a shot")
+	player.cancel_reload()
+	await _frames(2)
+	sounds.clear()
+
+	await _place(RUNWAY)
+	await _dummy(4, 6.0)
+	await _swing()
+	_expect(_sounds_of(&"melee") == 0, "a whiff into air played the melee landing")
+	await _cycle()
+	await _place(RUNWAY)
+	await _dummy(9, 1.5)
+	await _swing()
+	_expect(_sounds_of(&"melee") == 1, "a landed melee played %d landing sounds" % _sounds_of(&"melee"))
+	await _cycle()
+
+	await _place(RUNWAY)
+	player.take_damage(1)
+	await _frames(1)
+	_expect(_sounds_of(&"hit") == 1, "a hit taken played %d hit sounds" % _sounds_of(&"hit"))
+
+
+## The reload sequence: magazine out at the start, in later, the rack only on
+## the empty reload and before it ends; a cancel stops what is still to come.
+func _check_audio_reload() -> void:
+	await _place(RUNWAY)
+	_expect(_fire_and_drop(), "no shot to open the magazine")
+	await _seconds(0.2)
+	sounds.clear()
+	player.start_reload()
+	await _frames(2)
+	_expect(_sound_kinds() == [&"mag_out"], "the tactical reload opened with %s" % [_sound_kinds()])
+	await _seconds(player.weapon.reload_tactical + 0.1)
+	_expect(_sound_kinds() == [&"mag_out", &"mag_in"], "the tactical reload played %s" % [_sound_kinds()])
+	_clear_shots()
+
+	player.ammo = 0
+	sounds.clear()
+	player.fire()
+	await _frames(2)
+	_expect(_sound_kinds() == [&"dry", &"mag_out"], "the empty reload opened with %s" % [_sound_kinds()])
+	await _seconds(player.weapon.reload_empty - player.weapon.rack_time / 2.0)
+	_expect(_sounds_of(&"mag_in") == 1 and _sounds_of(&"rack") == 1, "near the end of the empty reload the sounds were %s" % [_sound_kinds()])
+	await _seconds(player.weapon.rack_time)
+	_expect(_sound_kinds() == [&"dry", &"mag_out", &"mag_in", &"rack"], "the empty reload played %s" % [_sound_kinds()])
+
+	# A cancel before the magazine goes in leaves it out.
+	await _seconds(0.2)
+	_expect(_fire_and_drop(), "no shot to open the magazine for the cancel")
+	await _seconds(0.2)
+	sounds.clear()
+	player.start_reload()
+	await _seconds(0.3)
+	player.cancel_reload()
+	await _seconds(player.weapon.reload_tactical)
+	_expect(_sound_kinds() == [&"mag_out"], "a cancelled reload played %s" % [_sound_kinds()])
+	_clear_shots()
+
+
+## Footsteps on the move, at a cadence, none standing still, sliding or in
+## the air, a landing thud on touching down.
+func _check_audio_footsteps() -> void:
+	await _clear_dummy()
+	await _place(RUNWAY)
+	await _seconds(0.5)
+	_expect(_sounds_of(&"step") == 0, "steps played standing still")
+	Input.action_press("move_up")
+	await _seconds(1.0)
+	var steps := _sounds_of(&"step")
+	_expect(steps >= 2 and steps <= 6, "a second of walking played %d steps" % steps)
+	Input.action_release("move_up")
+	await _seconds(0.5)
+	sounds.clear()
+
+	await _place(RUNWAY)
+	Input.action_press("crouch")
+	Input.action_press("move_up")
+	await _seconds(1.0)
+	var crouched := _sounds_of(&"step")
+	_expect(crouched >= 1 and crouched < steps, "a second of crouched walking played %d steps against %d walking" % [crouched, steps])
+	Input.action_release("crouch")
+	Input.action_release("move_up")
+	await _seconds(0.5)
+	sounds.clear()
+
+	await _place(RUNWAY)
+	await _sprint_up()
+	sounds.clear()
+	Input.action_press("crouch")
+	await _frames(2)
+	_expect(player.state == player.State.SLIDE, "no slide for the footstep check")
+	await _seconds(0.4)
+	_expect(_sounds_of(&"step") == 0, "steps played mid-slide: %s" % [_sound_kinds()])
+	Input.action_release("crouch")
+	Input.action_release("sprint")
+	Input.action_release("move_up")
+	await _seconds(0.5)
+	sounds.clear()
+
+	await _place(RUNWAY)
+	Input.action_press("move_up")
+	Input.action_press("jump")
+	await _frames(3)
+	Input.action_release("jump")
+	sounds.clear()
+	_expect(player.state == player.State.AIR, "not airborne for the footstep check")
+	await _seconds(0.4)
+	_expect(_sounds_of(&"step") == 0, "steps played in the air: %s" % [_sound_kinds()])
+	await _seconds(0.8)
+	_expect(_sounds_of(&"land") == 1, "landing played %d thuds" % _sounds_of(&"land"))
+	Input.action_release("move_up")
+
+
+## A bolt into the ship rings a metal impact where it struck and the ring
+## frees itself; the sfx bus exists; a respawn mid-reload silences the rest
+## of the reload and lands no thud.
+func _check_audio_impact_and_respawn() -> void:
+	_expect(AudioServer.get_bus_index("sfx") != -1, "no sfx bus in the layout")
+	await _clear_dummy()
+	await _place(RUNWAY)
+	_clear_shots()
+	var rings_before := _impact_rings()
+	# Straight ahead into the backstop.
+	var shot: Projectile3D = player.fire()
+	_expect(shot != null, "no shot for the impact ring")
+	await _seconds(0.4)
+	_expect(_impact_rings() == rings_before + 1, "a bolt into the ship left %d rings, expected one" % (_impact_rings() - rings_before))
+	await _seconds(1.2)
+	_expect(_impact_rings() == rings_before, "the impact ring did not free itself")
+	_clear_shots()
+
+	await _seconds(0.2)
+	_expect(_fire_and_drop(), "no shot to open the magazine for the respawn")
+	await _seconds(0.2)
+	player.start_reload()
+	await _seconds(0.2)
+	sounds.clear()
+	# Off the floor, then straight back to spawn: no landing, no magazine.
+	Input.action_press("jump")
+	await _frames(3)
+	Input.action_release("jump")
+	_expect(player.state == player.State.AIR, "not airborne for the respawn check")
+	player.respawn()
+	await _seconds(player.weapon.reload_tactical)
+	_expect(sounds.is_empty(), "a respawn mid-reload still played %s" % [_sound_kinds()])
+	_clear_shots()
+
+
+func _impact_rings() -> int:
+	var count := 0
+	for node in world.get_children():
+		if node is AudioStreamPlayer3D:
+			count += 1
+	return count
 
 
 func _expect(condition: bool, message: String) -> void:

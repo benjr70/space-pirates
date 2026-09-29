@@ -1,10 +1,11 @@
-[gd_scene load_steps=7 format=3]
+[gd_scene load_steps=8 format=3]
 
 [ext_resource type="Script" path="res://scripts/player_3d.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/health.gd" id="2"]
 [ext_resource type="PackedScene" path="res://assets/models/quaternius_pistol/pistol.glb" id="3"]
 [ext_resource type="Script" path="res://scripts/viewmodel.gd" id="4"]
 [ext_resource type="AnimationLibrary" path="res://resources/animations/viewmodel_clips.tres" id="5"]
+[ext_resource type="Script" path="res://scripts/pirate_audio.gd" id="6"]
 
 [sub_resource type="CapsuleShape3D" id="capsule"]
 radius = 0.35
@@ -49,3 +50,6 @@ libraries = {
 [node name="Health" type="Node" parent="."]
 script = ExtResource("2")
 max_health = 6
+
+[node name="Audio" type="Node" parent="."]
+script = ExtResource("6")

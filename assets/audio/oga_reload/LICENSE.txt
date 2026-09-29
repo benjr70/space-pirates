@@ -1,0 +1,8 @@
+CC0 sounds from OpenGameArt, converted to mono 44.1 kHz ogg:
+
+clipload1.ogg, clipload2.ogg
+  "Gun Reload Sound Effects" by Brian MacIntosh (credit optional), CC0
+  https://opengameart.org/content/gun-reload-sound-effects
+dry_click.ogg
+  "Gun reload, lock or click sound", CC0
+  https://opengameart.org/content/gun-reload-lock-or-click-sound

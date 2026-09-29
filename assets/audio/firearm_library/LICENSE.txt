@@ -1,0 +1,6 @@
+From "The Free Firearm Sound Library" (Prepared SFX Library), published on
+OpenGameArt under CC0 / no rights reserved:
+https://opengameart.org/content/the-free-firearm-sound-library
+
+ppq_shot_1..3.ogg    single shots cut from X_39P.wav (Walther PPQ, 9mm, near,
+                     front of shooter), mono 44.1 kHz, 1.0 s with a fade

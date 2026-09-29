@@ -147,6 +147,7 @@ const BODY_LAYER := 2
 ## Rides the Viewmodel, so a shot leaves wherever the weapon is posed.
 @onready var muzzle: Node3D = $Head/Camera3D/Weapon/Muzzle
 @onready var viewmodel: Viewmodel = $Head/Camera3D/Weapon
+@onready var audio: PirateAudio = $Audio
 @onready var health: Health = $Health
 @onready var collider: CollisionShape3D = $CollisionShape3D
 
@@ -819,6 +820,8 @@ func respawn() -> void:
 	_melee_cycle_left = 0.0
 	_melee_lock_left = 0.0
 	_lower_sights()
+	# Silence first: the state reset below must not sound like a landing.
+	audio.reset()
 	_set_state(State.WALK)
 	head.position.y = _head_target_y
 	viewmodel.reset()

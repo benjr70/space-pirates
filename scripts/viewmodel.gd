@@ -207,8 +207,8 @@ func _on_fired() -> void:
 func _on_reload_started(from_empty: bool) -> void:
 	var wanted: float = profile.reload_empty if from_empty else profile.reload_tactical
 	_play_for(clips, RELOAD_CLIPS[1] if from_empty else RELOAD_CLIPS[0], wanted)
-	_rack_after_reload = from_empty and profile.model_rack_clip != &"" and wanted > profile.rack_time
-	_play_for(sidearm_clips, profile.model_reload_clip, wanted - (profile.rack_time if _rack_after_reload else 0.0))
+	_rack_after_reload = profile.racks_after(from_empty)
+	_play_for(sidearm_clips, profile.model_reload_clip, profile.swap_time(from_empty))
 
 
 func _on_sidearm_clip_finished(clip: StringName) -> void:
