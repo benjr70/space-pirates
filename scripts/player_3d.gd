@@ -28,9 +28,11 @@ extends CharacterBody3D
 ##
 ## Aim Down Sights is a flag beside the state, valid in WALK, CROUCH and AIR:
 ## hold aim for the Profile's zoom, slowdown and tighter cone. A sprint,
-## slide, clamber or reload ends it, a jump keeps it, and a hit descopes it.
-## Aiming out of a sprint ends the sprint at once and raises the sights after
-## a short beat.
+## slide, clamber, reload or melee lowers it and a jump keeps it. While aim
+## stays held the sights come back up by themselves the moment they may:
+## after the reload, after the swing, and a short recovery after a hit
+## descopes them. Aiming out of a sprint ends the sprint at once and raises
+## the sights after a short beat.
 ##
 ## The Melee is a lunge: the nearest body in a narrow cone within reach is
 ## pulled to, faced and struck, and a strike from inside the cone behind the
@@ -51,8 +53,8 @@ signal spread_changed(degrees: float)
 signal state_changed(from: State, to: State)
 ## The sights came up, or went down for any reason.
 signal ads_changed(on: bool)
-## A Descope: a hit knocked the sights down, and they stay down until aim is
-## pressed afresh.
+## A Descope: a hit knocked the sights down; they recover on their own if aim
+## is still held, or at once on a fresh press.
 signal descoped
 ## A swing landed on [param target] (null for a whiff into air) and whether it
 ## finished them.
@@ -97,7 +99,9 @@ const TEAM := &"pirate"
 
 @export_group("Aim Down Sights")
 ## Seconds from a sprint's lowered weapon to the sights.
-@export var ads_raise_time: float = 0.2
+@export var ads_raise_time: float = 0.12
+## Seconds after a Descope before held aim brings the sights back.
+@export var descope_recovery: float = 0.35
 ## How fast the FOV settles into and out of the zoom.
 @export var ads_zoom_speed: float = 14.0
 
@@ -179,8 +183,8 @@ var _slide_dir := Vector3.ZERO
 var _slide_speed := 0.0
 var _clamber_tween: Tween
 var _ads_raise_left := 0.0
-## A descope holds the sights down until aim is pressed afresh.
-var _ads_latched := false
+## Seconds of Descope still keeping held aim down.
+var _descope_left := 0.0
 var _hip_fov := 75.0
 var _melee_cycle_left := 0.0
 ## Seconds the lunge still owns his movement.
@@ -212,8 +216,11 @@ func is_alive() -> bool:
 ## does knock the sights down.
 func take_damage(amount: int, from: Node = null) -> void:
 	health.take_damage(amount, from)
-	if ads:
-		_lower_sights(true)
+	# A hit on the sights, or on sights still recovering from the last one:
+	# every hit of a burst is a Descope and pushes the recovery back.
+	if ads or _descope_left > 0.0:
+		_lower_sights()
+		_descope_left = descope_recovery
 		descoped.emit()
 
 
@@ -383,19 +390,27 @@ func _ads_allowed() -> bool:
 
 
 ## The newer input wins between aim and sprint: pressing aim ends a sprint,
-## and starting a sprint drops the sights.
+## and starting a sprint drops the sights. Held aim raises the sights
+## whenever they are allowed and no Descope is still recovering; a fresh
+## press skips the recovery.
 func _update_ads(delta: float) -> void:
+	# The Descope recovers on the clock, whatever else he is doing.
+	_descope_left = maxf(_descope_left - delta, 0.0)
 	var want := Input.is_action_pressed("aim")
-	if Input.is_action_just_pressed("aim") and state == State.SPRINT:
-		# The sprint ends at once; the sights need the raise first.
-		_end_sprint_latched()
-		_ads_raise_left = ads_raise_time
+	if Input.is_action_just_pressed("aim"):
+		_descope_left = 0.0
+		if state == State.SPRINT:
+			# The sprint ends at once; the sights need the raise first.
+			_end_sprint_latched()
+			_ads_raise_left = ads_raise_time
 	if not want:
-		_ads_latched = false
+		_descope_left = 0.0
 		_lower_sights()
 	elif not _ads_allowed():
 		_lower_sights()
-	elif not ads and not _ads_latched:
+	elif not ads:
+		if _descope_left > 0.0:
+			return
 		_ads_raise_left = maxf(_ads_raise_left - delta, 0.0)
 		if _ads_raise_left == 0.0:
 			_set_ads(true)
@@ -408,12 +423,9 @@ func _set_ads(on: bool) -> void:
 	ads_changed.emit(on)
 
 
-## Sights down and any raise abandoned; latched, they stay down until aim is
-## pressed again.
-func _lower_sights(latch: bool = false) -> void:
+## Sights down and any raise abandoned.
+func _lower_sights() -> void:
 	_ads_raise_left = 0.0
-	if latch:
-		_ads_latched = true
 	_set_ads(false)
 
 
@@ -816,7 +828,7 @@ func respawn() -> void:
 	_sprint_latched = false
 	_sprint_grace_left = 0.0
 	_dip = 0.0
-	_ads_latched = false
+	_descope_left = 0.0
 	_melee_cycle_left = 0.0
 	_melee_lock_left = 0.0
 	_lower_sights()

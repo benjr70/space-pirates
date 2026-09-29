@@ -118,6 +118,7 @@ func _run() -> void:
 	await _check_ads_ends()
 	await _check_ads_raise()
 	await _check_ads_numbers()
+	await _check_descope_recovery()
 	await _check_melee_cone()
 	await _check_melee_lunge()
 	await _check_melee_back_hit()
@@ -781,7 +782,9 @@ func _check_ads_ends() -> void:
 	_expect(not player.ads, "taking damage kept the sights up")
 	_expect(descopes == 1, "descoped fired %d times, expected 1" % descopes)
 	_expect(player.state == player.State.WALK, "damage changed the state to %s" % player.State.keys()[player.state])
-	await _aim(false)
+	Input.action_release("aim")
+	await _seconds(0.5)
+	_expect(not player.ads, "sights came back up with aim released")
 	player.take_damage(1)
 	await _frames(1)
 	_expect(descopes == 1, "descoped fired for a hit taken off the sights")
@@ -806,10 +809,10 @@ func _check_ads_raise() -> void:
 	await _frames(2)
 	_expect(player.state == player.State.WALK, "aim during sprint left him in %s" % player.State.keys()[player.state])
 	_expect(not player.ads, "sights came up straight out of the sprint")
-	await _seconds(0.1)
-	_expect(not player.ads, "sights up 0.1 s into the raise")
-	await _seconds(0.2)
-	_expect(player.ads, "sights still down 0.3 s after aiming out of a sprint")
+	await _seconds(player.ads_raise_time * 0.5)
+	_expect(not player.ads, "sights up halfway into the raise")
+	await _seconds(player.ads_raise_time + 0.1)
+	_expect(player.ads, "sights still down %.2f s after aiming out of a sprint" % (player.ads_raise_time * 1.5 + 0.1))
 	_expect(player.state == player.State.WALK, "sprint re-entered while aiming: %s" % player.State.keys()[player.state])
 	Input.action_release("aim")
 	Input.action_release("sprint")
@@ -826,10 +829,13 @@ func _check_ads_numbers() -> void:
 	await _seconds(0.5)
 	_expect(is_equal_approx(player.spread_degrees(), 0.5),
 			"ADS spread while still is %.2f deg, expected 0.5" % player.spread_degrees())
-	# A 75 deg hip view at 1.3x magnification is 61.1 deg, worked by hand.
-	_expect(absf(hip_fov - 75.0) < 0.01, "hip FOV is %.1f, the check below assumes 75" % hip_fov)
-	_expect(absf(player.camera.fov - 61.1) < 0.5,
-			"ADS FOV is %.1f, expected 61.1 for %.1fx zoom" % [player.camera.fov, profile.ads_zoom])
+	# The Sidearm zooms 1.6x: a 75 deg hip view narrows to 51.2 deg.
+	_expect(is_equal_approx(profile.ads_zoom, 1.6), "the Sidearm zooms %.2fx, spec says 1.6" % profile.ads_zoom)
+	_expect(is_equal_approx(player.ads_raise_time, 0.12), "the ADS raise is %.2f s, spec says 0.12" % player.ads_raise_time)
+	var zoomed_fov := rad_to_deg(2.0 * atan(tan(deg_to_rad(hip_fov) / 2.0) / profile.ads_zoom))
+	_expect(absf(hip_fov - 75.0) < 0.01 and absf(zoomed_fov - 51.2) < 0.1, "75 deg at 1.6x should be 51.2, got %.1f" % zoomed_fov)
+	_expect(absf(player.camera.fov - zoomed_fov) < 0.5,
+			"ADS FOV is %.1f, expected %.1f for %.1fx zoom" % [player.camera.fov, zoomed_fov, profile.ads_zoom])
 	Input.action_press("move_up")
 	await _seconds(0.5)
 	_expect(is_equal_approx(player.flat_speed(), player.max_speed * 0.8),
@@ -845,6 +851,54 @@ func _check_ads_numbers() -> void:
 	await _aim(false)
 	await _seconds(0.5)
 	_expect(absf(player.camera.fov - hip_fov) < 0.5, "FOV did not return to %.1f after ADS: %.1f" % [hip_fov, player.camera.fov])
+
+
+## Sights that survive a fight: a hit drops them and they come back on
+## their own while aim is held, every hit of a burst pushing that back; a
+## reload or a melee lowers them and they rise again the moment it ends.
+func _check_descope_recovery() -> void:
+	await _place(RUNWAY)
+	await _aim(true)
+	_expect(player.ads, "no ADS to test under fire")
+	player.take_damage(1)
+	await _frames(1)
+	_expect(not player.ads and descopes == 1, "a hit did not descope")
+	await _seconds(0.4)
+	_expect(player.ads, "the sights did not come back within 0.4 s of a hit with aim held")
+	_expect(ads_seen == [true, false, true], "ads_changed signalled %s around the hit" % [ads_seen])
+
+	# A burst: the second hit lands mid-recovery, counts as its own Descope
+	# and restarts the clock.
+	player.take_damage(1)
+	await _seconds(0.2)
+	player.take_damage(1)
+	await _frames(1)
+	_expect(descopes == 3, "the second hit of a burst was not a Descope (%d)" % descopes)
+	await _seconds(0.2)
+	_expect(not player.ads, "the sights came back 0.2 s after the second hit of a burst")
+	await _seconds(0.25)
+	_expect(player.ads, "the sights did not come back after the burst")
+
+	_fire_and_drop()
+	await _seconds(0.2)
+	ads_seen.clear()
+	player.start_reload()
+	await _frames(1)
+	_expect(not player.ads, "the reload kept the sights up")
+	await _seconds(player.weapon.reload_tactical)
+	await _frames(2)
+	_expect(not player.is_reloading() and player.ads, "the sights did not rise as the reload ended")
+	_clear_shots()
+
+	await _dummy(4, 6.0)
+	ads_seen.clear()
+	await _swing()
+	_expect(not player.ads, "the melee kept the sights up")
+	await _cycle()
+	await _frames(2)
+	_expect(player.ads, "the sights did not rise as the melee cycle ended")
+	await _aim(false)
+	await _clear_dummy()
 
 
 ## --- reporting ---
@@ -1708,10 +1762,11 @@ func _check_audio_impact_and_respawn() -> void:
 	await _place(RUNWAY)
 	_clear_shots()
 	var rings_before := _impact_rings()
-	# Straight ahead into the backstop.
+	# Straight ahead into the backstop, 10 m off: there in about 0.13 s. The
+	# ring frees itself after its stream's length, so look before that.
 	var shot: Projectile3D = player.fire()
 	_expect(shot != null, "no shot for the impact ring")
-	await _seconds(0.4)
+	await _seconds(0.2)
 	_expect(_impact_rings() == rings_before + 1, "a bolt into the ship left %d rings, expected one" % (_impact_rings() - rings_before))
 	await _seconds(1.2)
 	_expect(_impact_rings() == rings_before, "the impact ring did not free itself")

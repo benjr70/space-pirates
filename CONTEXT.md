@@ -258,9 +258,10 @@ a Sprint, and starting a Sprint drops the sights.
 
 ## Descope
 
-Being hit while Aiming Down Sights: the sights drop and stay down until aim is
-pressed again, so a held aim cannot ride through the hit. The moment a duel
-turns.
+Being hit while Aiming Down Sights: the sights drop and the view flinches, so
+a duel swings on every hit. Held aim brings them back after a short recovery,
+and a fresh press brings them back at once; a Descope costs a beat, not the
+fight.
 
 ## Weapon Profile
 
