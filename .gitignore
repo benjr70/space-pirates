@@ -20,3 +20,7 @@ mono_crash.*.json
 # Export artifacts / secrets
 export_presets.cfg
 /builds/
+
+# Claude Code agent worktrees and local settings
+.claude/worktrees/
+.claude/settings.local.json

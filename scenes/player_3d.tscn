@@ -1,0 +1,45 @@
+[gd_scene load_steps=7 format=3]
+
+[ext_resource type="Script" path="res://scripts/player_3d.gd" id="1"]
+[ext_resource type="Script" path="res://scripts/health.gd" id="2"]
+[ext_resource type="PackedScene" path="res://assets/models/kenney_blaster/blaster-d.glb" id="3"]
+[ext_resource type="Script" path="res://scripts/viewmodel.gd" id="4"]
+[ext_resource type="AnimationLibrary" path="res://resources/animations/viewmodel_clips.tres" id="5"]
+
+[sub_resource type="CapsuleShape3D" id="capsule"]
+radius = 0.35
+height = 1.8
+
+[node name="Player" type="CharacterBody3D" groups=["player"]]
+collision_layer = 2
+collision_mask = 3
+script = ExtResource("1")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
+shape = SubResource("capsule")
+
+[node name="Head" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.6, 0)
+
+[node name="Camera3D" type="Camera3D" parent="Head"]
+fov = 75.0
+near = 0.05
+
+[node name="Weapon" type="Node3D" parent="Head/Camera3D"]
+transform = Transform3D(-1, 0, 0, 0, 1, 0, 0, 0, -1, 0.25, -0.28, -0.45)
+script = ExtResource("4")
+
+[node name="Blaster" parent="Head/Camera3D/Weapon" instance=ExtResource("3")]
+
+[node name="Muzzle" type="Node3D" parent="Head/Camera3D/Weapon"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.06, 0.1)
+
+[node name="Clips" type="AnimationPlayer" parent="Head/Camera3D/Weapon"]
+libraries = {
+&"": ExtResource("5")
+}
+
+[node name="Health" type="Node" parent="."]
+script = ExtResource("2")
+max_health = 6

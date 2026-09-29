@@ -59,6 +59,16 @@ static func door_between(layout: ShipLayout, room_a: int, room_b: int) -> DoorDa
 	return null
 
 
+## Same routing on the 3D floor plane: doorway centres and seam crossings on
+## the way, then the destination. Positions are metres on XZ, heights ignored.
+static func waypoints_3d(layout: ShipLayout, from: Vector3, to: Vector3) -> Array[Vector3]:
+	var points: Array[Vector3] = []
+	for p in waypoint_tiles(layout, Vector2(from.x, from.z) / ShipBuilder3D.TILE,
+			Vector2(to.x, to.z) / ShipBuilder3D.TILE):
+		points.append(Vector3(p.x * ShipBuilder3D.TILE, 0.0, p.y * ShipBuilder3D.TILE))
+	return points
+
+
 ## World points to steer through to walk from one position to another: the
 ## centre of each doorway and seam crossing on the way, then the destination.
 static func waypoints(layout: ShipLayout, from: Vector2, to: Vector2) -> Array[Vector2]:

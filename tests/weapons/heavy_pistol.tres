@@ -1,0 +1,17 @@
+[gd_resource type="Resource" script_class="WeaponProfile" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/weapon_profile.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+fire_interval = 0.4
+magazine_size = 6
+damage = 3
+projectile_speed = 50.0
+projectile_lifetime = 1.0
+reload_tactical = 2.0
+reload_empty = 2.5
+spread_base_degrees = 2.0
+bloom_per_shot_degrees = 1.0
+bloom_decay_seconds = 0.5
+spread_still = 1.0
