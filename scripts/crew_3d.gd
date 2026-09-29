@@ -46,6 +46,12 @@ const TORSO_HEIGHT := 1.0
 @export var spread_degrees := 7.0
 @export var muzzle_offset := 0.625
 @export var projectile_scene: PackedScene = preload("res://scenes/projectile_3d.tscn")
+## What their shot sounds like from across a Room, rung at the muzzle.
+@export var shot_streams: Array[AudioStream] = [
+	preload("res://assets/audio/firearm_library/ppq_shot_far_1.ogg"),
+	preload("res://assets/audio/firearm_library/ppq_shot_far_2.ogg"),
+]
+@export var shot_volume_db := -3.0
 
 @export_group("Cover")
 @export var cover_search_radius := 6.9
@@ -345,6 +351,8 @@ func _fire() -> Projectile3D:
 	var shot: Projectile3D = projectile_scene.instantiate()
 	shot.launch(origin, direction, self, TEAM)
 	_shot_parent().add_child(shot)
+	if not shot_streams.is_empty():
+		SoundAt.play(_shot_parent(), origin, shot_streams.pick_random(), shot_volume_db, 0.06, "Shot")
 	return shot
 
 

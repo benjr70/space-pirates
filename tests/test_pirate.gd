@@ -143,6 +143,7 @@ func _run() -> void:
 	await _check_audio_reload()
 	await _check_audio_footsteps()
 	await _check_audio_impact_and_respawn()
+	await _check_crew_shot_sound()
 	_report()
 	quit(1 if failures.size() > 0 else 0)
 
@@ -1786,6 +1787,40 @@ func _check_audio_impact_and_respawn() -> void:
 	player.respawn()
 	await _seconds(player.weapon.reload_tactical)
 	_expect(sounds.is_empty(), "a respawn mid-reload still played %s" % [_sound_kinds()])
+	_clear_shots()
+
+
+## A crew member's shot rings where they stand, positional, and frees
+## itself like the bolt's impact does.
+func _check_crew_shot_sound() -> void:
+	await _clear_dummy()
+	await _place(RUNWAY)
+	_clear_shots()
+	var crew: Crew3D = load("res://scenes/crew_3d.tscn").instantiate()
+	crew.position = RUNWAY + Vector3(0.0, 0.0, -6.0)
+	world.add_child(crew)
+	# No ship to patrol: its brain stays off, only its trigger is pulled.
+	crew.set_physics_process(false)
+	await _frames(2)
+	var rings_before := _impact_rings()
+	var shot: Projectile3D = crew._fire()
+	_expect(shot != null, "the crew member did not fire")
+	await _frames(1)
+	_expect(_impact_rings() == rings_before + 1, "a crew shot left %d positional sounds, expected one" % (_impact_rings() - rings_before))
+	var ring: AudioStreamPlayer3D = null
+	for node in world.get_children():
+		if node is AudioStreamPlayer3D and node.name.begins_with("Shot"):
+			ring = node
+	_expect(ring != null, "the crew shot sound is not named Shot")
+	if ring != null:
+		_expect(ring.global_position.distance_to(crew.global_position + Vector3.UP * Crew3D.MUZZLE_HEIGHT) < 1.0,
+				"the crew shot rings %.1f m from the muzzle" % ring.global_position.distance_to(crew.global_position))
+		_expect(ring.stream != null and ring.stream.resource_path.contains("ppq_shot_far"), "the crew shot plays %s" % [ring.stream])
+	if shot != null:
+		shot.queue_free()
+	await _seconds(1.3)
+	_expect(_impact_rings() == rings_before, "the crew shot sound did not free itself")
+	crew.free()
 	_clear_shots()
 
 

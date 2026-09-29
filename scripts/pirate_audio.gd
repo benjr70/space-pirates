@@ -28,7 +28,7 @@ signal played(kind: StringName, stream: AudioStream)
 @export var rack_stream: AudioStream = preload("res://assets/audio/kenney_impact/impactMetal_light_001.ogg")
 ## Where in the reload the magazine seats, as a fraction of the swap.
 @export var mag_in_at := 0.6
-@export var shot_volume_db := -2.0
+@export var shot_volume_db := 0.0
 @export var gun_volume_db := -6.0
 
 @export_group("Melee")
