@@ -55,6 +55,13 @@ func _run() -> void:
 	_box(world, Vector3(1.0, 1.1, 1.0), Vector3(0.0, 0.55, -2.5), Color(0.6, 0.45, 0.3))
 	var light := DirectionalLight3D.new(); light.rotation_degrees = Vector3(-50, 30, 0); light.light_energy = 1.2; world.add_child(light)
 	var env := WorldEnvironment.new(); var e := Environment.new(); e.background_mode = Environment.BG_COLOR; e.background_color = Color(0.1, 0.1, 0.12); e.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR; e.ambient_light_color = Color(0.6, 0.6, 0.65); e.ambient_light_energy = 0.8; env.environment = e; world.add_child(env)
+	# Two crew, one of each rig if the draw allows, standing 3 m off facing him.
+	for i in 2:
+		var crew: Crew3D = load("res://scenes/crew_3d.tscn").instantiate()
+		crew.position = Vector3(-0.9 + i * 1.8, 0.0, -3.0)
+		world.add_child(crew)
+		crew.set_physics_process(false)
+		crew.face_direction(Vector3.BACK)
 	var player: CharacterBody3D = load("res://scenes/player_3d.tscn").instantiate()
 	world.add_child(player)
 	player.position = Vector3(0, 0, 0)
