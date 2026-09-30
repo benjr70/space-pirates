@@ -1,0 +1,7 @@
+"Gunshots" by kurt, published on OpenGameArt under CC0 (no attribution
+needed): https://opengameart.org/content/gunshots
+
+shot_1..4.ogg  single shots cut from Unkown.wav (a larger-calibre pistol
+               with room echo), mono 44.1 kHz, 1.2 s, peak-normalised to
+               -1.5 dB. Chosen by ear in the sound booth over the Walther
+               PPQ library recordings, designed layers and sci-fi lasers.

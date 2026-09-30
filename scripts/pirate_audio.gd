@@ -18,9 +18,10 @@ signal played(kind: StringName, stream: AudioStream)
 
 @export_group("Sidearm")
 @export var shot_streams: Array[AudioStream] = [
-	preload("res://assets/audio/firearm_library/ppq_shot_1.ogg"),
-	preload("res://assets/audio/firearm_library/ppq_shot_2.ogg"),
-	preload("res://assets/audio/firearm_library/ppq_shot_3.ogg"),
+	preload("res://assets/audio/kurt_gunshots/shot_1.ogg"),
+	preload("res://assets/audio/kurt_gunshots/shot_2.ogg"),
+	preload("res://assets/audio/kurt_gunshots/shot_3.ogg"),
+	preload("res://assets/audio/kurt_gunshots/shot_4.ogg"),
 ]
 @export var dry_stream: AudioStream = preload("res://assets/audio/oga_reload/dry_click.ogg")
 @export var mag_out_stream: AudioStream = preload("res://assets/audio/oga_reload/clipload1.ogg")

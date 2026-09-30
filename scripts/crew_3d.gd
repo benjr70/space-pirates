@@ -46,10 +46,13 @@ const TORSO_HEIGHT := 1.0
 @export var spread_degrees := 7.0
 @export var muzzle_offset := 0.625
 @export var projectile_scene: PackedScene = preload("res://scenes/projectile_3d.tscn")
-## What their shot sounds like from across a Room, rung at the muzzle.
+## What their shot sounds like, rung at the muzzle: the same gun as the
+## Pirate's, and distance does the rest.
 @export var shot_streams: Array[AudioStream] = [
-	preload("res://assets/audio/firearm_library/ppq_shot_far_1.ogg"),
-	preload("res://assets/audio/firearm_library/ppq_shot_far_2.ogg"),
+	preload("res://assets/audio/kurt_gunshots/shot_1.ogg"),
+	preload("res://assets/audio/kurt_gunshots/shot_2.ogg"),
+	preload("res://assets/audio/kurt_gunshots/shot_3.ogg"),
+	preload("res://assets/audio/kurt_gunshots/shot_4.ogg"),
 ]
 @export var shot_volume_db := -3.0
 

@@ -1635,7 +1635,7 @@ func _check_audio_events() -> void:
 	await _frames(1)
 	_expect(_sound_kinds() == [&"shot"], "a shot played %s" % [_sound_kinds()])
 	var first_stream: AudioStream = sounds[0][1]
-	_expect(first_stream != null and first_stream.resource_path.contains("ppq_shot"), "the shot played %s" % [first_stream])
+	_expect(first_stream != null and first_stream.resource_path.contains("kurt_gunshots/shot"), "the shot played %s" % [first_stream])
 	sounds.clear()
 	await _seconds(0.2)
 	player.ammo = 0
@@ -1815,7 +1815,7 @@ func _check_crew_shot_sound() -> void:
 	if ring != null:
 		_expect(ring.global_position.distance_to(crew.global_position + Vector3.UP * Crew3D.MUZZLE_HEIGHT) < 1.0,
 				"the crew shot rings %.1f m from the muzzle" % ring.global_position.distance_to(crew.global_position))
-		_expect(ring.stream != null and ring.stream.resource_path.contains("ppq_shot_far"), "the crew shot plays %s" % [ring.stream])
+		_expect(ring.stream != null and ring.stream.resource_path.contains("kurt_gunshots/shot"), "the crew shot plays %s" % [ring.stream])
 	if shot != null:
 		shot.queue_free()
 	await _seconds(1.3)
