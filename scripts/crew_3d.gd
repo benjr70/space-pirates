@@ -10,6 +10,10 @@ extends CharacterBody3D
 ## rectangles. Cover is worked out by raycast at the moment it is needed rather
 ## than baked into the layout. Sight rays run at eye height; the cover ray runs
 ## lower, at the height of someone tucked down behind a crate.
+##
+## Each crew member dresses at spawn in one of the `rigs`, drawn at random
+## for variety, stood `RIG_HEIGHT` tall on the floor under `Model`; the rigs
+## share Quaternius's clip names, which the brain plays by state.
 
 enum State { PATROL, HUNT, FIGHT, COVER, SEARCH, DEAD }
 
@@ -56,6 +60,18 @@ const TORSO_HEIGHT := 1.0
 ]
 @export var shot_volume_db := -3.0
 
+@export_group("Look")
+## The bodies a crew member may spawn in, one drawn per member.
+@export var rigs: Array[PackedScene] = [
+	preload("res://assets/models/crew/gunner.glb"),
+	preload("res://assets/models/crew/soldier.glb"),
+]
+## How tall a rig stands once fitted, metres.
+const RIG_HEIGHT := 1.8
+## Clips that must loop while a state holds them.
+const LOOPING_CLIPS: Array[StringName] = [&"CharacterArmature|Idle", &"CharacterArmature|Idle_Gun",
+		&"CharacterArmature|Idle_Gun_Pointing", &"CharacterArmature|Run", &"CharacterArmature|Walk"]
+
 @export_group("Cover")
 @export var cover_search_radius := 6.9
 ## Seconds spent behind cover before leaning back out.
@@ -92,8 +108,42 @@ func _ready() -> void:
 		target = get_tree().get_first_node_in_group(&"player")
 	_shots_left = burst_size
 	_rng.randomize()
+	_dress()
 	_anim = _find_animation_player(model)
+	if _anim != null:
+		for clip in LOOPING_CLIPS:
+			if _anim.has_animation(clip):
+				_anim.get_animation(clip).loop_mode = Animation.LOOP_LINEAR
 	_enter(State.PATROL)
+	_update_animation()
+
+
+## One of the rigs, instanced under Model as "Rig" and scaled so it stands
+## RIG_HEIGHT tall with its feet on the floor. Rigs come in whatever units
+## their author used, so the fit is measured, not assumed.
+func _dress() -> void:
+	if rigs.is_empty():
+		return
+	var rig: Node3D = rigs[_rng.randi() % rigs.size()].instantiate()
+	rig.name = "Rig"
+	model.add_child(rig)
+	var lo := Vector3.INF
+	var hi := -Vector3.INF
+	for mi in rig.find_children("*", "MeshInstance3D", true, false):
+		var bounds: AABB = (mi as MeshInstance3D).get_aabb()
+		var to_rig: Transform3D = (mi as MeshInstance3D).transform
+		var up: Node = mi.get_parent()
+		while up != rig and up is Node3D:
+			to_rig = (up as Node3D).transform * to_rig
+			up = up.get_parent()
+		var in_rig := to_rig * bounds
+		lo = lo.min(in_rig.position)
+		hi = hi.max(in_rig.end)
+	var height := hi.y - lo.y
+	if height > 0.01:
+		var fit := RIG_HEIGHT / height
+		rig.scale = Vector3.ONE * fit
+		rig.position.y = -lo.y * fit
 
 
 func get_team() -> StringName:
@@ -483,11 +533,11 @@ func _update_animation() -> void:
 	if state == State.DEAD:
 		return
 	if Vector2(velocity.x, velocity.z).length_squared() > 0.25:
-		_play_any(["Walking_A", "Walking_B", "Running_A", "Walk", "Run"])
+		_play_any(["CharacterArmature|Run", "CharacterArmature|Walk", "Run", "Walk"])
 	elif state == State.FIGHT:
-		_play_any(["1H_Ranged_Shoot", "1H_Ranged_Aiming", "Idle_Combat", "Idle"])
+		_play_any(["CharacterArmature|Idle_Gun_Pointing", "CharacterArmature|Idle_Gun", "Idle_Gun", "Idle"])
 	else:
-		_play_any(["Idle", "Idle_A"])
+		_play_any(["CharacterArmature|Idle", "Idle"])
 
 
 # --- death --------------------------------------------------------------------
@@ -498,7 +548,7 @@ func _on_died(_from: Node) -> void:
 	velocity = Vector3.ZERO
 	set_collision_layer_value(2, false)
 	$CollisionShape3D.set_deferred("disabled", true)
-	if not _play_any(["Death_A", "Death_B", "Death", "Die"]):
+	if not _play_any(["CharacterArmature|Death", "Death", "Die"]):
 		# No death clip: tip the model over so a corpse still reads as one.
 		create_tween().tween_property(model, "rotation:x", -PI / 2.0, 0.4)
 

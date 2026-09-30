@@ -3,13 +3,13 @@
 importer="scene"
 importer_version=1
 type="PackedScene"
-uid="uid://bwy7ejjo4pjoy"
-path="res://.godot/imported/Rogue_Hooded.glb-d396250ffb1ada3978a24aef89043a36.scn"
+uid="uid://ceouomlb6eppq"
+path="res://.godot/imported/gunner.glb-142d8f4dba2afd320890885150bc239f.scn"
 
 [deps]
 
-source_file="res://assets/models/characters/Rogue_Hooded.glb"
-dest_files=["res://.godot/imported/Rogue_Hooded.glb-d396250ffb1ada3978a24aef89043a36.scn"]
+source_file="res://assets/models/crew/gunner.glb"
+dest_files=["res://.godot/imported/gunner.glb-142d8f4dba2afd320890885150bc239f.scn"]
 
 [params]
 

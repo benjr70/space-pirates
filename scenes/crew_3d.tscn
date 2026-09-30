@@ -1,8 +1,7 @@
-[gd_scene load_steps=5 format=3]
+[gd_scene load_steps=4 format=3]
 
 [ext_resource type="Script" path="res://scripts/crew_3d.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/health.gd" id="2"]
-[ext_resource type="PackedScene" path="res://assets/models/characters/Rogue_Hooded.glb" id="3"]
 
 [sub_resource type="CapsuleShape3D" id="capsule"]
 radius = 0.35
@@ -20,7 +19,6 @@ shape = SubResource("capsule")
 [node name="Model" type="Node3D" parent="."]
 transform = Transform3D(-1, 0, 0, 0, 1, 0, 0, 0, -1, 0, 0, 0)
 
-[node name="Rig" parent="Model" instance=ExtResource("3")]
 
 [node name="Health" type="Node" parent="."]
 script = ExtResource("2")

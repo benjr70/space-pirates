@@ -3,13 +3,13 @@
 importer="scene"
 importer_version=1
 type="PackedScene"
-uid="uid://cuwi7c5x2nefu"
-path="res://.godot/imported/Knight.glb-f3b84697960dc30f97048f59f901a6e9.scn"
+uid="uid://myu7pps3eesh"
+path="res://.godot/imported/soldier.glb-355d77a453e75b72f4c49b0da9026bed.scn"
 
 [deps]
 
-source_file="res://assets/models/characters/Knight.glb"
-dest_files=["res://.godot/imported/Knight.glb-f3b84697960dc30f97048f59f901a6e9.scn"]
+source_file="res://assets/models/crew/soldier.glb"
+dest_files=["res://.godot/imported/soldier.glb-355d77a453e75b72f4c49b0da9026bed.scn"]
 
 [params]
 

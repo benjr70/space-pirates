@@ -1,0 +1,9 @@
+Two animated characters by Quaternius (https://quaternius.com), CC0
+(Public Domain), downloaded from poly.pizza:
+
+gunner.glb   https://poly.pizza/m/3hC2i0CTuO
+soldier.glb  https://poly.pizza/m/Btfn3G5Xv4
+
+Both carry the same clip set (Idle, Idle_Gun, Idle_Gun_Pointing, Gun_Shoot,
+Run, HitRecieve, Death, ...). Picked in the model booth on 2026-09-29 as
+the crew's rigs, replacing the KayKit rogue.

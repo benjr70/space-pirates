@@ -151,6 +151,7 @@ func _run() -> void:
 	await _check_bolt_reach()
 	await _check_hit_markers()
 	await _check_tracer()
+	await _check_crew_models()
 	_report()
 	quit(1 if failures.size() > 0 else 0)
 
@@ -1898,8 +1899,8 @@ func _check_hit_markers() -> void:
 	hits_landed.clear()
 	sounds.clear()
 	for i in 4:
-		await _seconds(player.weapon.fire_interval + 0.02)
-		player.fire()
+		await _seconds(player.weapon.fire_interval + 0.05)
+		_expect(player.fire() != null, "round %d of the kill did not fire" % i)
 		await _seconds(0.15)
 	_expect(hits_landed.size() == 4 and hits_landed[3][1] == true, "the killing shot reported %s" % [hits_landed])
 	_expect(hud.hitmarker_is_kill(), "the killing shot did not show the kill marker")
@@ -1943,6 +1944,44 @@ func _check_tracer() -> void:
 		_expect(flight.dot(bolt.direction) > 0.99, "the bolt's body does not lie along its flight")
 	_expect(bolt.get_node_or_null("Mesh") == null, "the old ball mesh is still on the bolt")
 	_clear_shots()
+
+
+## The crew wear one of two Quaternius rigs, drawn at spawn, stood 1.8 m
+## tall and facing their forward, with the clips the crew brain plays.
+func _check_crew_models() -> void:
+	await _clear_dummy()
+	await _place(RUNWAY)
+	var seen := {}
+	for i in 12:
+		var crew: Crew3D = load("res://scenes/crew_3d.tscn").instantiate()
+		crew.position = RUNWAY + Vector3(2.0 + i * 0.1, 0.0, -6.0)
+		world.add_child(crew)
+		crew.set_physics_process(false)
+		await _frames(1)
+		var rig: Node3D = crew.get_node_or_null("Model/Rig")
+		_expect(rig != null, "crew %d has no Model/Rig" % i)
+		if rig != null:
+			seen[rig.scene_file_path] = true
+			var anim: AnimationPlayer = crew._anim
+			_expect(anim != null, "crew %d has no AnimationPlayer" % i)
+			if anim != null:
+				for clip in ["CharacterArmature|Idle", "CharacterArmature|Run", "CharacterArmature|Idle_Gun_Pointing", "CharacterArmature|Death"]:
+					_expect(anim.has_animation(clip), "crew %d's rig lacks %s" % [i, clip])
+				_expect(anim.current_animation.ends_with("Idle") and anim.is_playing(), "crew %d at rest plays %s" % [i, anim.current_animation])
+			if i == 0:
+				var lo := Vector3.INF
+				var hi := -Vector3.INF
+				for mi in rig.find_children("*", "MeshInstance3D", true, false):
+					var b: AABB = (mi as MeshInstance3D).global_transform * (mi as MeshInstance3D).get_aabb()
+					lo = lo.min(b.position)
+					hi = hi.max(b.end)
+				var height := hi.y - lo.y
+				_expect(absf(height - 1.8) < 0.15, "the crew rig stands %.2f m tall, want about 1.8" % height)
+				_expect(absf(lo.y - crew.global_position.y) < 0.1, "the crew rig's feet are %.2f m off the floor" % (lo.y - crew.global_position.y))
+		crew.free()
+	_expect(seen.size() == 2, "12 crew drew %d different rigs, want both: %s" % [seen.size(), seen.keys()])
+	for path in seen:
+		_expect(path.contains("assets/models/crew/"), "a crew rig came from %s" % path)
 
 
 func _impact_rings() -> int:
