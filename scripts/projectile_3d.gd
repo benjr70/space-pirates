@@ -1,6 +1,11 @@
 class_name Projectile3D
 extends Area3D
 ## A single bolt. Travels in a straight line until it hits ship or crew.
+##
+## At 80 m/s it covers more than a body's width in one physics step, so
+## every step sweeps a ray from where it was to where it is going and stops
+## at the first thing in the way; the Area3D overlap only catches what it
+## is born inside. Hitting the ship makes no sound.
 
 signal hit(target: Node3D)
 
@@ -9,14 +14,6 @@ signal hit(target: Node3D)
 @export var damage := 1
 ## Seconds before it gives up, so strays never pile up off in the dark.
 @export var lifetime := 1.6
-## What a bolt sounds like hitting the ship itself, and how loud.
-@export var impact_volume_db := -10.0
-@export var impact_pitch_spread := 0.08
-@export var impact_streams: Array[AudioStream] = [
-	preload("res://assets/audio/kenney_impact/impactMetal_medium_000.ogg"),
-	preload("res://assets/audio/kenney_impact/impactMetal_medium_001.ogg"),
-	preload("res://assets/audio/kenney_impact/impactMetal_medium_002.ogg"),
-]
 
 var direction := Vector3.FORWARD
 ## Whoever fired it, so the shot does not immediately hit them in the back.
@@ -43,29 +40,47 @@ func _ready() -> void:
 
 
 func _physics_process(delta: float) -> void:
-	global_position += direction * speed * delta
+	var from := global_position
+	var to := from + direction * speed * delta
+	var blocked := _sweep(from, to)
+	if not blocked.is_empty():
+		global_position = blocked.position
+		_strike(blocked.collider)
+		return
+	global_position = to
 	_age += delta
 	if _age >= lifetime:
 		queue_free()
 
 
+## The first body on the way from [param from] to [param to] that this bolt
+## can hit: not its shooter, not its shooter's side.
+func _sweep(from: Vector3, to: Vector3) -> Dictionary:
+	var params := PhysicsRayQueryParameters3D.create(from, to, collision_mask)
+	if shooter is CollisionObject3D:
+		params.exclude = [(shooter as CollisionObject3D).get_rid()]
+	var found := get_world_3d().direct_space_state.intersect_ray(params)
+	if found.is_empty():
+		return {}
+	var body := found.collider as Node3D
+	if body == null or _passes_through(body):
+		return {}
+	return found
+
+
 func _on_body_entered(body: Node3D) -> void:
-	if body == shooter:
+	if body == shooter or _passes_through(body):
 		return
-	# Friendly fire passes through rather than stopping the shot dead.
-	if body.has_method("get_team") and body.get_team() == team:
-		return
+	_strike(body)
+
+
+## Friendly fire passes through rather than stopping the shot dead.
+func _passes_through(body: Node3D) -> bool:
+	return body.has_method("get_team") and body.get_team() == team
+
+
+func _strike(body: Node3D) -> void:
 	if body.has_method("take_damage"):
 		body.take_damage(damage, shooter)
-	else:
-		_ring_impact()
 	hit.emit(body)
 	queue_free()
-
-
-## A metal impact where the bolt struck, left behind to finish on its own.
-func _ring_impact() -> void:
-	if impact_streams.is_empty():
-		return
-	SoundAt.play(get_parent(), global_position, impact_streams.pick_random(),
-			impact_volume_db, impact_pitch_spread, "Impact")

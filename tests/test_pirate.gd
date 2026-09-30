@@ -144,6 +144,7 @@ func _run() -> void:
 	await _check_audio_footsteps()
 	await _check_audio_impact_and_respawn()
 	await _check_crew_shot_sound()
+	await _check_bolt_reach()
 	_report()
 	quit(1 if failures.size() > 0 else 0)
 
@@ -1754,23 +1755,18 @@ func _check_audio_footsteps() -> void:
 	Input.action_release("move_up")
 
 
-## A bolt into the ship rings a metal impact where it struck and the ring
-## frees itself; the sfx bus exists; a respawn mid-reload silences the rest
-## of the reload and lands no thud.
+## A bolt into the ship makes no sound; the sfx bus exists; a respawn
+## mid-reload silences the rest of the reload and lands no thud.
 func _check_audio_impact_and_respawn() -> void:
 	_expect(AudioServer.get_bus_index("sfx") != -1, "no sfx bus in the layout")
 	await _clear_dummy()
 	await _place(RUNWAY)
 	_clear_shots()
 	var rings_before := _impact_rings()
-	# Straight ahead into the backstop, 10 m off: there in about 0.13 s. The
-	# ring frees itself after its stream's length, so look before that.
 	var shot: Projectile3D = player.fire()
-	_expect(shot != null, "no shot for the impact ring")
-	await _seconds(0.2)
-	_expect(_impact_rings() == rings_before + 1, "a bolt into the ship left %d rings, expected one" % (_impact_rings() - rings_before))
-	await _seconds(1.2)
-	_expect(_impact_rings() == rings_before, "the impact ring did not free itself")
+	_expect(shot != null, "no shot for the impact check")
+	await _seconds(0.3)
+	_expect(_impact_rings() == rings_before, "a bolt into the ship left %d sounds; wall hits are silent" % (_impact_rings() - rings_before))
 	_clear_shots()
 
 	await _seconds(0.2)
@@ -1821,6 +1817,42 @@ func _check_crew_shot_sound() -> void:
 	await _seconds(1.3)
 	_expect(_impact_rings() == rings_before, "the crew shot sound did not free itself")
 	crew.free()
+	_clear_shots()
+
+
+## --- the bolt ---
+
+## A bolt at 80 m/s crosses 1.3 m a physics step, more than a body is
+## wide: it must hit what it flies through, not only what it lands in. A
+## target 7 m off is hit every time, and so is a wall thinner than a step.
+func _check_bolt_reach() -> void:
+	await _clear_dummy()
+	await _place(RUNWAY)
+	_clear_shots()
+	await _dummy(30, 7.0)
+	var hits := 0
+	for i in 10:
+		var shot: Projectile3D = player.fire()
+		_expect(shot != null, "shot %d did not fire" % i)
+		await _seconds(0.25)
+		# Aim straight, no spread: the Profile's cone is 1 deg, well inside
+		# the dummy at 14 m; if a shot misses, that is the tunnelling.
+		await _seconds(player.weapon.fire_interval)
+	hits = 30 - dummy.health.current
+	_expect(hits == 10, "10 bolts at a dummy 7 m off landed %d hits" % hits)
+	_clear_shots()
+	await _clear_dummy()
+
+	# The floor slab is 0.2 m thick: a bolt pitched down must stop in it.
+	# The bolt strikes and frees itself well inside its 0.5 s life if the
+	# slab stops it; a bolt that flew through is still alive at 0.2 s.
+	await _place(RUNWAY)
+	player.head.rotation.x = -0.6
+	var bolt: Projectile3D = player.fire()
+	player.head.rotation.x = 0.0
+	_expect(bolt != null, "no bolt for the thin-wall check")
+	await _seconds(0.2)
+	_expect(not is_instance_valid(bolt), "a bolt pitched into the 0.2 m floor slab flew through it")
 	_clear_shots()
 
 
