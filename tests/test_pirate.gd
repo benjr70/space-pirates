@@ -1884,6 +1884,9 @@ func _check_hit_markers() -> void:
 
 	await _dummy(5, 6.0)
 	sounds.clear()
+	# Aimed at the chest: at eye height the crosshair sits on the capsule's
+	# top cap, where the 1 deg cone can skim over.
+	player.head.rotation.x = -0.05
 	var shot: Projectile3D = player.fire()
 	_expect(shot != null, "no shot for the hit marker")
 	await _seconds(0.15)
@@ -1905,6 +1908,7 @@ func _check_hit_markers() -> void:
 	_expect(hits_landed.size() == 4 and hits_landed[3][1] == true, "the killing shot reported %s" % [hits_landed])
 	_expect(hud.hitmarker_is_kill(), "the killing shot did not show the kill marker")
 	_expect(_sounds_of(&"hitmark") == 4, "four hits played %d hit ticks" % _sounds_of(&"hitmark"))
+	player.head.rotation.x = 0.0
 	_clear_shots()
 	await _seconds(0.5)
 
@@ -1946,7 +1950,7 @@ func _check_tracer() -> void:
 	_clear_shots()
 
 
-## The crew wear one of two Quaternius rigs, drawn at spawn, stood 1.8 m
+## The crew wear one of two Quaternius rigs, drawn at spawn, stood RIG_HEIGHT
 ## tall and facing their forward, with the clips the crew brain plays.
 func _check_crew_models() -> void:
 	await _clear_dummy()
@@ -1976,7 +1980,7 @@ func _check_crew_models() -> void:
 					lo = lo.min(b.position)
 					hi = hi.max(b.end)
 				var height := hi.y - lo.y
-				_expect(absf(height - 1.8) < 0.15, "the crew rig stands %.2f m tall, want about 1.8" % height)
+				_expect(absf(height - Crew3D.RIG_HEIGHT) < 0.15, "the crew rig stands %.2f m tall, want about %.1f" % [height, Crew3D.RIG_HEIGHT])
 				_expect(absf(lo.y - crew.global_position.y) < 0.1, "the crew rig's feet are %.2f m off the floor" % (lo.y - crew.global_position.y))
 		crew.free()
 	_expect(seen.size() == 2, "12 crew drew %d different rigs, want both: %s" % [seen.size(), seen.keys()])

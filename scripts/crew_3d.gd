@@ -66,8 +66,9 @@ const TORSO_HEIGHT := 1.0
 	preload("res://assets/models/crew/gunner.glb"),
 	preload("res://assets/models/crew/soldier.glb"),
 ]
-## How tall a rig stands once fitted, metres.
-const RIG_HEIGHT := 1.8
+## How tall a rig stands once fitted, metres: a head over the Pirate, since
+## these stylised bodies read small beside 3.5 m rooms.
+const RIG_HEIGHT := 2.0
 ## Clips that must loop while a state holds them.
 const LOOPING_CLIPS: Array[StringName] = [&"CharacterArmature|Idle", &"CharacterArmature|Idle_Gun",
 		&"CharacterArmature|Idle_Gun_Pointing", &"CharacterArmature|Run", &"CharacterArmature|Walk"]
