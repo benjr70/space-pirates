@@ -1,1 +1,3 @@
-Placeholder hit tick, synthesized with ffmpeg (two short sine clicks); replaced by whatever the sound booth picks.
+hitmark.ogg = click_001.ogg from Kenney's "Interface Sounds" (CC0),
+https://kenney.nl/assets/interface-sounds. Chosen in the sound booth on
+2026-09-29 as the hit-marker tick over nine other clicks and ticks.

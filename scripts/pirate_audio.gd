@@ -31,7 +31,8 @@ signal played(kind: StringName, stream: AudioStream)
 @export var mag_in_at := 0.6
 @export var shot_volume_db := 0.0
 @export var gun_volume_db := -6.0
-## The tick that says a shot or swing landed; a kill drops its pitch.
+## The tick that says a shot or swing landed (Kenney click 001, picked by
+## ear); a kill drops its pitch.
 @export var hitmark_stream: AudioStream = preload("res://assets/audio/hitmark/hitmark.ogg")
 @export var hitmark_volume_db := -4.0
 
