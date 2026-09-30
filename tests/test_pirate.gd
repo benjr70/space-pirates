@@ -150,6 +150,7 @@ func _run() -> void:
 	await _check_crew_shot_sound()
 	await _check_bolt_reach()
 	await _check_hit_markers()
+	await _check_tracer()
 	_report()
 	quit(1 if failures.size() > 0 else 0)
 
@@ -1916,6 +1917,32 @@ func _check_hit_markers() -> void:
 	_expect(_sounds_of(&"hitmark") == 1, "a landed melee played %d hit ticks" % _sounds_of(&"hitmark"))
 	await _cycle()
 	await _clear_dummy()
+
+
+## A bolt reads as a tracer: a thin streak at least a metre long, lying
+## along its line of flight, not a ball.
+func _check_tracer() -> void:
+	await _clear_dummy()
+	await _place(RUNWAY)
+	_clear_shots()
+	var bolt: Projectile3D = player.fire()
+	_expect(bolt != null, "no bolt for the tracer check")
+	if bolt == null:
+		return
+	await _frames(1)
+	var streak: MeshInstance3D = bolt.get_node_or_null("Streak")
+	_expect(streak != null, "the bolt has no Streak mesh")
+	if streak != null:
+		var size: Vector3 = streak.get_aabb().size
+		var local_length: float = (streak.transform.basis * size).abs().z
+		_expect(local_length >= 1.0, "the streak is %.2f m long along the flight, want at least 1 m" % local_length)
+		var across := (streak.transform.basis * size).abs()
+		_expect(across.x <= 0.12 and across.y <= 0.12, "the streak is %.2f x %.2f m across, not thin" % [across.x, across.y])
+		# The bolt's -Z is its direction of flight.
+		var flight: Vector3 = -bolt.global_transform.basis.z
+		_expect(flight.dot(bolt.direction) > 0.99, "the bolt's body does not lie along its flight")
+	_expect(bolt.get_node_or_null("Mesh") == null, "the old ball mesh is still on the bolt")
+	_clear_shots()
 
 
 func _impact_rings() -> int:

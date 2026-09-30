@@ -6,6 +6,10 @@ extends Area3D
 ## every step sweeps a ray from where it was to where it is going and stops
 ## at the first thing in the way; the Area3D overlap only catches what it
 ## is born inside. Hitting the ship makes no sound.
+##
+## It is drawn as a tracer: a thin streak of light 2 m long lying along
+## the flight, its bright tip at the bolt and its tail trailing behind, so
+## both sides' fire reads as lines through the air rather than balls.
 
 signal hit(target: Node3D)
 

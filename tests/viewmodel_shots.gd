@@ -89,6 +89,19 @@ func _run() -> void:
 	weapon.position = weapon.pose_low
 	weapon.rotation_degrees = weapon.rotation_low
 	await _snap("low")
+	# A bolt in flight, caught a few metres out, for the tracer's look.
+	weapon.position = weapon.pose_hip
+	weapon.rotation_degrees = weapon.rotation_hip
+	player.set_physics_process(true)
+	# Pitched up a touch so the bolts have the back wall to fly to.
+	player.head.rotation.x = 0.12
+	player.fire()
+	await physics_frame
+	await process_frame
+	await process_frame
+	var img := root.get_viewport().get_texture().get_image()
+	img.save_png("%s/tracer.png" % out)
+	print("saved tracer")
 	quit()
 
 func _snap(label: String) -> void:
