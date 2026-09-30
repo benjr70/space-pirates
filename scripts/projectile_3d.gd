@@ -22,6 +22,8 @@ var shooter: Node3D
 var team: StringName = &""
 
 var _age := 0.0
+## Struck once: the overlap may fire in the same frame as the sweep.
+var _struck := false
 
 
 ## Aim and arm the shot. Call before adding it to the tree, which is why this
@@ -80,6 +82,9 @@ func _passes_through(body: Node3D) -> bool:
 
 
 func _strike(body: Node3D) -> void:
+	if _struck:
+		return
+	_struck = true
 	if body.has_method("take_damage"):
 		body.take_damage(damage, shooter)
 	hit.emit(body)

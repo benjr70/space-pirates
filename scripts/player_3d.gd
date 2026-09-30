@@ -59,6 +59,8 @@ signal descoped
 ## A swing landed on [param target] (null for a whiff into air) and whether it
 ## finished them.
 signal melee_swung(target: Node3D, killed: bool)
+## A shot or a swing hurt something that can be hurt: the hit marker's cue.
+signal hit_landed(target: Node3D, killed: bool)
 
 enum State { WALK, SPRINT, CROUCH, SLIDE, AIR, CLAMBER }
 
@@ -664,10 +666,20 @@ func fire() -> Projectile3D:
 	shot.lifetime = weapon.projectile_lifetime
 	shot.damage = weapon.damage
 	shot.launch(origin, direction, self, TEAM)
+	shot.hit.connect(_on_shot_hit)
 	_shot_parent().add_child(shot)
 	_bloom += weapon.bloom_per_shot_degrees
 	fired.emit()
 	return shot
+
+
+## The bolt struck [param target]: a hit if it could be hurt, and a kill if
+## that finished it.
+func _on_shot_hit(target: Node3D) -> void:
+	if target == null or not target.has_method("take_damage"):
+		return
+	var killed: bool = target.has_method("is_alive") and not target.is_alive()
+	hit_landed.emit(target, killed)
 
 
 ## A random yaw and pitch inside the live cone, applied to the aim.
@@ -736,6 +748,7 @@ func _strike(target: Node3D) -> void:
 			amount = maxi(target_health.current, amount)
 	target.take_damage(amount, self)
 	var killed: bool = target.has_method("is_alive") and not target.is_alive()
+	hit_landed.emit(target, killed)
 	melee_swung.emit(target, killed)
 
 

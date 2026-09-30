@@ -825,7 +825,7 @@ func _check_built_geometry(layout: ShipLayout) -> void:
 	_expect(player.spread_changed.is_connected(hud.set_spread), "main does not feed the HUD the spread")
 	_expect(player.ads_changed.is_connected(hud.set_ads), "main does not feed the HUD the sights")
 	_expect(player.dry_fired.is_connected(hud.dry_fire), "main does not feed the HUD the dry pull")
-	_expect(not hud.has_method("flash_hitmarker"), "the hitmarker is still on the HUD")
+	_expect(player.hit_landed.is_connected(hud.flash_hitmarker), "main does not feed the HUD the hits")
 
 	var props: Node3D = ship.get_node("Props")
 	var expected_props := 0

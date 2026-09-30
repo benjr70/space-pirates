@@ -3,11 +3,12 @@ extends CanvasLayer
 ## First-person HUD: ship name, crosshair, health pips, ammo counter,
 ## interact prompt and a damage vignette. Built in code so it stays one file.
 ##
-## The crosshair is the only feedback on the Sidearm: its four lines open
-## and close with the Pirate's live spread, and collapse to a dot while he
-## Aims Down Sights. There are no hit or kill markers. The ammo counter reads
-## `n / ∞` and turns red at zero, and a dry pull rings `dry_click` once for
-## whatever plays the sound.
+## The crosshair's four lines open and close with the Pirate's live spread,
+## and collapse to a dot while he Aims Down Sights. A landed hit flashes an
+## X of four short diagonals around it, red when it killed, fading in a
+## quarter second; the playtest wanted to know when a shot landed. The ammo
+## counter reads `n / ∞` and turns red at zero, and a dry pull rings
+## `dry_click` once for whatever plays the sound.
 
 ## Something wants to make the empty click: a dry pull, once each.
 signal dry_click
@@ -15,6 +16,12 @@ signal dry_click
 const PIP_COLOR := Color(0.45, 0.9, 0.55)
 const PIP_EMPTY := Color(0.2, 0.24, 0.28, 0.7)
 const CROSSHAIR_COLOR := Color(0.9, 0.95, 1.0, 0.9)
+const HITMARKER_COLOR := Color(1.0, 1.0, 1.0)
+const HITMARKER_KILL_COLOR := Color(1.0, 0.25, 0.2)
+const HITMARKER_FADE := 0.25
+## The X's arms: how far from the centre they start and how long they are.
+const HITMARKER_GAP := 6.0
+const HITMARKER_LENGTH := 7.0
 const AMMO_COLOR := Color(1.0, 1.0, 1.0)
 const AMMO_EMPTY_COLOR := Color(1.0, 0.25, 0.2)
 ## Pixels between the centre and a crosshair line at zero spread, and per
@@ -32,6 +39,9 @@ var _name_label: Label
 var _vignette: ColorRect
 var _lines: Array[ColorRect] = []
 var _dot: ColorRect
+var _hitmarker: Control
+var _hitmarker_kill := false
+var _hitmarker_tween: Tween
 var _magazine := 0
 var _reloading := false
 var _spread_degrees := 0.0
@@ -70,6 +80,20 @@ func _ready() -> void:
 	_dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_dot.visible = false
 	crosshair.add_child(_dot)
+	_hitmarker = Control.new()
+	_hitmarker.name = "Hitmarker"
+	_hitmarker.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hitmarker.modulate.a = 0.0
+	crosshair.add_child(_hitmarker)
+	for corner in [Vector2(-1, -1), Vector2(1, -1), Vector2(-1, 1), Vector2(1, 1)]:
+		var arm := ColorRect.new()
+		arm.color = HITMARKER_COLOR
+		arm.size = Vector2(HITMARKER_LENGTH, 2)
+		arm.pivot_offset = Vector2(0, 1)
+		arm.rotation = corner.angle()
+		arm.position = corner.normalized() * HITMARKER_GAP - Vector2(0, 1)
+		arm.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_hitmarker.add_child(arm)
 	_layout_crosshair()
 
 	_pip_row = HBoxContainer.new()
@@ -110,6 +134,7 @@ func watch(player: Node) -> void:
 	player.spread_changed.connect(set_spread)
 	player.ads_changed.connect(set_ads)
 	player.dry_fired.connect(dry_fire)
+	player.hit_landed.connect(flash_hitmarker)
 
 
 ## The ship the pirate is aboard, as the player reads it ("The Pirate").
@@ -204,6 +229,27 @@ func _layout_crosshair() -> void:
 		var reach := gap + (length if direction.x < 0.0 or direction.y < 0.0 else 0.0)
 		var across := Vector2(0.0, -1.0) if direction.x != 0.0 else Vector2(-1.0, 0.0)
 		line.position = direction * reach + across
+
+
+## A hit landed: the X shows and fades, red when it killed.
+func flash_hitmarker(_target: Node3D = null, killed: bool = false) -> void:
+	_hitmarker_kill = killed
+	for arm in _hitmarker.get_children():
+		(arm as ColorRect).color = HITMARKER_KILL_COLOR if killed else HITMARKER_COLOR
+	if _hitmarker_tween != null and _hitmarker_tween.is_valid():
+		_hitmarker_tween.kill()
+	_hitmarker.modulate.a = 1.0
+	_hitmarker_tween = create_tween()
+	_hitmarker_tween.tween_interval(0.05)
+	_hitmarker_tween.tween_property(_hitmarker, "modulate:a", 0.0, HITMARKER_FADE)
+
+
+func hitmarker_alpha() -> float:
+	return _hitmarker.modulate.a
+
+
+func hitmarker_is_kill() -> bool:
+	return _hitmarker_kill and _hitmarker.modulate.a > 0.0
 
 
 ## The empty click of a dry pull. The sound belongs to the sound effort;

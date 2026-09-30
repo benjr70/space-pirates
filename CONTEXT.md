@@ -245,7 +245,8 @@ The Pirate's pistol: semi-automatic, one shot per trigger press, firing a
 projectile like every other weapon in the game. Nothing in Space Pirates is
 hitscan, so every weapon is a variation on the same shot. A dry pull, the
 trigger on an empty magazine, clicks once and starts the reload; the HUD's
-crosshair opens with the Sidearm's spread and is the only feedback on a shot.
+crosshair opens with the Sidearm's spread, and a landed hit flashes a marker
+with a tick, red when it killed.
 
 ## Aim Down Sights
 

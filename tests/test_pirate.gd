@@ -51,6 +51,8 @@ var reloads_cancelled := 0
 var ads_seen: Array = []
 var descopes := 0
 var swings: Array = []
+## Every hit the pirate landed, as [target, killed].
+var hits_landed: Array = []
 var dummy: Dummy
 var weapon: Viewmodel
 var hud: Hud
@@ -89,7 +91,9 @@ class Dummy extends CharacterBody3D:
 		return health.is_alive()
 
 	func take_damage(amount: int, from: Node = null) -> void:
-		health.take_damage(amount, from)
+		if health.take_damage(amount, from):
+			# Dead: out of the way of bolts and swings, like a crew corpse.
+			collision_layer = 0
 
 
 func _initialize() -> void:
@@ -145,6 +149,7 @@ func _run() -> void:
 	await _check_audio_impact_and_respawn()
 	await _check_crew_shot_sound()
 	await _check_bolt_reach()
+	await _check_hit_markers()
 	_report()
 	quit(1 if failures.size() > 0 else 0)
 
@@ -193,6 +198,7 @@ func _build_course() -> void:
 	player.ads_changed.connect(func(on: bool) -> void: ads_seen.append(on))
 	player.descoped.connect(func() -> void: descopes += 1)
 	player.melee_swung.connect(func(target: Node3D, killed: bool) -> void: swings.append([target, killed]))
+	player.hit_landed.connect(func(target: Node3D, killed: bool) -> void: hits_landed.append([target, killed]))
 
 
 func _block_x(i: int) -> float:
@@ -221,8 +227,9 @@ func _place(at: Vector3) -> void:
 	for action in ["move_up", "move_down", "move_left", "move_right", "sprint", "crouch", "jump", "interact", "shoot", "reload", "aim", "melee"]:
 		Input.action_release(action)
 	# A press made in the last check lands a frame late; let it land on the
-	# old life, not the new one.
+	# old life, not the new one. Bolts still flying belong to it too.
 	await physics_frame
+	_clear_shots()
 	player.spawn_point = at
 	player.respawn()
 	player.rotation.y = 0.0
@@ -235,6 +242,7 @@ func _place(at: Vector3) -> void:
 	ads_seen.clear()
 	descopes = 0
 	swings.clear()
+	hits_landed.clear()
 	dry_fires = 0
 	dry_clicks = 0
 	sounds.clear()
@@ -1854,6 +1862,60 @@ func _check_bolt_reach() -> void:
 	await _seconds(0.2)
 	_expect(not is_instance_valid(bolt), "a bolt pitched into the 0.2 m floor slab flew through it")
 	_clear_shots()
+
+
+## A landed shot or melee says so: `hit_landed(target, killed)`, the HUD
+## flashes its marker (red on a kill) and fades it, and the hit tick plays
+## once per hit. A bolt into the ship says nothing.
+func _check_hit_markers() -> void:
+	await _clear_dummy()
+	await _place(RUNWAY)
+	_clear_shots()
+	_expect(is_zero_approx(hud.hitmarker_alpha()), "the hit marker shows at rest")
+	# Into the backstop: no hit.
+	var stray: Projectile3D = player.fire()
+	await _seconds(0.25)
+	_expect(hits_landed.is_empty(), "a bolt into the ship counted as a hit")
+	_expect(is_zero_approx(hud.hitmarker_alpha()), "the hit marker flashed for a wall")
+	_clear_shots()
+	await _seconds(0.2)
+
+	await _dummy(5, 6.0)
+	sounds.clear()
+	var shot: Projectile3D = player.fire()
+	_expect(shot != null, "no shot for the hit marker")
+	await _seconds(0.15)
+	_expect(hits_landed == [[dummy, false]], "a landed shot reported %s" % [hits_landed])
+	_expect(hud.hitmarker_alpha() > 0.5, "the hit marker did not flash on a hit (alpha %.2f)" % hud.hitmarker_alpha())
+	_expect(not hud.hitmarker_is_kill(), "a plain hit showed the kill marker")
+	_expect(_sounds_of(&"hitmark") == 1, "a landed shot played %d hit ticks" % _sounds_of(&"hitmark"))
+	await _seconds(0.5)
+	_expect(is_zero_approx(hud.hitmarker_alpha()), "the hit marker did not fade (alpha %.2f)" % hud.hitmarker_alpha())
+	_clear_shots()
+
+	# Four more rounds kill the 5 HP dummy: the last one is a kill marker.
+	hits_landed.clear()
+	sounds.clear()
+	for i in 4:
+		await _seconds(player.weapon.fire_interval + 0.02)
+		player.fire()
+		await _seconds(0.15)
+	_expect(hits_landed.size() == 4 and hits_landed[3][1] == true, "the killing shot reported %s" % [hits_landed])
+	_expect(hud.hitmarker_is_kill(), "the killing shot did not show the kill marker")
+	_expect(_sounds_of(&"hitmark") == 4, "four hits played %d hit ticks" % _sounds_of(&"hitmark"))
+	_clear_shots()
+	await _seconds(0.5)
+
+	# A landed melee is a hit too.
+	await _place(RUNWAY)
+	await _dummy(9, 1.5)
+	sounds.clear()
+	await _swing()
+	_expect(hits_landed == [[dummy, false]], "a landed melee reported %s" % [hits_landed])
+	_expect(hud.hitmarker_alpha() > 0.3, "the hit marker did not flash on a melee")
+	_expect(_sounds_of(&"hitmark") == 1, "a landed melee played %d hit ticks" % _sounds_of(&"hitmark"))
+	await _cycle()
+	await _clear_dummy()
 
 
 func _impact_rings() -> int:

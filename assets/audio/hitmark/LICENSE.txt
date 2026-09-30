@@ -1,0 +1,1 @@
+Placeholder hit tick, synthesized with ffmpeg (two short sine clicks); replaced by whatever the sound booth picks.

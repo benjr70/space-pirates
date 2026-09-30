@@ -31,6 +31,9 @@ signal played(kind: StringName, stream: AudioStream)
 @export var mag_in_at := 0.6
 @export var shot_volume_db := 0.0
 @export var gun_volume_db := -6.0
+## The tick that says a shot or swing landed; a kill drops its pitch.
+@export var hitmark_stream: AudioStream = preload("res://assets/audio/hitmark/hitmark.ogg")
+@export var hitmark_volume_db := -4.0
 
 @export_group("Melee")
 @export var melee_streams: Array[AudioStream] = [
@@ -69,6 +72,7 @@ var _shot: AudioStreamPlayer
 var _gun: AudioStreamPlayer
 var _body: AudioStreamPlayer
 var _melee: AudioStreamPlayer
+var _hitmark: AudioStreamPlayer
 var _walked := 0.0
 ## He has been off the floor since the last landing, so the next floor
 ## state is a landing and not a respawn.
@@ -83,11 +87,13 @@ func _ready() -> void:
 	_gun = _player("Gun", gun_volume_db)
 	_body = _player("Body", step_volume_db)
 	_melee = _player("Melee", melee_volume_db)
+	_hitmark = _player("Hitmark", hitmark_volume_db)
 	_pirate.fired.connect(_on_fired)
 	_pirate.dry_fired.connect(_on_dry_fired)
 	_pirate.reload_started.connect(_on_reload_started)
 	_pirate.reload_cancelled.connect(_stop_reload_sequence)
 	_pirate.melee_swung.connect(_on_melee_swung)
+	_pirate.hit_landed.connect(_on_hit_landed)
 	_pirate.state_changed.connect(_on_state_changed)
 	# Children are ready before their owner, so his Health is fetched by path.
 	(_pirate.get_node("Health") as Health).damaged.connect(_on_damaged)
@@ -107,7 +113,7 @@ func reset() -> void:
 	_stop_reload_sequence()
 	_walked = stride * 0.5
 	_airborne = false
-	for player in [_shot, _gun, _body, _melee]:
+	for player in [_shot, _gun, _body, _melee, _hitmark]:
 		player.stop()
 
 
@@ -163,6 +169,12 @@ func _on_melee_swung(target: Node3D, _killed: bool) -> void:
 
 ## A landing: back on the floor after being off it, not a respawn's reset
 ## to WALK, and not the start of a clamber.
+func _on_hit_landed(_target: Node3D, killed: bool) -> void:
+	_play(_hitmark, &"hitmark", hitmark_stream)
+	if killed:
+		_hitmark.pitch_scale *= 0.8
+
+
 func _on_state_changed(from: int, to: int) -> void:
 	if from == _pirate.State.AIR and to != _pirate.State.AIR and to != _pirate.State.CLAMBER and _airborne:
 		_airborne = false
