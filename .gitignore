@@ -24,3 +24,7 @@ export_presets.cfg
 # Claude Code agent worktrees and local settings
 .claude/worktrees/
 .claude/settings.local.json
+
+# Blender model scripts: renders, bakes and exports are rebuilt by running them
+/tools/blender/out/
+__pycache__/
