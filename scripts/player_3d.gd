@@ -2,7 +2,7 @@ extends CharacterBody3D
 ## The pirate, in first person. WASD to move, mouse to look, left click to
 ## shoot, right click to aim. Shift sprints, Ctrl or C crouches, Space jumps
 ## and clambers, R reloads, V or the mouse's side button melees, E works
-## doors.
+## doors, and the mouse wheel turns through the weapons he carries.
 ##
 ## Movement is a six-state machine in the feel of Halo Infinite:
 ##   WALK     default on the floor
@@ -48,6 +48,9 @@ signal dry_fired
 signal reloading_changed(reloading: bool)
 signal reload_started(from_empty: bool)
 signal reload_cancelled
+## He has a different weapon in hand: a turn of the wheel, or a Profile set
+## from outside.
+signal weapon_changed(profile: WeaponProfile)
 ## The live cone half-angle, for the crosshair and the viewmodel.
 signal spread_changed(degrees: float)
 signal state_changed(from: State, to: State)
@@ -131,7 +134,20 @@ const TEAM := &"pirate"
 
 @export_group("Gunnery")
 ## What he is holding. Swap the resource and every number follows.
-@export var weapon: WeaponProfile = preload("res://resources/weapons/sidearm.tres")
+@export var weapon: WeaponProfile = preload("res://resources/weapons/sidearm.tres"):
+	set(value):
+		if value == weapon:
+			return
+		weapon = value
+		if is_node_ready():
+			weapon_changed.emit(weapon)
+## What he carries, in the order the mouse wheel turns through them.
+@export var weapons: Array[WeaponProfile] = [
+	preload("res://resources/weapons/sidearm.tres"),
+	preload("res://resources/weapons/carbine.tres"),
+]
+## Seconds a weapon swap keeps the trigger, the sights and the reload busy.
+@export var swap_time := 0.4
 @export var projectile_scene: PackedScene = preload("res://scenes/projectile_3d.tscn")
 ## How far ahead the crosshair ray looks for something to converge on.
 @export var aim_distance: float = 100.0
@@ -143,6 +159,8 @@ const TEAM := &"pirate"
 const FALL_LIMIT := -10.0
 ## How fast the head and camera settle toward their targets.
 const CAMERA_LERP := 12.0
+## How far short of a wall a bolt starts when the barrel is through it.
+const MUZZLE_WALL_GAP := 0.05
 ## The ship's walls, floors and props: what a crouch or clamber probes.
 const WORLD_LAYER := 1
 ## Bodies that can be hit: the crew and the pirate himself.
@@ -167,6 +185,9 @@ var ammo := 0
 var _cooldown := 0.0
 var _reload_timer := 0.0
 var _reload_from_empty := false
+var _swap_left := 0.0
+## Rounds left in the magazine of each weapon he is not holding.
+var _stowed_ammo := {}
 ## Degrees of spread the last shots added, decaying back to zero.
 var _bloom := 0.0
 var _last_spread := -1.0
@@ -254,6 +275,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 		# The click that takes the mouse back is not a trigger pull.
 		Input.action_release("shoot")
+	elif event.is_action_pressed("weapon_next"):
+		switch_weapon(1)
+	elif event.is_action_pressed("weapon_prev"):
+		switch_weapon(-1)
 
 
 func _physics_process(delta: float) -> void:
@@ -388,7 +413,8 @@ func _walk(flat: Vector3, direction: Vector3, multiplier: float, delta: float) -
 ## Where the sights may be up: on the floor or in the air, but never
 ## committed to a move or a magazine swap.
 func _ads_allowed() -> bool:
-	return state in [State.WALK, State.CROUCH, State.AIR] and not is_reloading() and not is_meleeing()
+	return state in [State.WALK, State.CROUCH, State.AIR] and not is_reloading() and not is_meleeing() \
+			and not is_swapping()
 
 
 ## The newer input wins between aim and sprint: pressing aim ends a sprint,
@@ -567,6 +593,7 @@ func _animate_camera(delta: float) -> void:
 
 func _tick_gunnery_timers(delta: float) -> void:
 	_cooldown = maxf(_cooldown - delta, 0.0)
+	_swap_left = maxf(_swap_left - delta, 0.0)
 	_melee_cycle_left = maxf(_melee_cycle_left - delta, 0.0)
 	if weapon.bloom_decay_seconds > 0.0:
 		_bloom = maxf(_bloom - weapon.bloom_per_shot_degrees / weapon.bloom_decay_seconds * delta, 0.0)
@@ -588,7 +615,7 @@ func is_reloading() -> bool:
 ## weapon is busy with a clamber or a swing. A dry magazine takes the longer,
 ## racked reload.
 func start_reload() -> void:
-	if is_reloading() or ammo == weapon.magazine_size or state == State.CLAMBER or is_meleeing():
+	if is_reloading() or ammo == weapon.magazine_size or state == State.CLAMBER or is_meleeing() or is_swapping():
 		return
 	_reload_from_empty = ammo == 0
 	_reload_timer = weapon.reload_empty if _reload_from_empty else weapon.reload_tactical
@@ -597,7 +624,31 @@ func start_reload() -> void:
 	reload_started.emit(_reload_from_empty)
 
 
-## Drops a running reload with nothing gained: the hook a melee uses.
+func is_swapping() -> bool:
+	return _swap_left > 0.0
+
+
+## The next weapon he carries, [param step] places round the wheel. Each
+## keeps the rounds it had; the swap drops a running reload and the sights,
+## and holds the trigger for `swap_time`. Refused mid-clamber and mid-swing.
+func switch_weapon(step: int) -> void:
+	if weapons.is_empty() or state == State.CLAMBER or is_meleeing():
+		return
+	var next: WeaponProfile = weapons[posmod(weapons.find(weapon) + step, weapons.size())]
+	if next == weapon:
+		return
+	cancel_reload()
+	_lower_sights()
+	_stowed_ammo[weapon] = ammo
+	_swap_left = swap_time
+	_bloom = 0.0
+	ammo = _stowed_ammo.get(next, next.magazine_size)
+	weapon = next
+	ammo_changed.emit(ammo)
+
+
+## Drops a running reload with nothing gained: the hook a melee and a weapon
+## swap use.
 func cancel_reload() -> void:
 	if not is_reloading():
 		return
@@ -649,7 +700,7 @@ func fire() -> Projectile3D:
 	if state == State.SPRINT:
 		_end_sprint_latched()
 		return null
-	if _cooldown > 0.0 or projectile_scene == null or is_reloading() or is_meleeing():
+	if _cooldown > 0.0 or projectile_scene == null or is_reloading() or is_meleeing() or is_swapping():
 		return null
 	if ammo <= 0:
 		dry_fired.emit()
@@ -659,7 +710,7 @@ func fire() -> Projectile3D:
 	ammo -= 1
 	ammo_changed.emit(ammo)
 
-	var origin := muzzle.global_position
+	var origin := _shot_origin()
 	var direction := _scatter((aim_point() - origin).normalized())
 	var shot: Projectile3D = projectile_scene.instantiate()
 	shot.speed = weapon.projectile_speed
@@ -671,6 +722,17 @@ func fire() -> Projectile3D:
 	_bloom += weapon.bloom_per_shot_degrees
 	fired.emit()
 	return shot
+
+
+## Where a bolt starts: the tip of the barrel as it is drawn. A barrel poked
+## into a wall he is standing against starts the bolt on his side of it.
+func _shot_origin() -> Vector3:
+	var eye := camera.global_position
+	var origin := viewmodel.muzzle_point()
+	var wall := _world_ray(eye, origin)
+	if not wall.is_empty():
+		origin = wall.position + (eye - wall.position).normalized() * MUZZLE_WALL_GAP
+	return origin
 
 
 ## The bolt struck [param target]: a hit if it could be hurt, and a kill if
@@ -835,6 +897,8 @@ func respawn() -> void:
 	velocity = Vector3.ZERO
 	visible = true
 	ammo = weapon.magazine_size
+	_stowed_ammo.clear()
+	_swap_left = 0.0
 	_reload_timer = 0.0
 	_cooldown = 0.0
 	_bloom = 0.0

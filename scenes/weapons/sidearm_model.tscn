@@ -1,0 +1,8 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="PackedScene" path="res://assets/models/sidearm/pistol.glb" id="1"]
+
+[node name="SidearmModel" type="Node3D"]
+
+[node name="Pistol" parent="." instance=ExtResource("1")]
+transform = Transform3D(1.2, 0, 0, 0, 1.2, 0, 0, 0, 1.2, 0, 0.068, -0.07)

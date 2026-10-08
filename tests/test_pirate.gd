@@ -21,6 +21,7 @@ extends SceneTree
 const UP := Vector3.UP
 const PLAYER_SCENE: PackedScene = preload("res://scenes/player_3d.tscn")
 const HEAVY_PISTOL: WeaponProfile = preload("res://tests/weapons/heavy_pistol.tres")
+const CARBINE: WeaponProfile = preload("res://resources/weapons/carbine.tres")
 const FRAME := 1.0 / 60.0
 ## Course blocks, one per height, spaced along X with their near face at Z -2.5.
 const BLOCK_HEIGHTS := [0.3, 0.5, 0.7, 0.9, 1.1, 1.3, 1.5, 1.7, 1.9, 2.1]
@@ -118,6 +119,10 @@ func _run() -> void:
 	await _check_reload_carries()
 	await _check_spread()
 	await _check_profile_swap()
+	await _check_weapon_wheel()
+	await _check_swap_is_busy()
+	await _check_carbine_full_auto()
+	await _check_carbine_model()
 	await _check_ads_states()
 	await _check_ads_ends()
 	await _check_ads_raise()
@@ -702,6 +707,159 @@ func _clear_shots() -> void:
 	for node in world.get_children():
 		if node is Projectile3D:
 			node.free()
+
+
+## --- the weapon wheel ---
+
+func _wheel(action: StringName) -> void:
+	var event := InputEventAction.new()
+	event.action = action
+	event.pressed = true
+	Input.parse_input_event(event)
+	await _frames(2)
+
+
+## The wheel turns Sidearm to Carbine and back, either way round, and each
+## keeps the rounds it had.
+func _check_weapon_wheel() -> void:
+	var sidearm: WeaponProfile = player.weapon
+	await _place(RUNWAY)
+	_expect(player.weapons.size() == 2 and player.weapons[0] == sidearm and player.weapons[1] == CARBINE,
+			"he does not carry the Sidearm and the Carbine")
+	_expect(_fire_and_drop(), "no shot from the Sidearm before the swap")
+	await _wheel(&"weapon_next")
+	_expect(player.weapon == CARBINE, "wheel down did not bring up the Carbine")
+	_expect(player.ammo == CARBINE.magazine_size, "the Carbine came up with %d rounds, not a full %d" % [player.ammo, CARBINE.magazine_size])
+	await _seconds(player.swap_time + 0.05)
+	_expect(_fire_and_drop(), "no shot from the Carbine after the swap")
+	await _wheel(&"weapon_next")
+	_expect(player.weapon == sidearm, "a second turn did not come back to the Sidearm")
+	_expect(player.ammo == sidearm.magazine_size - 1, "the Sidearm came back with %d rounds, it was stowed with %d" % [player.ammo, sidearm.magazine_size - 1])
+	await _wheel(&"weapon_prev")
+	_expect(player.weapon == CARBINE, "wheel up did not bring up the Carbine")
+	_expect(player.ammo == CARBINE.magazine_size - 1, "the Carbine came back with %d rounds, it was stowed with %d" % [player.ammo, CARBINE.magazine_size - 1])
+	await _wheel(&"weapon_prev")
+	_expect(player.weapon == sidearm, "the wheel did not end on the Sidearm")
+	await _place(RUNWAY)
+	_expect(player.weapon == sidearm and player.ammo == sidearm.magazine_size, "a respawn did not leave him a full Sidearm")
+	player.switch_weapon(1)
+	_expect(player.ammo == CARBINE.magazine_size, "a respawn did not refill the stowed Carbine")
+	player.switch_weapon(1)
+	await _place(RUNWAY)
+
+
+## A swap holds the trigger and the sights for its time, and drops a reload.
+func _check_swap_is_busy() -> void:
+	var sidearm: WeaponProfile = player.weapon
+	await _place(RUNWAY)
+	_expect(_fire_and_drop(), "no shot to start a reload from")
+	await _seconds(sidearm.fire_interval + 0.05)
+	player.start_reload()
+	_expect(player.is_reloading(), "no reload to swap out of")
+	await _aim(true)
+	player.switch_weapon(1)
+	_expect(not player.is_reloading(), "the swap did not drop the reload")
+	_expect(player.is_swapping(), "the swap is not busy")
+	_expect(player.fire() == null, "a shot went off mid-swap")
+	await _frames(3)
+	_expect(not player.ads, "the sights came up mid-swap")
+	await _seconds(player.swap_time + 0.1)
+	_expect(not player.is_swapping(), "the swap outlasted its %.1f s" % player.swap_time)
+	_expect(player.ads, "held aim did not come back after the swap")
+	_expect(_fire_and_drop(), "no shot after the swap")
+	await _aim(false)
+	player.switch_weapon(-1)
+	_expect(player.ammo == sidearm.magazine_size - 1, "the dropped reload still filled the Sidearm")
+	await _place(RUNWAY)
+
+
+## The Carbine is fully automatic: a held trigger keeps firing at its
+## interval, where the Sidearm fires once.
+func _check_carbine_full_auto() -> void:
+	var sidearm: WeaponProfile = player.weapon
+	await _place(RUNWAY)
+	player.switch_weapon(1)
+	await _seconds(player.swap_time + 0.05)
+	_expect(not CARBINE.semi_auto, "the Carbine's Profile is semi-automatic")
+	shots_fired = 0
+	Input.action_press("shoot")
+	await _seconds(1.0)
+	Input.action_release("shoot")
+	var wanted := int(1.0 / CARBINE.fire_interval)
+	_expect(absi(shots_fired - wanted) <= 2, "a second of held trigger fired %d shots, about %d expected" % [shots_fired, wanted])
+	_expect(player.ammo == CARBINE.magazine_size - shots_fired, "the Carbine spent %d rounds on %d shots" % [CARBINE.magazine_size - player.ammo, shots_fired])
+	await _frames(2)
+	_clear_shots()
+	player.switch_weapon(1)
+	_expect(player.weapon == sidearm, "the wheel did not end on the Sidearm")
+	await _place(RUNWAY)
+
+
+## The Viewmodel swaps the mesh: the Carbine's own clips, muzzle and sights,
+## its front sight on the camera axis in ADS, and the pistol back afterwards.
+func _check_carbine_model() -> void:
+	var sidearm: WeaponProfile = player.weapon
+	await _place(RUNWAY)
+	var pistol_clips: AnimationPlayer = weapon.sidearm_clips
+	var pistol_muzzle: Vector3 = player.muzzle.position
+	player.switch_weapon(1)
+	await _seconds(player.swap_time + 0.3)
+	var anim: AnimationPlayer = weapon.sidearm_clips
+	_expect(anim != null and anim != pistol_clips, "the Carbine did not bring its own clips")
+	if anim != null:
+		for clip_name in [CARBINE.model_fire_clip, CARBINE.model_reload_clip, CARBINE.model_rack_clip]:
+			_expect(anim.has_animation(clip_name), "the Carbine mesh lacks the %s clip" % clip_name)
+	_expect(player.muzzle.position.z > pistol_muzzle.z + 0.2, "the Carbine's muzzle is at %s, no further out than the pistol's" % player.muzzle.position)
+	_at_pose(CARBINE.pose_hip, "Carbine at the hip")
+	var shown := 0
+	for model in weapon.sidearm.get_children():
+		if (model as Node3D).visible:
+			shown += 1
+	_expect(shown == 1, "%d weapon meshes are showing" % shown)
+	_expect(_fire_and_drop(), "no shot for the Carbine fire clip")
+	await _frames(1)
+	_expect(anim.current_animation == CARBINE.model_fire_clip and anim.is_playing(), "a shot played %s on the Carbine" % anim.current_animation)
+	await _aim(true)
+	await _seconds(0.5)
+	var sight: Node3D = weapon.get_node("SightTip")
+	var in_camera: Vector3 = player.camera.to_local(sight.global_position)
+	_expect(absf(in_camera.x) < 0.005 and absf(in_camera.y) < 0.005,
+			"in ADS the Carbine's front sight sits at (%.3f, %.3f) m off the camera axis" % [in_camera.x, in_camera.y])
+	_expect(in_camera.z < 0.0, "the Carbine's front sight is behind the camera in ADS")
+	# The rear ring sits on the same line, nearer the eye, so he looks
+	# through it at the post.
+	var rear: Node3D = weapon.sidearm.find_child("SightRear", true, false)
+	_expect(rear != null, "the Carbine mesh has no SightRear marker")
+	if rear != null:
+		var ring: Vector3 = player.camera.to_local(rear.global_position)
+		_expect(absf(ring.x) < 0.003 and absf(ring.y) < 0.003,
+				"in ADS the Carbine's rear ring sits at (%.3f, %.3f) m off the camera axis" % [ring.x, ring.y])
+		_expect(ring.z < -0.06 and ring.z > in_camera.z + 0.3,
+				"the rear ring is %.2f m out and the post %.2f m: not a sight line to look down" % [-ring.z, -in_camera.z])
+	# Braced in the shoulder: an aimed shot comes straight back, the muzzle
+	# does not climb and the sights stay on the line.
+	var rest_pitch: float = weapon.rotation_degrees.x
+	var rest_z: float = weapon.position.z
+	_expect(_fire_and_drop(), "no aimed shot from the Carbine")
+	var climb := 0.0
+	var push := 0.0
+	var drift := 0.0
+	for i in 10:
+		await physics_frame
+		climb = maxf(climb, absf(weapon.rotation_degrees.x - rest_pitch))
+		push = maxf(push, weapon.position.z - rest_z)
+		var tip: Vector3 = player.camera.to_local(sight.global_position)
+		drift = maxf(drift, Vector2(tip.x, tip.y).length())
+	_expect(climb < 0.2, "an aimed Carbine shot tipped the weapon %.1f deg" % climb)
+	_expect(push > 0.01, "an aimed Carbine shot pushed it back only %.3f m" % push)
+	_expect(drift < 0.005, "an aimed Carbine shot threw the front sight %.3f m off the line" % drift)
+	await _aim(false)
+	_clear_shots()
+	player.switch_weapon(1)
+	await _seconds(player.swap_time + 0.3)
+	_expect(player.weapon == sidearm and weapon.sidearm_clips == pistol_clips, "the pistol's mesh did not come back")
+	_expect(player.muzzle.position.is_equal_approx(pistol_muzzle), "the muzzle did not go back to the pistol's")
+	await _place(RUNWAY)
 
 
 ## --- Aim Down Sights ---
@@ -1333,17 +1491,26 @@ func _check_viewmodel_recoil() -> void:
 	await _seconds(0.4)
 	var rest := weapon.position
 	var rest_pitch: float = weapon.rotation_degrees.x
+	var rest_muzzle: Vector3 = player.camera.to_local(player.muzzle.global_position)
 	_expect(_fire_and_drop(), "no shot for the recoil check")
 	var push := 0.0
 	var kick := 0.0
 	var camera_kick := 0.0
+	var muzzle_rise := 0.0
+	var muzzle_back := 0.0
 	for i in 12:
 		await physics_frame
 		push = maxf(push, weapon.position.z - rest.z)
-		kick = maxf(kick, weapon.rotation_degrees.x - rest_pitch)
+		# The Viewmodel faces down the camera, so muzzle-up is a negative pitch.
+		kick = maxf(kick, rest_pitch - weapon.rotation_degrees.x)
+		var muzzle: Vector3 = player.camera.to_local(player.muzzle.global_position)
+		muzzle_rise = maxf(muzzle_rise, muzzle.y - rest_muzzle.y)
+		muzzle_back = maxf(muzzle_back, muzzle.z - rest_muzzle.z)
 		camera_kick = maxf(camera_kick, player.camera.rotation_degrees.x)
 	_expect(push > 0.01, "the shot pushed the Viewmodel back only %.3f m" % push)
 	_expect(kick > 1.5, "the shot kicked the Viewmodel up only %.1f deg" % kick)
+	_expect(muzzle_rise > 0.005, "the shot lifted the muzzle only %.3f m: recoil goes up" % muzzle_rise)
+	_expect(muzzle_back > 0.01, "the shot brought the muzzle back only %.3f m: recoil goes back" % muzzle_back)
 	_expect(camera_kick > 0.8 and camera_kick <= 1.2 + 0.01, "the camera kick peaked at %.2f deg, want 1.2" % camera_kick)
 	await _seconds(0.5)
 	_expect(weapon.position.distance_to(rest) < 0.005, "the Viewmodel did not settle after the shot")
@@ -1465,7 +1632,7 @@ func _check_clips_follow_profile() -> void:
 
 ## --- the Sidearm mesh ---
 
-## The Viewmodel carries the Quaternius pistol: in ADS its front sight sits
+## The Viewmodel carries the pistol model: in ADS its front sight sits
 ## on the camera axis, from the hip it sits low right, and the shot leaves
 ## its muzzle.
 func _check_sidearm_model() -> void:
@@ -1934,9 +2101,31 @@ func _check_tracer() -> void:
 	_expect(bolt != null, "no bolt for the tracer check")
 	if bolt == null:
 		return
-	await _frames(1)
 	var streak: MeshInstance3D = bolt.get_node_or_null("Streak")
 	_expect(streak != null, "the bolt has no Streak mesh")
+	if streak != null:
+		# It starts on the pixel the barrel's tip is drawn on: the muzzle as
+		# the Viewmodel's own FOV shows it, not the marker's place in the world.
+		var born: Vector3 = bolt.global_position
+		var eye: Camera3D = player.camera
+		var seen: Vector3 = eye.to_local(born)
+		var marker: Vector3 = eye.to_local(player.muzzle.global_position)
+		var widen: float = tan(deg_to_rad(eye.fov) * 0.5) / tan(deg_to_rad(weapon.fov_override) * 0.5)
+		_expect(seen.distance_to(Vector3(marker.x * widen, marker.y * widen, marker.z)) < 0.005,
+				"the bolt started at %s in the camera, the barrel's tip is drawn at %s" % [seen, Vector3(marker.x * widen, marker.y * widen, marker.z)])
+		# The streak grows out of the muzzle: no tail behind where it started.
+		_expect(not streak.visible, "the streak shows before the bolt has flown")
+		for i in 4:
+			await physics_frame
+			if not is_instance_valid(bolt):
+				break
+			var tail: Vector3 = bolt.global_transform * (streak.transform * streak.get_aabb()).end
+			var behind: float = (born - tail).dot(bolt.direction)
+			_expect(behind < 0.01, "frame %d: the streak's tail is %.2f m behind the muzzle" % [i, behind])
+	if not is_instance_valid(bolt):
+		_expect(false, "the bolt died before the tracer could be measured")
+		_clear_shots()
+		return
 	if streak != null:
 		var size: Vector3 = streak.get_aabb().size
 		var local_length: float = (streak.transform.basis * size).abs().z

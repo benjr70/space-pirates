@@ -1,8 +1,7 @@
-[gd_scene load_steps=8 format=3]
+[gd_scene load_steps=7 format=3]
 
 [ext_resource type="Script" path="res://scripts/player_3d.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/health.gd" id="2"]
-[ext_resource type="PackedScene" path="res://assets/models/quaternius_pistol/pistol.glb" id="3"]
 [ext_resource type="Script" path="res://scripts/viewmodel.gd" id="4"]
 [ext_resource type="AnimationLibrary" path="res://resources/animations/viewmodel_clips.tres" id="5"]
 [ext_resource type="Script" path="res://scripts/pirate_audio.gd" id="6"]
@@ -33,11 +32,8 @@ script = ExtResource("4")
 
 [node name="Sidearm" type="Node3D" parent="Head/Camera3D/Weapon"]
 
-[node name="Model" parent="Head/Camera3D/Weapon/Sidearm" instance=ExtResource("3")]
-transform = Transform3D(0, 0, -0.035, 0, 0.035, 0, 0.035, 0, 0, 0, 0, 0)
-
 [node name="Muzzle" type="Node3D" parent="Head/Camera3D/Weapon"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.085, 0.07)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.0896, 0.0872)
 
 [node name="SightTip" type="Marker3D" parent="Head/Camera3D/Weapon"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1076, 0.065)

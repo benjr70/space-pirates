@@ -1,6 +1,7 @@
-[gd_resource type="Resource" script_class="WeaponProfile" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="WeaponProfile" load_steps=3 format=3]
 
 [ext_resource type="Script" path="res://scripts/weapon_profile.gd" id="1"]
+[ext_resource type="PackedScene" path="res://scenes/weapons/sidearm_model.tscn" id="2"]
 
 [resource]
 script = ExtResource("1")
@@ -23,3 +24,4 @@ spread_air = 1.5
 ads_spread = 0.5
 ads_zoom = 1.6
 ads_speed = 0.8
+model = ExtResource("2")

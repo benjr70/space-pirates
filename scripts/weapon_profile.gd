@@ -49,12 +49,39 @@ extends Resource
 ## Multiplier on walking speed while aimed.
 @export var ads_speed := 0.8
 
+@export_group("Recoil")
+## A shot shoves the weapon this far back toward him and tips its muzzle up
+## by this much, and it settles on its own.
+@export var recoil_push := 0.05
+@export var recoil_kick_degrees := 7.0
+## The same in Aim Down Sights. A long gun is braced in the shoulder there,
+## so it comes straight back along the sight line with no kick at all; a
+## handgun snaps up in the wrist either way.
+@export var ads_recoil_push := 0.05
+@export var ads_recoil_kick_degrees := 7.0
+## Degrees the view itself jumps on a shot.
+@export var camera_kick_degrees := 1.2
+## The Viewmodel clip a shot plays on the weapon on top of all that; blank
+## for a weapon whose recoil is only the numbers above.
+@export var fire_clip: StringName = &"fire"
+
 @export_group("Viewmodel")
+## The mesh he holds: a scene under `scenes/weapons` that mounts the model
+## where the hand goes, with `Muzzle` and `SightTip` markers somewhere inside
+## it. Blank keeps whatever is already mounted, poses and all.
+@export var model: PackedScene
+## Where the weapon rides at the hip, and lowered for a sprint or clamber,
+## in camera space.
+@export var pose_hip := Vector3(0.16, -0.18, -0.30)
+@export var pose_low := Vector3(0.20, -0.26, -0.30)
+## How far ahead of the eye the weapon is held in Aim Down Sights. The front
+## sight centres itself; this only sets how big the weapon looks.
+@export var ads_distance := 0.32
 ## The weapon mesh's own skeleton clips, by name on its AnimationPlayer.
-@export var model_fire_clip: StringName = &"PistolArmature|Fire"
-@export var model_reload_clip: StringName = &"PistolArmature|Reload"
+@export var model_fire_clip: StringName = &"fire"
+@export var model_reload_clip: StringName = &"reload"
 ## Racks the slide to close an empty reload; blank for a weapon without one.
-@export var model_rack_clip: StringName = &"PistolArmature|Slide"
+@export var model_rack_clip: StringName = &"rack"
 ## How long the action cycles on a shot.
 @export var fire_cycle_time := 0.15
 ## The empty reload ends with the rack; this much of it is the rack.

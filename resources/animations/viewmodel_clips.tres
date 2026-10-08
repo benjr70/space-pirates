@@ -3,6 +3,10 @@
 ; The Viewmodel clips, authored from the prototype keys (issue #36): they move
 ; the Sidearm node under the Viewmodel. Edit in the editor: the Clips
 ; AnimationPlayer on the player scene loads this library.
+;
+; The Viewmodel is turned round to face down the camera, so in the holder's
+; own space +Z is away from the eye and a negative X turn lifts the muzzle:
+; the fire clip's kick is back (-Z) and up (-X).
 
 [sub_resource type="Animation" id="Animation_feo5t"]
 length = 0.12
@@ -16,7 +20,7 @@ tracks/0/keys = {
 "times": PackedFloat32Array(0, 0.03, 0.12),
 "transitions": PackedFloat32Array(1, 1, 1),
 "update": 0,
-"values": [Vector3(0, 0, 0), Vector3(0, 0.01, 0.05), Vector3(0, 0, 0)]
+"values": [Vector3(0, 0, 0), Vector3(0, 0.01, -0.05), Vector3(0, 0, 0)]
 }
 tracks/1/type = "value"
 tracks/1/imported = false
@@ -28,7 +32,7 @@ tracks/1/keys = {
 "times": PackedFloat32Array(0, 0.03, 0.12),
 "transitions": PackedFloat32Array(1, 1, 1),
 "update": 0,
-"values": [Vector3(0, 0, 0), Vector3(6, 0, 0), Vector3(0, 0, 0)]
+"values": [Vector3(0, 0, 0), Vector3(-6, 0, 0), Vector3(0, 0, 0)]
 }
 
 [sub_resource type="Animation" id="Animation_yweqh"]

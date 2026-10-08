@@ -248,9 +248,23 @@ trigger on an empty magazine, clicks once and starts the reload; the HUD's
 crosshair opens with the Sidearm's spread, and a landed hit flashes a marker
 with a tick, red when it killed.
 
+## Carbine
+
+The Pirate's long gun: fully automatic, firing for as long as the trigger is
+held, with a bigger magazine and a longer reload than the Sidearm. It is a
+second Weapon Profile and nothing else.
+
+## Weapon Wheel
+
+How the Pirate changes what he holds: the mouse wheel turns through the
+weapons he carries, either way round. A weapon keeps the rounds it had when it
+was put away. The swap takes a beat in which he cannot shoot, aim or reload,
+and it drops a running reload with nothing gained. A Clamber or a Melee
+refuses it.
+
 ## Aim Down Sights
 
-Raising the Sidearm to its sights, held rather than toggled: the view zooms a
+Raising the weapon to its sights, held rather than toggled: the view zooms a
 little, the Pirate slows a little and shots land tighter. Any move that needs
 the weapon elsewhere — a Sprint, a Slide, a Clamber, a Melee, a reload — ends
 it, and so does being hit, which is what makes a pistol duel swing. Jumping
@@ -268,6 +282,7 @@ fight.
 
 One weapon's whole behaviour as data: how it fires, how many shots it holds,
 how long it reloads, what its shot is and how tight it groups. A new weapon is
-a new Profile, never new code; the Sidearm is the first. Modifiers for later
+a new Profile, never new code; the Sidearm is the first and the Carbine the
+second. Modifiers for later
 weapon types are variations on a Profile's shot, which is why nothing is
 hitscan.

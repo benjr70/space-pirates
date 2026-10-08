@@ -9,7 +9,10 @@ extends Area3D
 ##
 ## It is drawn as a tracer: a thin streak of light 2 m long lying along
 ## the flight, its bright tip at the bolt and its tail trailing behind, so
-## both sides' fire reads as lines through the air rather than balls.
+## both sides' fire reads as lines through the air rather than balls. The
+## streak grows out of the muzzle: its tail never reaches back past where the
+## bolt was launched, or a shot would begin as a flash through the shooter's
+## own eyes.
 
 signal hit(target: Node3D)
 
@@ -19,6 +22,9 @@ signal hit(target: Node3D)
 ## Seconds before it gives up, so strays never pile up off in the dark.
 @export var lifetime := 1.6
 
+## The streak reaches full width after this many of its own lengths.
+const WIDTH_GROWTH := 2.0
+
 var direction := Vector3.FORWARD
 ## Whoever fired it, so the shot does not immediately hit them in the back.
 var shooter: Node3D
@@ -26,6 +32,14 @@ var shooter: Node3D
 var team: StringName = &""
 
 var _age := 0.0
+## Metres flown, which is as long as the streak's tail may be.
+var _travelled := 0.0
+## The streak at full length, as the scene draws it, and how far behind the
+## bolt its tail then reaches.
+var _streak_rest: Transform3D
+var _tail_length := 0.0
+
+@onready var _streak: MeshInstance3D = $Streak
 ## Struck once: the overlap may fire in the same frame as the sweep.
 var _struck := false
 
@@ -43,6 +57,9 @@ func launch(from: Vector3, aim: Vector3, by: Node3D, of_team: StringName = &"") 
 
 func _ready() -> void:
 	body_entered.connect(_on_body_entered)
+	_streak_rest = _streak.transform
+	_tail_length = (_streak_rest * _streak.get_aabb()).end.z
+	_draw_streak()
 
 
 func _physics_process(delta: float) -> void:
@@ -54,9 +71,24 @@ func _physics_process(delta: float) -> void:
 		_strike(blocked.collider)
 		return
 	global_position = to
+	_travelled += from.distance_to(to)
+	_draw_streak()
 	_age += delta
 	if _age >= lifetime:
 		queue_free()
+
+
+## The streak squeezed along the flight toward the bolt, so its tail ends
+## where the bolt started until it has flown the streak's whole length. It
+## starts thin as well and fattens over twice that distance: a full-width
+## tail a hand's breadth from the shooter's eye fills his view.
+func _draw_streak() -> void:
+	var grown := clampf(_travelled / _tail_length, 0.0, 1.0)
+	var width := clampf(_travelled / (_tail_length * WIDTH_GROWTH), 0.0, 1.0)
+	_streak.visible = grown > 0.0
+	if grown > 0.0:
+		_streak.transform = Transform3D(Basis.from_scale(Vector3(width, width, grown)) * _streak_rest.basis,
+				_streak_rest.origin * grown)
 
 
 ## The first body on the way from [param from] to [param to] that this bolt

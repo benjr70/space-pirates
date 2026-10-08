@@ -24,8 +24,16 @@ extends Node3D
 ## clip, a Melee does (the Pirate has already dropped the reload by then),
 ## and a cancel stops the clip and puts the mesh back at rest.
 ##
-## The Sidearm's mesh (Quaternius's Animated Pistol, scaled to life size
-## under `Sidearm`) brings its own skeleton clips: the slide cycles on a
+## What hangs under `Sidearm` is whatever the Weapon Profile's `model` scene
+## is: the holder keeps its name from the first weapon, but the wheel swaps
+## the mesh under it. A swap dips the Viewmodel out of the bottom of the view
+## and changes the mesh while it is out of sight; each mesh brings its own
+## `Muzzle` and `SightTip` markers and the Profile its own poses, so the shot
+## leaves the right barrel and the right front sight centres in Aim Down
+## Sights with nothing calibrated by hand.
+##
+## A weapon's mesh (built by the scripts under `tools/blender`) brings its own
+## skeleton clips: the slide cycles on a
 ## shot, the magazine drops and seats on a reload, and the slide racks to
 ## close an empty reload. The Weapon Profile names those clips and times
 ## them, so they play on the mesh's AnimationPlayer time-scaled the same way
@@ -36,13 +44,8 @@ extends Node3D
 ## weapon never pokes through a wall he stands against. No SubViewport.
 
 @export_group("Poses")
-## Holder position and rotation for each pose, in camera space. The mesh
-## faces +Z, so every pose turns it round.
-@export var pose_hip := Vector3(0.16, -0.18, -0.30)
-## Calibrated so the Sidearm's front sight (the SightTip marker) sits on the
-## camera axis; only x and y matter for that, z sets how big it looks.
-@export var pose_ads := Vector3(0.0, -0.1076, -0.32)
-@export var pose_low := Vector3(0.20, -0.26, -0.30)
+## Holder rotation for each pose, in camera space. The mesh faces +Z, so
+## every pose turns it round. The positions come from the Weapon Profile.
 @export var rotation_hip := Vector3(0.0, 180.0, 0.0)
 @export var rotation_low := Vector3(-35.0, 180.0, 15.0)
 ## How fast the Viewmodel settles toward its target pose.
@@ -66,12 +69,10 @@ extends Node3D
 @export var bob_ads_scale := 0.3
 
 @export_group("Recoil")
-@export var recoil_push := 0.05
-@export var recoil_kick_degrees := 7.0
 ## A shot's recoil is 1.0; this much of it goes per second, so it is gone
-## in a sixth of a second.
+## in a sixth of a second. How far it pushes and kicks is the Weapon
+## Profile's, and differs in Aim Down Sights.
 @export var recoil_decay := 6.0
-@export var camera_kick_degrees := 1.2
 ## The camera kick recovers in about 0.1 s.
 @export var camera_kick_recovery := 12.0
 
@@ -79,6 +80,10 @@ extends Node3D
 ## The camera roll a Descope starts with, and how fast it levels out.
 @export var descope_roll_degrees := 2.5
 @export var descope_roll_decay := 12.0
+
+@export_group("Weapon swap")
+## How far the weapon drops out of view while it is swapped for the next.
+@export var swap_drop := 0.35
 
 @export_group("Wall clipping")
 @export var z_clip_scale := 0.35
@@ -92,12 +97,27 @@ const RELOAD_CLIPS: Array[StringName] = [&"reload_tactical", &"reload_empty"]
 ## camera work reads it into its roll target.
 var descope_roll := 0.0
 
-## The clip layer and the Sidearm it moves.
+## Holder position for each pose, in camera space: the mounted weapon's.
+## The sights pose is worked out from its SightTip, so the front sight sits
+## on the camera axis.
+var pose_hip := Vector3(0.16, -0.18, -0.30)
+var pose_ads := Vector3(0.0, -0.1076, -0.32)
+var pose_low := Vector3(0.20, -0.26, -0.30)
+
+## The clip layer and the holder it moves.
 @onready var clips: AnimationPlayer = $Clips
 @onready var sidearm: Node3D = $Sidearm
-## The Sidearm mesh's own skeleton clips and bones.
-@onready var sidearm_clips: AnimationPlayer = sidearm.find_child("AnimationPlayer", true, false)
-@onready var _skeleton: Skeleton3D = sidearm.find_child("Skeleton3D", true, false)
+@onready var _muzzle: Node3D = $Muzzle
+@onready var _sight_tip: Node3D = $SightTip
+## The mounted mesh's own skeleton clips and bones.
+var sidearm_clips: AnimationPlayer
+var _skeleton: Skeleton3D
+## Every model mounted so far, by its scene; all but one are hidden.
+var _models := {}
+var _mounted: Node3D
+## Seconds of swap dip left, and how long the whole dip is.
+var _swap_left := 0.0
+var _swap_time := 0.0
 ## True while the empty reload's magazine clip runs, so its end racks the slide.
 var _rack_after_reload := false
 
@@ -119,14 +139,14 @@ var _pose_rotation := Vector3.ZERO
 func _ready() -> void:
 	_camera = get_parent() as Camera3D
 	_pirate = owner as CharacterBody3D
+	_mount(profile)
 	reset()
-	_flag_materials()
 	_pirate.fired.connect(_on_fired)
 	_pirate.descoped.connect(_on_descoped)
 	_pirate.reload_started.connect(_on_reload_started)
 	_pirate.reload_cancelled.connect(_stop_clip)
 	_pirate.melee_swung.connect(_on_melee_swung)
-	sidearm_clips.animation_finished.connect(_on_sidearm_clip_finished)
+	_pirate.weapon_changed.connect(_on_weapon_changed)
 
 
 ## Everything at rest in the hip pose: what a respawn wants.
@@ -136,6 +156,8 @@ func reset() -> void:
 	_recoil = 0.0
 	_camera_kick = 0.0
 	descope_roll = 0.0
+	_swap_left = 0.0
+	_mount(profile)
 	_pose_position = pose_hip
 	_pose_rotation = rotation_hip
 	position = pose_hip
@@ -171,6 +193,18 @@ func _process(delta: float) -> void:
 
 	_recoil = move_toward(_recoil, 0.0, recoil_decay * delta)
 
+	# A swap dips the weapon out of view and back; the mesh changes at the
+	# bottom, where nobody sees it.
+	var dip := Vector3.ZERO
+	if _swap_left > 0.0:
+		var before := _swap_left
+		_swap_left = maxf(_swap_left - delta, 0.0)
+		var half := _swap_time * 0.5
+		if before > half and _swap_left <= half:
+			_mount(profile)
+			_pose_position = pose_hip
+		dip = Vector3.DOWN * swap_drop * sin(PI * (1.0 - _swap_left / _swap_time))
+
 	# The pose eases; the sway, bob and recoil ride on top at full size, since
 	# each is already smooth or is meant to snap.
 	var pose_position: Vector3
@@ -184,20 +218,35 @@ func _process(delta: float) -> void:
 	var t := minf(pose_lerp * delta, 1.0)
 	_pose_position = _pose_position.lerp(pose_position, t)
 	_pose_rotation = _pose_rotation.lerp(pose_rotation, t)
-	position = _pose_position + sway + bob + Vector3(0.0, 0.0, recoil_push * _recoil)
+	var recoil_push: float = profile.ads_recoil_push if aiming else profile.recoil_push
+	var recoil_kick: float = profile.ads_recoil_kick_degrees if aiming else profile.recoil_kick_degrees
+	position = _pose_position + sway + bob + dip + Vector3(0.0, 0.0, recoil_push * _recoil)
+	# Turned round to face down the camera, a negative pitch is muzzle-up.
 	rotation_degrees = _pose_rotation \
-			+ Vector3(recoil_kick_degrees * _recoil + sway.y * sway_tilt_degrees, -sway.x * sway_tilt_degrees, 0.0)
+			+ Vector3(-recoil_kick * _recoil + sway.y * sway_tilt_degrees, -sway.x * sway_tilt_degrees, 0.0)
 
-	_camera_kick = move_toward(_camera_kick, 0.0, camera_kick_degrees * camera_kick_recovery * delta)
+	_camera_kick = move_toward(_camera_kick, 0.0, profile.camera_kick_degrees * camera_kick_recovery * delta)
 	_camera.rotation_degrees.x = _camera_kick
 	descope_roll = move_toward(descope_roll, 0.0, descope_roll_decay * delta)
 
 
+## Where in the world the barrel's tip appears to be. The weapon is drawn
+## with its own narrow FOV, so on screen its muzzle sits further off the
+## crosshair than the Muzzle marker's true place in the world; a bolt born at
+## the marker would seem to start beside the barrel. This is the point at the
+## muzzle's depth that the camera draws on the same pixel.
+func muzzle_point() -> Vector3:
+	var in_camera := _camera.to_local(_muzzle.global_position)
+	var widen := tan(deg_to_rad(_camera.fov) * 0.5) / tan(deg_to_rad(fov_override) * 0.5)
+	return _camera.to_global(Vector3(in_camera.x * widen, in_camera.y * widen, in_camera.z))
+
+
 func _on_fired() -> void:
 	_recoil = 1.0
-	_camera_kick = camera_kick_degrees
+	_camera_kick = profile.camera_kick_degrees
 	if not _reload_clip_playing():
-		_play_clip("fire")
+		if profile.fire_clip != &"":
+			_play_clip(profile.fire_clip)
 		_play_for(sidearm_clips, profile.model_fire_clip, profile.fire_cycle_time)
 
 
@@ -215,6 +264,45 @@ func _on_sidearm_clip_finished(clip: StringName) -> void:
 	if clip == profile.model_reload_clip and _rack_after_reload:
 		_rack_after_reload = false
 		_play_for(sidearm_clips, profile.model_rack_clip, profile.rack_time)
+
+
+func _on_weapon_changed(_profile: WeaponProfile) -> void:
+	_stop_clip()
+	_swap_time = _pirate.swap_time
+	_swap_left = _swap_time
+	if _swap_time <= 0.0:
+		_mount(profile)
+
+
+## Puts [param weapon]'s model under the holder in place of the last one and
+## takes its markers and poses. A Profile with no model keeps what is there.
+func _mount(weapon: WeaponProfile) -> void:
+	if weapon.model == null or (_mounted != null and _mounted == _models.get(weapon.model)):
+		return
+	_stop_clip()
+	if _mounted != null:
+		_mounted.visible = false
+		sidearm_clips.animation_finished.disconnect(_on_sidearm_clip_finished)
+	if not _models.has(weapon.model):
+		var model: Node3D = weapon.model.instantiate()
+		sidearm.add_child(model)
+		_models[weapon.model] = model
+		_flag_materials(model)
+	_mounted = _models[weapon.model]
+	_mounted.visible = true
+	sidearm_clips = _mounted.find_child("AnimationPlayer", true, false)
+	_skeleton = _mounted.find_child("Skeleton3D", true, false)
+	sidearm_clips.animation_finished.connect(_on_sidearm_clip_finished)
+
+	# The holder is at rest, so the model's markers map straight into the
+	# Viewmodel's own space.
+	var to_viewmodel := global_transform.affine_inverse()
+	_muzzle.position = to_viewmodel * (_mounted.find_child("Muzzle", true, false) as Node3D).global_position
+	_sight_tip.position = to_viewmodel * (_mounted.find_child("SightTip", true, false) as Node3D).global_position
+	pose_hip = weapon.pose_hip
+	pose_low = weapon.pose_low
+	var sight := Basis.from_euler(rotation_hip * PI / 180.0) * _sight_tip.position
+	pose_ads = Vector3(-sight.x, -sight.y, -weapon.ads_distance)
 
 
 func _on_melee_swung(_target: Node3D, _killed: bool) -> void:
@@ -246,8 +334,9 @@ func _stop_clip() -> void:
 	sidearm.position = Vector3.ZERO
 	sidearm.rotation = Vector3.ZERO
 	_rack_after_reload = false
-	sidearm_clips.stop()
-	_skeleton.reset_bone_poses()
+	if sidearm_clips != null:
+		sidearm_clips.stop()
+		_skeleton.reset_bone_poses()
 
 
 func _on_descoped() -> void:
@@ -256,8 +345,8 @@ func _on_descoped() -> void:
 
 ## Godot 4.5+ material flags in place of a SubViewport overlay. Each surface
 ## gets its own copy so the shared mesh resource is untouched.
-func _flag_materials() -> void:
-	for found in find_children("*", "MeshInstance3D", true, false):
+func _flag_materials(model: Node3D) -> void:
+	for found in model.find_children("*", "MeshInstance3D", true, false):
 		var instance := found as MeshInstance3D
 		if instance.mesh == null:
 			continue
