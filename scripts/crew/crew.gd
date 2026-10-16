@@ -1,8 +1,10 @@
 class_name Crew3D
 extends CharacterBody3D
-## Hostile crew: patrols its room, hunts the pirate when it spots him, and
-## fights from cover -- shoot a burst, duck behind something to reload, lean
-## back out.
+## Hostile crew: patrols its room, builds Awareness of the pirate through a
+## forward sight cone ([CrewPerception]), comes to look when suspicious,
+## hunts him once spotted, and fights from cover -- shoot a burst, duck
+## behind something to reload, lean back out. The whole system is written up
+## in `CREW_AI.md` beside this file.
 ##
 ## A straight port of the 2D crew onto the XZ plane. Movement between rooms
 ## rides the door graph via [ShipNavigator]; inside a room the crew steers
@@ -15,7 +17,22 @@ extends CharacterBody3D
 ## for variety, stood `RIG_HEIGHT` tall on the floor under `Model`; the rigs
 ## share Quaternius's clip names, which the brain plays by state.
 
-enum State { PATROL, HUNT, FIGHT, COVER, SEARCH, DEAD }
+## INVESTIGATE is last so the older states keep their numbers.
+enum State { PATROL, HUNT, FIGHT, COVER, SEARCH, DEAD, INVESTIGATE }
+
+## Called on every node in this group, with the crew member, each time one
+## tips into spotted: the HUD's sting and markers listen here.
+const SPOTTED_GROUP := &"awareness_listeners"
+## Awareness a crew member keeps on giving up a chase: still suspicious.
+const SEARCH_AWARENESS := 0.7
+## Fraction of full speed a suspicious crew member walks at to look.
+const INVESTIGATE_SPEED := 0.45
+## Seconds stood at the spot it came to look at before giving up.
+const INVESTIGATE_LINGER := 2.0
+## How far an unaware crew member's idle glances turn, either way.
+const GLANCE_DEGREES := 70.0
+## How fast the body turns to face where it is looking, radians a second.
+const TURN_RATE := 6.0
 
 const TEAM := &"crew"
 ## Layer 1 is the ship itself: hull, props and shut doors.
@@ -37,7 +54,7 @@ const TORSO_HEIGHT := 1.0
 @export var arrive_radius := 0.44
 
 @export_group("Perception")
-@export var vision_range := 14.4
+@export var vision_range := CrewPerception.SIGHT_RANGE
 ## Seconds out of sight before the crew stops shooting and starts searching.
 @export var lose_target_after := 3.0
 
@@ -98,6 +115,14 @@ var _repath_timer := 0.0
 var _last_seen := Vector3.ZERO
 var _seen_ago := 999.0
 var _can_see := false
+## In the forward cone and line of sight: what builds Awareness. _can_see
+## ignores the cone, which is how a crew member already fighting tracks him.
+var _in_view := false
+var perception := CrewPerception.new()
+## Where the pirate was when this crew member last noticed him.
+var _noticed_at := Vector3.ZERO
+var _glance_timer := 0.0
+var _speed_scale := 1.0
 var _rng := RandomNumberGenerator.new()
 var _gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)
 var _anim: AnimationPlayer
@@ -170,8 +195,10 @@ func take_damage(amount: int, from: Node = null) -> void:
 	if from != null and is_instance_valid(from) and from is Node3D:
 		_last_seen = (from as Node3D).global_position
 		_seen_ago = 0.0
+	if perception.alert():
+		_announce_spotted()
 	match state:
-		State.PATROL, State.SEARCH:
+		State.PATROL, State.SEARCH, State.INVESTIGATE:
 			_enter(State.HUNT)
 		State.FIGHT:
 			if _rng.randf() < 0.6:
@@ -190,6 +217,7 @@ func _physics_process(delta: float) -> void:
 	_reload_timer = maxf(_reload_timer - delta, 0.0)
 	_hold_timer = maxf(_hold_timer - delta, 0.0)
 	_repath_timer = maxf(_repath_timer - delta, 0.0)
+	_glance_timer = maxf(_glance_timer - delta, 0.0)
 
 	match state:
 		State.PATROL:
@@ -202,6 +230,8 @@ func _physics_process(delta: float) -> void:
 			_tick_cover()
 		State.SEARCH:
 			_tick_search()
+		State.INVESTIGATE:
+			_tick_investigate()
 
 	_steer(delta)
 	_open_doors_ahead()
@@ -214,20 +244,60 @@ func _physics_process(delta: float) -> void:
 
 func _update_perception(delta: float) -> void:
 	_can_see = false
+	_in_view = false
 	if target == null or not is_instance_valid(target):
 		_seen_ago += delta
 		return
 	if target.has_method("is_alive") and not target.is_alive():
 		_seen_ago += delta
 		return
-	if _flat_distance(global_position, target.global_position) <= vision_range \
+	var distance := _flat_distance(global_position, target.global_position)
+	if distance <= vision_range \
 			and not _blocked(global_position + Vector3.UP * EYE_HEIGHT,
 					target.global_position + Vector3.UP * EYE_HEIGHT):
 		_can_see = true
+		_in_view = CrewPerception.in_cone(facing(), target.global_position - global_position)
+
+	if _in_combat():
+		# A fight tracks him all round and never second-guesses itself.
+		perception.awareness = 1.0
+		if _can_see:
+			_last_seen = target.global_position
+			_seen_ago = 0.0
+		else:
+			_seen_ago += delta
+		return
+
+	var crouched: bool = target.has_method("is_crouched") and target.is_crouched()
+	if _in_view:
+		_noticed_at = target.global_position
+	if perception.sense(delta, _in_view, distance, crouched):
 		_last_seen = target.global_position
 		_seen_ago = 0.0
+		_announce_spotted()
 	else:
 		_seen_ago += delta
+
+
+## Which way this crew member is looking, flat.
+func facing() -> Vector3:
+	return -global_basis.z
+
+
+func _in_combat() -> bool:
+	return state in [State.HUNT, State.FIGHT, State.COVER]
+
+
+func _spotted() -> bool:
+	return perception.band() == CrewPerception.Band.SPOTTED
+
+
+func _suspicious() -> bool:
+	return perception.band() == CrewPerception.Band.SUSPICIOUS
+
+
+func _announce_spotted() -> void:
+	get_tree().call_group(SPOTTED_GROUP, "on_crew_spotted", self)
 
 
 ## True when the ship itself stands between two points.
@@ -253,10 +323,15 @@ func _flat_distance(a: Vector3, b: Vector3) -> float:
 
 func _enter(next: State) -> void:
 	state = next
+	_speed_scale = 1.0
 	match next:
 		State.PATROL:
 			_path.clear()
 			_hold_timer = _rng.randf_range(0.4, 1.6)
+		State.INVESTIGATE:
+			_speed_scale = INVESTIGATE_SPEED
+			_repath_to(_noticed_at)
+			_hold_timer = INVESTIGATE_LINGER
 		State.HUNT:
 			_repath_to(_last_seen)
 		State.FIGHT:
@@ -270,17 +345,41 @@ func _enter(next: State) -> void:
 				_path.clear()
 			_hold_timer = cover_hold_time
 		State.SEARCH:
+			perception.awareness = minf(perception.awareness, SEARCH_AWARENESS)
 			_repath_to(_last_seen)
 			_hold_timer = 2.5
 
 
 func _tick_patrol() -> void:
-	if _can_see:
+	if _spotted():
 		_enter(State.HUNT)
+		return
+	if _suspicious():
+		_enter(State.INVESTIGATE)
 		return
 	if _path.is_empty() and _hold_timer <= 0.0:
 		_path.append(_random_point_in_room(home_room))
 		_hold_timer = _rng.randf_range(0.8, 2.2)
+	elif _path.is_empty() and _glance_timer <= 0.0:
+		# Stood still and unaware: look about, so the cone is not a fixed wedge.
+		_aim = _aim.rotated(Vector3.UP, deg_to_rad(_rng.randf_range(-GLANCE_DEGREES, GLANCE_DEGREES)))
+		_glance_timer = _rng.randf_range(1.5, 4.0)
+
+
+## Suspicious: walk to where he was noticed, look, and give up once the
+## feeling fades with nothing more to see.
+func _tick_investigate() -> void:
+	if _spotted():
+		_enter(State.HUNT)
+		return
+	if _in_view:
+		# Still something there: keep closing on it.
+		if _repath_timer <= 0.0:
+			_repath_to(_noticed_at)
+		_hold_timer = INVESTIGATE_LINGER
+		return
+	if _path.is_empty() and _hold_timer <= 0.0 and perception.awareness < CrewPerception.SUSPICIOUS:
+		_enter(State.PATROL)
 
 
 func _tick_hunt() -> void:
@@ -329,7 +428,7 @@ func _tick_cover() -> void:
 
 
 func _tick_search() -> void:
-	if _can_see:
+	if _spotted():
 		_enter(State.HUNT)
 		return
 	if _path.is_empty() and _hold_timer <= 0.0:
@@ -350,7 +449,7 @@ func _steer(delta: float) -> void:
 			var direction := point - global_position
 			direction.y = 0.0
 			direction = direction.normalized()
-			flat = flat.move_toward(direction * max_speed, acceleration * delta)
+			flat = flat.move_toward(direction * max_speed * _speed_scale, acceleration * delta)
 	velocity.x = flat.x
 	velocity.z = flat.z
 
@@ -378,15 +477,21 @@ func _open_doors_ahead() -> void:
 
 
 func _face() -> void:
-	var facing := _aim
-	if state == State.FIGHT or _can_see:
-		facing = _last_seen - global_position
+	var look := _aim
+	if state == State.FIGHT or (_in_combat() and _can_see):
+		look = _last_seen - global_position
 	elif Vector2(velocity.x, velocity.z).length_squared() > 0.004:
-		facing = velocity
-	facing.y = 0.0
-	if facing.length_squared() > 0.001:
-		_aim = facing.normalized()
-		rotation.y = atan2(-facing.x, -facing.z)
+		look = velocity
+	elif state == State.INVESTIGATE:
+		look = _noticed_at - global_position
+	look.y = 0.0
+	if look.length_squared() > 0.001:
+		_aim = look.normalized()
+		# The body turns at a human rate; shots leave along _aim regardless.
+		var want := atan2(-look.x, -look.z)
+		var step := TURN_RATE * get_physics_process_delta_time()
+		var gap := wrapf(want - rotation.y, -PI, PI)
+		rotation.y += clampf(gap, -step, step)
 
 
 # --- gunnery ------------------------------------------------------------------

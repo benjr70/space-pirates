@@ -234,6 +234,11 @@ func get_team() -> StringName:
 	return TEAM
 
 
+## Low enough that crew take longer to spot him: crouched, or sliding.
+func is_crouched() -> bool:
+	return state == State.CROUCH or state == State.SLIDE
+
+
 func is_alive() -> bool:
 	return health.is_alive()
 

@@ -396,6 +396,8 @@ func _begin_crew_phase() -> void:
 	gunman.spread_degrees = 0.0
 	gunman.position = player.global_position + Vector3(5.6, 0.0, 0.0)
 	holder.add_child(gunman)
+	# Sight is a forward cone that takes time to fill: face him.
+	gunman.face_direction(Vector3.LEFT)
 
 	# A second hostile directly in the line of fire, stood down so it holds
 	# position: friendly shots must pass straight through it.
@@ -413,7 +415,8 @@ func _begin_crew_phase() -> void:
 func _physics_crew() -> void:
 	frames += 1
 	match frames:
-		30:
+		# 5.6 m away spots him in about 0.75 s (CrewPerception.SPOT_TIMES).
+		75:
 			_expect(gunman.state in [Crew3D.State.HUNT, Crew3D.State.FIGHT, Crew3D.State.COVER],
 					"crew saw the pirate and stayed on patrol (state %d)" % gunman.state)
 		240:

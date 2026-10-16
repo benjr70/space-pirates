@@ -150,6 +150,14 @@ through. A Raid starts inside it, facing the shut Hatch; it is the way home.
 Every other Hatch has nothing docked outside and is **sealed**: locked for
 good and striped so it never reads as an ordinary Door.
 
+## Awareness
+
+How much one crew member has noticed the Pirate, from unaware through
+**suspicious** (it comes to look) to **spotted** (it fights or flees). Built
+up by seeing him in a forward cone, faster the closer and the more upright he
+is, and drained slowly once he is out of view. Being shot spots him at once.
+Shown over each crew member's head as a bar filling white, yellow, red.
+
 ## Raid
 
 One visit to a target ship: board through a Hatch, take what can be taken,

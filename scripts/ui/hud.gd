@@ -51,6 +51,8 @@ var _reloading := false
 var _spread_degrees := 0.0
 var _ads := false
 var _loot_label: Label
+## Crew Awareness bars over heads, and the spotted sting.
+var markers: AwarenessMarkers
 var _toasts: VBoxContainer
 
 
@@ -60,6 +62,10 @@ func _ready() -> void:
 	root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(root)
+
+	markers = AwarenessMarkers.new()
+	markers.name = "AwarenessMarkers"
+	root.add_child(markers)
 
 	_vignette = ColorRect.new()
 	_vignette.set_anchors_preset(Control.PRESET_FULL_RECT)
