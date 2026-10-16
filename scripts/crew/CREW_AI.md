@@ -11,10 +11,12 @@ being built toward is spec #52 (tickets #53–#63).
 |---|---|
 | `crew.gd` (`Crew3D`) | The body: movement, health, animation, door handling, gunnery, cover search, and the state machine that ties them together. |
 | `crew_perception.gd` (`CrewPerception`) | Awareness: the sight cone, how fast Awareness fills and drains, and its bands. Pure arithmetic, tested without physics. |
+| `crew_noise.gd` (`CrewNoise`) | Hearing: noise events (footsteps, gunshots, doors), how far each reaches, and which Rooms it carries into. |
 | `../ui/awareness_markers.gd` (`AwarenessMarkers`) | The bar over each crew member's head and the spotted sting, drawn by the HUD. |
 
 Scene: `scenes/crew_3d.tscn`. Tests: `tests/test_crew.gd` (Awareness, the walk
-to look, being shot, the sting), plus the crew fight in `tests/test_ship_3d.gd`.
+to look, being shot, the sting, hearing), plus the crew fight in
+`tests/test_ship_3d.gd`.
 
 ## States
 
@@ -36,7 +38,7 @@ PATROL ──suspicious──▶ INVESTIGATE ──spotted──▶ HUNT ◀─�
   around: every 1.5–4 s it turns up to 70° either way, so the sight cone is
   never a fixed wedge.
 - **INVESTIGATE** (new in #53): entered when Awareness is suspicious but not
-  spotted. Walks at 45 % speed toward where the Pirate was last noticed, faces
+  spotted, whether from a glimpse or a noise. Walks at 45 % speed toward where the Pirate was last noticed, faces
   it, re-paths while it still has him in view, and lingers 2 s at the spot.
   Goes back to PATROL once nothing is in view, it has arrived, the linger is
   over and Awareness has drained below suspicious.
@@ -89,8 +91,39 @@ mid-fill speeds it up.
 - Being shot sets Awareness to 1 at once and points the crew member at the
   shooter's position, from any direction.
 
+**Hearing** (see below) lifts Awareness to suspicious but never to spotted.
+
 **Tipping into spotted** (reaching 1 from below, by sight or by being shot)
 calls `on_crew_spotted(crew)` on every node in the `awareness_listeners` group.
+
+## Hearing
+
+`CrewNoise.make(tree, at, kind, reach, source)` rings a noise for every living
+crew member that can hear it. A noise reaches a crew member when both:
+
+- it is within the noise's **reach** (flat distance), and
+- it **carries**: the listener is in the same Room as the noise (a point in a
+  doorway counts as both Rooms the Door joins), or in a Room joined to the
+  noise's Room by a **Door standing open**. Hull and shut Doors stop it, and a
+  noise one Room further on is not heard. A point in a Hatch gap or outside the
+  ship is in no Room, so noise there carries to nobody.
+
+| Noise | Kind | Reach | Who makes it |
+|---|---|---|---|
+| Sprinting step | STEP | 9 m | the Pirate, once per stride (the step he hears in `PirateAudio`) |
+| Walking step | STEP | 3 m | the Pirate |
+| Crouched or sliding step | — | silent | the Pirate |
+| Gunshot | GUNSHOT | 24 m | the Pirate and crew, every shot |
+| Door opening or closing | DOOR | 6 m | whoever works it |
+
+A crew member that hears a noise (`Crew3D.hear`):
+- ignores it while dead or already in combat;
+- ignores other crew members' footsteps and doors (routine traffic), but not
+  their gunshots, which draw it to look;
+- lifts Awareness to at least **0.45** (step, door) or **0.6** (gunshot), never past
+  **0.95** and never lowering it: suspicious, never spotted;
+- takes the noise position as the place to look; already investigating, it
+  re-paths there and its linger restarts.
 
 ## What the Pirate sees
 
@@ -110,11 +143,12 @@ ear in the sound booth.
 All numbers above are constants in `crew_perception.gd` (`CONE_HALF_DEGREES`,
 `SIGHT_RANGE`, `SUSPICIOUS`, `DECAY_PER_SECOND`, `SPOT_TIMES`, `CROUCH_FACTOR`)
 and `crew.gd` (`SEARCH_AWARENESS`, `INVESTIGATE_SPEED`, `INVESTIGATE_LINGER`,
-`GLANCE_DEGREES`, `TURN_RATE`). They are starting values to be tuned by
+`GLANCE_DEGREES`, `TURN_RATE`, `HEARD_NOISE`, `HEARD_GUNSHOT`, `HEARD_CAP`) and
+`crew_noise.gd` (`SPRINT_STEP`, `WALK_STEP`, `GUNSHOT`, `DOOR`). They are starting values to be tuned by
 playtest.
 
 ## Not yet built
 
-Hearing (#54), routines and roaming (#55), Guard and Worker types (#56), the
+Routines and roaming (#55), Guard and Worker types (#56), the
 ship-wide Alarm (#57), Guard teamwork (#58), bodies (#59), traces (#60) and
 stealth XP (#61).

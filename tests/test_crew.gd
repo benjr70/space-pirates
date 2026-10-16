@@ -15,13 +15,17 @@ var checks := 0
 var world: Node3D
 var player: CharacterBody3D
 var markers: AwarenessMarkers
+var layout: ShipLayout
+## Two Rooms side by side, joined by one Door, for noise through doorways.
+var pair_layout: ShipLayout
+var pair_door: Door3D
 
 
 func _initialize() -> void:
 	_check_pure()
 	world = Node3D.new()
 	root.add_child(world)
-	var layout := ShipLayout.new()
+	layout = ShipLayout.new()
 	var room := RoomData.new()
 	room.rects = [Rect2i(0, 0, 8, 24)]
 	room.role = &"cargo"
@@ -30,6 +34,7 @@ func _initialize() -> void:
 	ship.name = "Ship"
 	world.add_child(ship)
 	ShipBuilder3D.build(layout, ship)
+	_build_pair()
 	var shots := Node3D.new()
 	shots.add_to_group(&"projectiles")
 	world.add_child(shots)
@@ -47,6 +52,8 @@ func _initialize() -> void:
 	await _check_investigate()
 	_check_shot()
 	_check_sting()
+	await _check_hearing()
+	_check_doorway()
 	_report()
 	quit(1 if failures.size() > 0 else 0)
 
@@ -54,6 +61,7 @@ func _initialize() -> void:
 func _crew() -> Crew3D:
 	var crew: Crew3D = load("res://scenes/crew_3d.tscn").instantiate()
 	crew.target = player
+	crew.layout = layout
 	crew.position = CREW_AT
 	world.add_child(crew)
 	crew.face_direction(Vector3.FORWARD)
@@ -182,3 +190,81 @@ func _report() -> void:
 		print("PASS  %d checks" % checks)
 	else:
 		print("FAILED  %d of %d checks" % [failures.size(), checks])
+
+
+## Rooms 0 and 1, eight tiles square, side by side along X with one wall
+## column between them and a two-wide Door through it, 100 m off the first.
+func _build_pair() -> void:
+	pair_layout = ShipLayout.new()
+	var a := RoomData.new()
+	a.rects = [Rect2i(100, 0, 8, 8)]
+	var b := RoomData.new()
+	b.rects = [Rect2i(109, 0, 8, 8)]
+	pair_layout.rooms = [a, b]
+	var door := DoorData.new()
+	door.room_a = 0
+	door.room_b = 1
+	door.tile = Vector2i(108, 3)
+	door.horizontal = false
+	pair_layout.doors = [door]
+	var ship := Node3D.new()
+	ship.name = "PairShip"
+	world.add_child(ship)
+	ShipBuilder3D.build(pair_layout, ship)
+	pair_door = ship.get_node("Doors").get_child(0)
+
+
+## Footsteps by stance from behind, the walk to a noise, and noise alone
+## never spotting him.
+func _check_hearing() -> void:
+	var crew := _crew()
+	crew.face_direction(Vector3.BACK)
+	for case in [[player.State.SPRINT, 6.0, true], [player.State.WALK, 6.0, false], [player.State.CROUCH, 2.0, false]]:
+		crew.perception.awareness = 0.0
+		player.global_position = CREW_AT + Vector3.FORWARD * case[1]
+		player.state = case[0]
+		CrewNoise.footstep(player)
+		var heard := crew.perception.band() == CrewPerception.Band.SUSPICIOUS
+		_expect(heard == case[2], "a step in state %d at %.0f m behind: suspicious %s, want %s" % [case[0], case[1], heard, case[2]])
+	# A sprinting step 6 m behind: it turns investigator and walks to it.
+	crew.perception.awareness = 0.0
+	player.global_position = CREW_AT + Vector3.FORWARD * 6.0
+	player.state = player.State.SPRINT
+	var at := player.global_position
+	CrewNoise.footstep(player)
+	# Parked far out of sight range, so only the noise can draw it.
+	player.global_position = Vector3(60.0, 0.0, 60.0)
+	var start := crew.global_position.distance_to(at)
+	crew.set_physics_process(true)
+	for i in 60:
+		await physics_frame
+	crew.set_physics_process(false)
+	_expect(crew.state == Crew3D.State.INVESTIGATE, "a crew member that heard a step is in state %d, not investigating" % crew.state)
+	_expect(crew.global_position.distance_to(at) < start - 0.8, "a crew member that heard a step did not walk toward it")
+	for i in 20:
+		CrewNoise.make(self, player.global_position, CrewNoise.Kind.GUNSHOT, CrewNoise.GUNSHOT, player)
+	_expect(crew.perception.awareness < 1.0 and crew.state != Crew3D.State.HUNT, "noise alone spotted the pirate")
+	crew.perception.awareness = 0.98
+	CrewNoise.make(self, player.global_position, CrewNoise.Kind.DOOR, CrewNoise.DOOR * 99.0, player)
+	_expect(crew.perception.awareness == 0.98, "a noise lowered a crew member's Awareness")
+	crew.free()
+
+
+## A gunshot in one Room reaches crew in the next through an open Door,
+## not through a shut one.
+func _check_doorway() -> void:
+	var crew: Crew3D = load("res://scenes/crew_3d.tscn").instantiate()
+	crew.target = player
+	crew.layout = pair_layout
+	crew.position = ShipBuilder3D.tile_to_world(Vector2i(113, 4))
+	world.add_child(crew)
+	crew.set_physics_process(false)
+	var shot := ShipBuilder3D.tile_to_world(Vector2i(103, 4))
+	pair_door.close()
+	CrewNoise.make(self, shot, CrewNoise.Kind.GUNSHOT, CrewNoise.GUNSHOT, player)
+	_expect(crew.perception.awareness == 0.0, "a gunshot carried through a shut door")
+	pair_door.open()
+	crew.perception.awareness = 0.0
+	CrewNoise.make(self, shot, CrewNoise.Kind.GUNSHOT, CrewNoise.GUNSHOT, player)
+	_expect(crew.perception.band() == CrewPerception.Band.SUSPICIOUS, "a gunshot did not carry through an open door")
+	crew.free()

@@ -396,8 +396,11 @@ func _begin_crew_phase() -> void:
 	gunman.spread_degrees = 0.0
 	gunman.position = player.global_position + Vector3(5.6, 0.0, 0.0)
 	holder.add_child(gunman)
-	# Sight is a forward cone that takes time to fill: face him.
+	# Sight is a forward cone that takes time to fill: face him, and hold
+	# still rather than wander or glance off before noticing him.
 	gunman.face_direction(Vector3.LEFT)
+	gunman._hold_timer = 5.0
+	gunman._glance_timer = 5.0
 
 	# A second hostile directly in the line of fire, stood down so it holds
 	# position: friendly shots must pass straight through it.

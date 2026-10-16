@@ -130,6 +130,8 @@ func _process(delta: float) -> void:
 				_walked -= stride
 				var crouched: bool = _pirate.state == _pirate.State.CROUCH
 				_play(_body, &"step", step_streams.pick_random(), crouch_step_volume_db if crouched else step_volume_db)
+				# The step he hears is the step the crew hear.
+				CrewNoise.footstep(_pirate)
 			return
 	_walked = stride * 0.5
 

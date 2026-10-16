@@ -29,6 +29,11 @@ const SEARCH_AWARENESS := 0.7
 const INVESTIGATE_SPEED := 0.45
 ## Seconds stood at the spot it came to look at before giving up.
 const INVESTIGATE_LINGER := 2.0
+## Awareness a heard noise lifts a crew member to: a footstep or door, and
+## a gunshot. Hearing never reaches spotted.
+const HEARD_NOISE := 0.45
+const HEARD_GUNSHOT := 0.6
+const HEARD_CAP := 0.95
 ## How far an unaware crew member's idle glances turn, either way.
 const GLANCE_DEGREES := 70.0
 ## How fast the body turns to face where it is looking, radians a second.
@@ -279,6 +284,25 @@ func _update_perception(delta: float) -> void:
 		_seen_ago += delta
 
 
+## A noise reached this crew member (see [CrewNoise]). Raises Awareness toward
+## suspicious, never to spotted, and gives it somewhere to look. Crew shrug
+## off their mates' footsteps and doors, not their gunfire. Returns whether
+## it took any notice.
+func hear(at: Vector3, kind: CrewNoise.Kind, source: Node = null) -> bool:
+	if state == State.DEAD or _in_combat():
+		return false
+	if kind != CrewNoise.Kind.GUNSHOT and source is Crew3D:
+		return false
+	var loud := HEARD_GUNSHOT if kind == CrewNoise.Kind.GUNSHOT else HEARD_NOISE
+	# Only ever raises it: a noise never talks a crew member back down.
+	perception.awareness = maxf(perception.awareness, minf(loud, HEARD_CAP))
+	_noticed_at = at
+	if state == State.INVESTIGATE:
+		_repath_to(at)
+		_hold_timer = INVESTIGATE_LINGER
+	return true
+
+
 ## Which way this crew member is looking, flat.
 func facing() -> Vector3:
 	return -global_basis.z
@@ -473,7 +497,7 @@ func _open_doors_ahead() -> void:
 		if door.is_open or door.locked:
 			continue
 		if _flat_distance(global_position, door.global_position) <= 1.75:
-			door.open()
+			door.open(self)
 
 
 func _face() -> void:
@@ -512,6 +536,7 @@ func _fire() -> Projectile3D:
 	_shot_parent().add_child(shot)
 	if not shot_streams.is_empty():
 		SoundAt.play(_shot_parent(), origin, shot_streams.pick_random(), shot_volume_db, 0.06, "Shot")
+	CrewNoise.make(get_tree(), global_position, CrewNoise.Kind.GUNSHOT, CrewNoise.GUNSHOT, self)
 	return shot
 
 

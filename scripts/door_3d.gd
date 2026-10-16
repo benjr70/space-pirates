@@ -34,6 +34,9 @@ const COLOR_TRIM_LOCKED := Color(0.72, 0.27, 0.27)
 var sealed := false
 
 var is_open := false
+## The doorway this leaf fills, for working out which Rooms a noise joins;
+## null for a Hatch.
+var data: DoorData
 
 var _span := 3
 var _horizontal := true
@@ -50,8 +53,9 @@ var _trim_material: StandardMaterial3D
 
 
 ## Configure from a doorway between two rooms. Call before adding to the tree.
-func setup(data: DoorData) -> void:
-	setup_span(data.width, data.horizontal, data.locked)
+func setup(door: DoorData) -> void:
+	data = door
+	setup_span(door.width, door.horizontal, door.locked)
 
 
 ## Configure from a hatch through the hull. The one the pirate boarded by
@@ -225,10 +229,12 @@ func toggle() -> void:
 		open()
 
 
-func open() -> void:
+## [param by] is whoever worked it: crew ignore each other's doors.
+func open(by: Node = null) -> void:
 	if locked or is_open:
 		return
 	is_open = true
+	_ring(by)
 	_blocker_shape.set_deferred("disabled", true)
 	_slide(_span * TILE / 2.0)
 	_update_trim()
@@ -236,18 +242,25 @@ func open() -> void:
 
 
 ## Refuses while someone is standing in the doorway, rather than shutting them in.
-func close() -> bool:
+func close(by: Node = null) -> bool:
 	if not is_open:
 		return false
 	if _in_threshold > 0:
 		refused.emit()
 		return false
 	is_open = false
+	_ring(by)
 	_blocker_shape.set_deferred("disabled", false)
 	_slide(0.0)
 	_update_trim()
 	closed.emit()
 	return true
+
+
+## A door working is a noise the crew can hear.
+func _ring(by: Node) -> void:
+	if is_inside_tree():
+		CrewNoise.make(get_tree(), global_position, CrewNoise.Kind.DOOR, CrewNoise.DOOR, by)
 
 
 func _update_trim() -> void:
