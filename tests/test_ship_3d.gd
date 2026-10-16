@@ -82,6 +82,7 @@ func _physics_process(_delta: float) -> bool:
 		# Needs a live tree for global positions and tweens.
 		TwoRectRoomChecks.run(_expect, root)
 		GeneratedShipChecks.run(_expect, root)
+		RaidChecks.run(_expect, root)
 		return false
 	if not smoke_checked:
 		# GridMap physics comes live one frame after the scene enters the tree,

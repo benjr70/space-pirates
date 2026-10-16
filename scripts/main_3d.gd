@@ -3,8 +3,9 @@ extends Node3D
 ## this raid boards through and lifts the darkness off rooms as he walks into
 ## them. Also wires the HUD to everything it reports on.
 
-## Leave null to use the hand-authored player ship, or a generated one when
-## the game was launched with `-- --seed=N --class=large`.
+## Leave null to board the [Raid] picked on the main menu, or with no Raid on,
+## the hand-authored player ship, or a generated one when the game was
+## launched with `-- --seed=N --class=large`.
 @export var layout_override: ShipLayout
 
 ## Which of the ship's hatches this raid boards through, chosen at raid start.
@@ -18,13 +19,18 @@ extends Node3D
 @onready var ship: Node3D = $Ship
 @onready var player: CharacterBody3D = $Player
 @onready var hud: Hud = $Hud
+@onready var death_screen: DeathScreen = $DeathScreen
 
 var layout: ShipLayout
 var tracker: RoomTracker
 
 
 func _ready() -> void:
-	layout = layout_override if layout_override != null else _layout_from_args()
+	layout = layout_override
+	if layout == null:
+		layout = Raid.layout()
+	if layout == null:
+		layout = _layout_from_args()
 	ShipBuilder3D.build(layout, ship)
 	# A layout with no Hatches (none is generated so) boards the aft-most Room.
 	var boarding_room := ShipGenerator.aft_most_room(layout)
@@ -49,6 +55,7 @@ func _ready() -> void:
 			reveal.reveal(i)
 
 	_wire_hud()
+	_wire_death_screen()
 
 
 ## The hand-authored ship, or a generated target when `--seed=N` (and
@@ -80,6 +87,23 @@ func _wire_hud() -> void:
 		hud.flash_damage())
 	player.health.died.connect(func(_from: Node) -> void: hud.set_health(0))
 	player.died.connect(func() -> void: hud.show_prompt(""))
+
+
+## Down is down: the pirate stays dead until Retry rebuilds the ship from its
+## seed, crew and all, or the menu takes him off it.
+func _wire_death_screen() -> void:
+	player.auto_respawn = false
+	player.died.connect(func() -> void:
+		hud.visible = false
+		death_screen.show_death(_death_detail()))
+	death_screen.retry_pressed.connect(Raid.retry)
+	death_screen.menu_pressed.connect(Raid.to_menu)
+
+
+func _death_detail() -> String:
+	if layout.gen_seed > 0:
+		return "Aboard %s  ·  %s  ·  seed %d" % [layout.display_name(), String(layout.ship_class).capitalize(), layout.gen_seed]
+	return "Aboard %s" % layout.display_name()
 
 
 func _process(_delta: float) -> void:

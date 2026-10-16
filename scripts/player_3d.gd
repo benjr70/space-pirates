@@ -154,6 +154,9 @@ const TEAM := &"pirate"
 
 ## Seconds spent down before getting back up at the entry room.
 @export var respawn_delay := 1.5
+## Off when the scene offers its own way back (the death screen's Retry), so
+## he stays down instead of getting up on his own.
+@export var auto_respawn := true
 ## Below this height the pirate has left the ship (out through a Hatch, or a
 ## hole nothing should have) and is put back at the boarding point.
 const FALL_LIMIT := -10.0
@@ -881,6 +884,8 @@ func _on_died(_from: Node) -> void:
 	visible = false
 	set_physics_process(false)
 	collider.set_deferred("disabled", true)
+	if not auto_respawn:
+		return
 	await get_tree().create_timer(respawn_delay).timeout
 	respawn()
 

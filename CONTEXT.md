@@ -149,6 +149,10 @@ One visit to a target ship: board through a Hatch, take what can be taken,
 extract through a Hatch. Space Pirates is an extraction shooter, so a Raid that
 is not extracted from is a Raid whose gains are not kept.
 
+A Raid's target is picked on the main menu as a Ship Class and rolled a fresh
+seed. Dying offers a Retry, which boards the same seed again with every crew
+member back at their post, or the way back to the menu to pick another.
+
 ## Ship Class
 
 How big a ship is, counted in Rooms: small, medium or large. A Class is chosen
