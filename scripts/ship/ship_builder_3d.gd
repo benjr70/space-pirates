@@ -193,6 +193,7 @@ static func build(layout: ShipLayout, parent: Node3D, boarding_hatch := -1) -> v
 			var hostile: Crew3D = CREW_SCENE.instantiate()
 			hostile.layout = layout
 			hostile.home_room = i
+			hostile.crew_type = CrewTypes.for_role(room.role, n)
 			# Interior generation names each body's tile; hand-authored Rooms
 			# are spread across the floor.
 			if n < room.crew_spawns.size():

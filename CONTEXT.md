@@ -170,6 +170,18 @@ One stop in a crew member's routine: working at a prop in some Room for a
 while, or pausing at a Room on a patrol route. A crew member loops through
 its Jobs until something makes it suspicious, then picks up where it was.
 
+## Guard
+
+A crew member posted in the Armory, Bridge or a Corridor (and half of
+Quarters): armed and trained, walks patrol routes between Rooms, and hunts
+and fights the Pirate once it spots him.
+
+## Worker
+
+A crew member posted in the Engine, Cargo, Shield or Medbay (and half of
+Quarters): works at props around the ship, and on spotting the Pirate runs to
+raise the nearest Guard or hides. It fights back only when cornered.
+
 ## Raid
 
 One visit to a target ship: board through a Hatch, take what can be taken,

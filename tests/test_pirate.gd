@@ -2139,14 +2139,16 @@ func _check_tracer() -> void:
 	_clear_shots()
 
 
-## The crew wear one of two Quaternius rigs, drawn at spawn, stood RIG_HEIGHT
-## tall and facing their forward, with the clips the crew brain plays.
+## The crew wear one of two Quaternius rigs, one per crew type, stood
+## RIG_HEIGHT tall and facing their forward, with the clips the crew brain
+## plays.
 func _check_crew_models() -> void:
 	await _clear_dummy()
 	await _place(RUNWAY)
 	var seen := {}
 	for i in 12:
 		var crew: Crew3D = load("res://scenes/crew_3d.tscn").instantiate()
+		crew.crew_type = CrewTypes.Type.WORKER if i % 2 == 1 else CrewTypes.Type.GUARD
 		crew.position = RUNWAY + Vector3(2.0 + i * 0.1, 0.0, -6.0)
 		world.add_child(crew)
 		crew.set_physics_process(false)
@@ -2172,7 +2174,7 @@ func _check_crew_models() -> void:
 				_expect(absf(height - Crew3D.RIG_HEIGHT) < 0.15, "the crew rig stands %.2f m tall, want about %.1f" % [height, Crew3D.RIG_HEIGHT])
 				_expect(absf(lo.y - crew.global_position.y) < 0.1, "the crew rig's feet are %.2f m off the floor" % (lo.y - crew.global_position.y))
 		crew.free()
-	_expect(seen.size() == 2, "12 crew drew %d different rigs, want both: %s" % [seen.size(), seen.keys()])
+	_expect(seen.size() == 2, "Guards and Workers wore %d different rigs, want both: %s" % [seen.size(), seen.keys()])
 	for path in seen:
 		_expect(path.contains("assets/models/crew/"), "a crew rig came from %s" % path)
 

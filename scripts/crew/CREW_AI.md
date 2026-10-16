@@ -11,14 +11,43 @@ being built toward is spec #52 (tickets #53–#63).
 |---|---|
 | `crew.gd` (`Crew3D`) | The body: movement, health, animation, door handling, gunnery, cover search, and the state machine that ties them together. |
 | `crew_perception.gd` (`CrewPerception`) | Awareness: the sight cone, how fast Awareness fills and drains, and its bands. Pure arithmetic, tested without physics. |
+| `crew_types.gd` (`CrewTypes`) | Guard or Worker, from the Post Room's Role, and the Worker tint. |
 | `crew_routine.gd` (`CrewRoutine`) | Routines: a crew member's Post and its loop of Jobs, planned from the layout's props and Rooms. Pure planning; the body walks it. |
 | `crew_noise.gd` (`CrewNoise`) | Hearing: noise events (footsteps, gunshots, doors), how far each reaches, and which Rooms it carries into. |
 | `../ui/awareness_markers.gd` (`AwarenessMarkers`) | The bar over each crew member's head and the spotted sting, drawn by the HUD. |
 
 Scene: `scenes/crew_3d.tscn`. Tests: `tests/test_crew.gd` (Awareness, the walk
-to look, being shot, the sting, hearing, and 60 simulated seconds of routines
-on a generated medium ship), plus the crew fight in
+to look, being shot, the sting, hearing, Workers fleeing and cornered, crew
+types, and 60 simulated seconds of routines on a generated medium ship), plus the crew fight in
 `tests/test_ship_3d.gd`.
+
+## Crew types
+
+Every crew member is a **Guard** or a **Worker**, set by `ShipBuilder3D` from
+its Post Room's Role (`CrewTypes.for_role`):
+
+| Post Room | Type |
+|---|---|
+| Armory, Bridge, Corridor (and anything unlisted) | Guard |
+| Engine, Cargo, Shield, Medbay | Worker |
+| Quarters | alternating: the 1st, 3rd... crew posted there are Guards, the 2nd, 4th... Workers |
+
+- **Guards** walk patrol loops (see Routines) and, once spotted, hunt and fight
+  as described under States.
+- **Workers** walk work loops. Spotted, a Worker does not hunt: it **flees** to
+  the nearest living Guard (75 %) or **cowers** behind cover where it is
+  (25 %, or always when no Guard lives). Reaching within 2.5 m of its Guard it
+  **raises** it (the Guard gets the Pirate's last-seen position, goes to
+  Awareness 1 and hunts) and then cowers. A cowering Worker returns to its
+  routine after 15 s with nothing in sight, at Awareness 0.15.
+- A Worker fights only when **cornered**: the Pirate in sight within 3 m.
+  Then it fires a sidearm (12° spread, 2-round bursts, against a Guard's 7°
+  and 3) and goes back to fleeing once he is more than 5 m off. A Worker that
+  loses him hides (COWER) where a Guard would search.
+- Until each type's model is picked in the booth (#62), Workers wear the light
+  gunner rig tinted orange (`CrewTypes.WORKER_TINT`, multiplied into copies of
+  the rig's materials) and Guards the dark soldier rig, so they read apart at
+  a glance.
 
 ## States
 
@@ -33,6 +62,14 @@ PATROL ──suspicious──▶ INVESTIGATE ──spotted──▶ HUNT ◀─�
                                                SEARCH ◀────────────────┘ (3 s out of sight)
                                                   │
                                        nothing found ▶ PATROL
+```
+
+That is a Guard. A Worker swaps HUNT for FLEE and SEARCH for COWER:
+
+```
+PATROL / INVESTIGATE ──spotted──▶ FLEE ──reached its Guard──▶ COWER ──15 s calm──▶ PATROL
+                                   │  ▲                         │
+                         cornered (≤3 m)  └── he is > 5 m off ── FIGHT ◀── cornered
 ```
 
 - **PATROL**: on routine (see Routines below): walking its loop of Jobs at
@@ -113,11 +150,12 @@ begins at a random point in its loop, after a random 0–5 s pause.
   safes, cabinets, footlockers and cryopods, plus crates in Cargo; a Breaker
   never. The loop's first Job is at the Post and its second elsewhere, so
   every loop both comes home and leaves; the rest are elsewhere half the time.
-- **Patrol loops**: a third of the crew patrol instead. Each stop is a Room's
+- **Patrol loops**: Guards patrol instead of working. Each stop is a Room's
   centre (Corridors included), never the same Room twice running, with a
-  1.5–3.5 s pause looking about.
+  1.5–3.5 s pause looking about; a centre blocked by a prop moves to any free
+  spot in that Room.
 - Crew walk routine at **50 %** speed (Walk clip below 2.4 m/s, Run above).
-- A Job whose spot turns out blocked is skipped; one not reached within 30 s
+- A work Job whose spot turns out blocked is skipped; one not reached within 30 s
   is given up for the next.
 - **Chat**: two routine crew walking within 1.6 m of each other have a 30 %
   chance to stop face to face for 3–5 s; either way neither chats again for
@@ -178,13 +216,14 @@ All numbers above are constants in `crew_perception.gd` (`CONE_HALF_DEGREES`,
 and `crew.gd` (`SEARCH_AWARENESS`, `INVESTIGATE_SPEED`, `INVESTIGATE_LINGER`,
 `GLANCE_DEGREES`, `TURN_RATE`, `INVESTIGATE_GIVE_UP`, `ROUTINE_SPEED`,
 `WALK_ANIM_SPEED`, `DOOR_CLOSE_AFTER`, `DOOR_FORGET`, `DOOR_ADOPT`, `CHAT_*`,
-`JOB_GIVE_UP`, `HEARD_NOISE`, `HEARD_GUNSHOT`, `HEARD_CAP`) and
+`JOB_GIVE_UP`, `CORNERED_RANGE`, `CORNER_RELEASE`, `HIDE_CHANCE`,
+`GUARD_REACH`, `COWER_CALM`, `WORKER_SPREAD`, `WORKER_BURST`),
+`crew_types.gd` (`GUARD_ROLES`, `WORKER_ROLES`, `WORKER_TINT`), `HEARD_NOISE`, `HEARD_GUNSHOT`, `HEARD_CAP`) and
 `crew_routine.gd` (`WORK_PROPS`, `JOBS_MIN`/`MAX`, `WORK_TIME`,
-`PATROL_PAUSE`, `PATROLLER_SHARE`, `AWAY_CHANCE`) and `crew_noise.gd` (`SPRINT_STEP`, `WALK_STEP`, `GUNSHOT`, `DOOR`). They are starting values to be tuned by
+`PATROL_PAUSE`, `AWAY_CHANCE`) and `crew_noise.gd` (`SPRINT_STEP`, `WALK_STEP`, `GUNSHOT`, `DOOR`). They are starting values to be tuned by
 playtest.
 
 ## Not yet built
 
-Guard and Worker types (#56), the
-ship-wide Alarm (#57), Guard teamwork (#58), bodies (#59), traces (#60) and
+The ship-wide Alarm (#57), Guard teamwork (#58), bodies (#59), traces (#60) and
 stealth XP (#61).

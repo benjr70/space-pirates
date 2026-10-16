@@ -16,8 +16,6 @@ const JOBS_MAX := 5
 ## Seconds stood at a work Job's prop, and at a patrol Job's stop.
 const WORK_TIME := Vector2(3.0, 8.0)
 const PATROL_PAUSE := Vector2(1.5, 3.5)
-## Share of crew whose loop is a patrol route instead of work.
-const PATROLLER_SHARE := 0.33
 ## Chance each work Job is in some other Room rather than the Post.
 const AWAY_CHANCE := 0.5
 
@@ -40,11 +38,12 @@ var index := 0
 var patroller := false
 
 
-## A loop for a crew member posted in [param post_room].
-static func plan(layout: ShipLayout, post_room: int, rng: RandomNumberGenerator) -> CrewRoutine:
+## A loop for a crew member posted in [param post_room]: a patrol route
+## for a Guard ([param patroller]), work at props otherwise.
+static func plan(layout: ShipLayout, post_room: int, rng: RandomNumberGenerator, patroller := false) -> CrewRoutine:
 	var routine := CrewRoutine.new()
 	routine.post = post_room
-	routine.patroller = rng.randf() < PATROLLER_SHARE
+	routine.patroller = patroller
 	var count := rng.randi_range(JOBS_MIN, JOBS_MAX)
 	var spots := work_spots(layout)
 	var home: Array = spots.filter(func(s: Job) -> bool: return s.room == post_room)

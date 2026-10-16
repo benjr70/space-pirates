@@ -19,6 +19,9 @@ var layout: ShipLayout
 ## Two Rooms side by side, joined by one Door, for noise through doorways.
 var pair_layout: ShipLayout
 var pair_door: Door3D
+## The generated medium ship's crew, kept for the type checks.
+var routine_crew: Array[Crew3D] = []
+var routine_layout: ShipLayout
 
 
 func _initialize() -> void:
@@ -54,19 +57,27 @@ func _initialize() -> void:
 	_check_sting()
 	await _check_hearing()
 	_check_doorway()
+	await _check_worker()
 	await _check_routines()
+	_check_types()
 	_report()
 	quit(1 if failures.size() > 0 else 0)
 
 
-func _crew() -> Crew3D:
+func _crew(type := CrewTypes.Type.GUARD) -> Crew3D:
 	var crew: Crew3D = load("res://scenes/crew_3d.tscn").instantiate()
+	crew.crew_type = type
 	crew.target = player
 	crew.layout = layout
 	crew.position = CREW_AT
 	world.add_child(crew)
 	crew.face_direction(Vector3.FORWARD)
 	crew.set_physics_process(false)
+	# Stood still: no routine to walk off on, no glance to swing the cone
+	# away, unless a check moves it on purpose.
+	crew.routine = null
+	crew._hold_timer = 10.0
+	crew._glance_timer = 10.0
 	return crew
 
 
@@ -280,6 +291,7 @@ func _check_routines() -> void:
 	world = Node3D.new()
 	root.add_child(world)
 	var ship_layout := ShipGenerator.generate(&"medium", 7)
+	routine_layout = ship_layout
 	var ship := Node3D.new()
 	ship.name = "Ship"
 	world.add_child(ship)
@@ -288,7 +300,8 @@ func _check_routines() -> void:
 	world.add_child(player)
 	player.set_physics_process(false)
 	player.global_position = Vector3(-500, 0, -500)
-	var crew: Array[Crew3D] = []
+	routine_crew.clear()
+	var crew := routine_crew
 	for node: Crew3D in ship.get_node("Crew").get_children():
 		node.target = player
 		crew.append(node)
@@ -335,3 +348,71 @@ func _check_routines() -> void:
 	_expect(bad_work.is_empty(), "routines: %d working samples away from or facing off their prop, e.g. %s" % [bad_work.size(), bad_work.slice(0, 3)])
 	_expect(stray_doors == 0, "routines: doors left standing open with no crew near, %d times" % stray_doors)
 	_expect(probe_resumed, "routines: a crew member made suspicious never went back to its routine")
+
+
+## A shot leaves the magazine: a bolt at 2.5 m lands and is gone before it
+## could be counted.
+func _has_fired(crew: Crew3D) -> bool:
+	return crew._shots_left < crew.burst_size or crew._reload_timer > 0.0
+
+
+## A Worker that spots the Pirate 8 m off runs for the Guard behind it and
+## does not shoot; cornered at 2.5 m it fires its sidearm. Workers wear
+## their tint, Guards do not.
+func _check_worker() -> void:
+	var guard := _crew(CrewTypes.Type.GUARD)
+	guard.global_position = Vector3(1.5, 0.0, 23.0)
+	guard.face_direction(Vector3.LEFT)
+	var worker := _crew(CrewTypes.Type.WORKER)
+	worker.hide_chance = 0.0
+	_place(8.0)
+	var to_guard := worker.global_position.distance_to(guard.global_position)
+	var to_pirate := worker.global_position.distance_to(player.global_position)
+	var fired := false
+	worker.set_physics_process(true)
+	for i in 120:
+		await physics_frame
+		fired = fired or _has_fired(worker)
+	worker.set_physics_process(false)
+	_expect(worker.state in [Crew3D.State.FLEE, Crew3D.State.COWER], "a spotted Worker is in state %d, not fleeing" % worker.state)
+	_expect(worker.global_position.distance_to(guard.global_position) < to_guard - 0.5
+			and worker.global_position.distance_to(player.global_position) > to_pirate,
+			"a fleeing Worker did not head for the Guard and away from the pirate")
+	_expect(not fired, "a Worker fired at a pirate 8 m away")
+	_expect(worker.body_tint == CrewTypes.WORKER_TINT and guard.body_tint == Color.WHITE, "Workers and Guards are not told apart by tint")
+	var tinted := false
+	for node in worker.model.find_children("*", "MeshInstance3D", true, false):
+		var material := (node as MeshInstance3D).get_surface_override_material(0) as BaseMaterial3D
+		if material != null and not material.albedo_color.is_equal_approx(Color.WHITE):
+			tinted = true
+	_expect(tinted, "the Worker's rig carries no tinted material")
+	worker.free()
+	guard.free()
+
+	var cornered := _crew(CrewTypes.Type.WORKER)
+	_place(2.5)
+	fired = false
+	cornered.set_physics_process(true)
+	for i in 90:
+		await physics_frame
+		fired = fired or _has_fired(cornered)
+	cornered.set_physics_process(false)
+	_expect(fired, "a Worker cornered at 2.5 m never fired")
+	cornered.free()
+	for shot in get_first_node_in_group(&"projectiles").get_children():
+		shot.free()
+
+
+## On the generated ship: Armory and Bridge crew are Guards walking patrol
+## loops, Engine and Cargo crew Workers walking work loops.
+func _check_types() -> void:
+	var seen := {}
+	for member in routine_crew:
+		var role: StringName = routine_layout.rooms[member.home_room].role
+		if role in [&"armory", &"bridge"]:
+			_expect(not member.is_worker() and member.routine.patroller, "a crew member posted in the %s is not a patrolling Guard" % role)
+			seen[role] = true
+		elif role in [&"engine", &"cargo"]:
+			_expect(member.is_worker() and not member.routine.patroller, "a crew member posted in the %s is not a working Worker" % role)
+			seen[role] = true
+	_expect(seen.size() == 4, "the medium ship had crew in only %s of armory, bridge, engine, cargo" % [seen.keys()])

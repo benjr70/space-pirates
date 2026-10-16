@@ -17,8 +17,8 @@ extends CharacterBody3D
 ## for variety, stood `RIG_HEIGHT` tall on the floor under `Model`; the rigs
 ## share Quaternius's clip names, which the brain plays by state.
 
-## INVESTIGATE is last so the older states keep their numbers.
-enum State { PATROL, HUNT, FIGHT, COVER, SEARCH, DEAD, INVESTIGATE }
+## Newer states go last so the older ones keep their numbers.
+enum State { PATROL, HUNT, FIGHT, COVER, SEARCH, DEAD, INVESTIGATE, FLEE, COWER }
 
 ## Called on every node in this group, with the crew member, each time one
 ## tips into spotted: the HUD's sting and markers listen here.
@@ -57,6 +57,20 @@ const CHAT_TIME := Vector2(3.0, 5.0)
 const CHAT_COOLDOWN := 40.0
 ## Seconds walking toward one Job before giving it up as unreachable.
 const JOB_GIVE_UP := 30.0
+## A Worker fights only with the Pirate this close and in sight, and goes
+## back to running once he is further than CORNER_RELEASE.
+const CORNERED_RANGE := 3.0
+const CORNER_RELEASE := 5.0
+## Chance a spotted Worker hides where it is rather than run for a Guard.
+const HIDE_CHANCE := 0.25
+## A fleeing Worker has reached its Guard this close, and raises it.
+const GUARD_REACH := 2.5
+## Seconds a hiding Worker stays put with nothing in sight before it
+## creeps back to its routine.
+const COWER_CALM := 15.0
+## A Worker's sidearm: wider spread and shorter bursts than a Guard's rifle.
+const WORKER_SPREAD := 12.0
+const WORKER_BURST := 2
 ## How fast the body turns to face where it is looking, radians a second.
 const TURN_RATE := 6.0
 
@@ -104,7 +118,7 @@ const TORSO_HEIGHT := 1.0
 @export var shot_volume_db := -3.0
 
 @export_group("Look")
-## The bodies a crew member may spawn in, one drawn per member.
+## The bodies crew wear: the first for Workers, the second for Guards.
 @export var rigs: Array[PackedScene] = [
 	preload("res://assets/models/crew/gunner.glb"),
 	preload("res://assets/models/crew/soldier.glb"),
@@ -123,6 +137,16 @@ const LOOPING_CLIPS: Array[StringName] = [&"CharacterArmature|Idle", &"Character
 
 ## Set by [ShipBuilder3D] so the crew can route around its own ship.
 var layout: ShipLayout
+## Guard or Worker ([CrewTypes]), set by [ShipBuilder3D] from the Post
+## Room's Role before the crew member enters the tree.
+var crew_type: CrewTypes.Type = CrewTypes.Type.GUARD
+## The colour its rig is tinted, white for none.
+var body_tint := Color.WHITE
+## The Guard a fleeing Worker is running to.
+var _flee_to: Crew3D
+## Chance this Worker hides rather than runs; [constant HIDE_CHANCE] unless
+## a test wants it certain.
+var hide_chance := HIDE_CHANCE
 var home_room := 0
 var target: Node3D
 var state := State.PATROL
@@ -169,6 +193,9 @@ func _ready() -> void:
 	health.died.connect(_on_died)
 	if target == null:
 		target = get_tree().get_first_node_in_group(&"player")
+	if is_worker():
+		spread_degrees = WORKER_SPREAD
+		burst_size = WORKER_BURST
 	_shots_left = burst_size
 	_rng.randomize()
 	_dress()
@@ -178,7 +205,7 @@ func _ready() -> void:
 			if _anim.has_animation(clip):
 				_anim.get_animation(clip).loop_mode = Animation.LOOP_LINEAR
 	if layout != null and home_room >= 0 and home_room < layout.rooms.size():
-		routine = CrewRoutine.plan(layout, home_room, _rng)
+		routine = CrewRoutine.plan(layout, home_room, _rng, crew_type == CrewTypes.Type.GUARD)
 	_enter(State.PATROL)
 	# Each starts its routine after a moment of its own, not all at once.
 	job_phase = JobPhase.WAITING
@@ -194,7 +221,7 @@ func _ready() -> void:
 func _dress() -> void:
 	if rigs.is_empty():
 		return
-	var rig: Node3D = rigs[_rng.randi() % rigs.size()].instantiate()
+	var rig: Node3D = _rig_for(crew_type).instantiate()
 	rig.name = "Rig"
 	model.add_child(rig)
 	var lo := Vector3.INF
@@ -214,7 +241,38 @@ func _dress() -> void:
 		var fit := RIG_HEIGHT / height
 		rig.scale = Vector3.ONE * fit
 		rig.position.y = -lo.y * fit
+	_tint(rig, CrewTypes.tint(crew_type))
 
+
+## Until the booth picks a model per type (#62), each type wears one of the
+## two rigs so they read apart at a glance: Workers the light gunner, whose
+## armour shows the tint, Guards the dark soldier. A rig list of one serves
+## both.
+func _rig_for(type: CrewTypes.Type) -> PackedScene:
+	if rigs.size() < 2:
+		return rigs[0]
+	return rigs[0] if type == CrewTypes.Type.WORKER else rigs[1]
+
+
+## Multiplies every surface of the rig by [param color], on copies of its
+## materials so the other crew sharing the rig keep theirs.
+func _tint(rig: Node3D, color: Color) -> void:
+	body_tint = color
+	if color == Color.WHITE:
+		return
+	for node in rig.find_children("*", "MeshInstance3D", true, false):
+		var mesh := node as MeshInstance3D
+		for i in mesh.get_surface_override_material_count():
+			var material := mesh.get_active_material(i) as BaseMaterial3D
+			if material == null:
+				continue
+			var tinted := material.duplicate() as BaseMaterial3D
+			tinted.albedo_color *= color
+			mesh.set_surface_override_material(i, tinted)
+
+
+func is_worker() -> bool:
+	return crew_type == CrewTypes.Type.WORKER
 
 func get_team() -> StringName:
 	return TEAM
@@ -243,7 +301,10 @@ func take_damage(amount: int, from: Node = null) -> void:
 		_announce_spotted()
 	match state:
 		State.PATROL, State.SEARCH, State.INVESTIGATE:
-			_enter(State.HUNT)
+			_react_spotted()
+		State.FLEE, State.COWER:
+			if _cornered():
+				_enter(State.FIGHT)
 		State.FIGHT:
 			if _rng.randf() < 0.6:
 				_enter(State.COVER)
@@ -277,6 +338,10 @@ func _physics_process(delta: float) -> void:
 			_tick_search()
 		State.INVESTIGATE:
 			_tick_investigate()
+		State.FLEE:
+			_tick_flee()
+		State.COWER:
+			_tick_cower()
 
 	_steer(delta)
 	_open_doors_ahead()
@@ -350,7 +415,29 @@ func facing() -> Vector3:
 
 
 func _in_combat() -> bool:
-	return state in [State.HUNT, State.FIGHT, State.COVER]
+	return state in [State.HUNT, State.FIGHT, State.COVER, State.FLEE, State.COWER]
+
+
+## Just spotted him: a Guard hunts him; a Worker runs, unless he is right
+## on top of it, when it fights.
+func _react_spotted() -> void:
+	if not is_worker():
+		_enter(State.HUNT)
+	elif _cornered():
+		_enter(State.FIGHT)
+	else:
+		_enter(State.FLEE)
+
+
+## The Pirate is in sight and within arm's reach of a Worker.
+func _cornered() -> bool:
+	return _can_see and target != null and is_instance_valid(target) \
+			and _flat_distance(global_position, target.global_position) <= CORNERED_RANGE
+
+
+## Where a crew member goes on losing him: a Guard searches, a Worker hides.
+func _lost_state() -> State:
+	return State.COWER if is_worker() else State.SEARCH
 
 
 func _spotted() -> bool:
@@ -414,6 +501,20 @@ func _enter(next: State) -> void:
 			else:
 				_path.clear()
 			_hold_timer = cover_hold_time
+		State.FLEE:
+			_flee_to = _nearest_guard()
+			if _flee_to == null or _rng.randf() < hide_chance:
+				_enter(State.COWER)
+				return
+			_repath_to(_flee_to.global_position)
+		State.COWER:
+			_flee_to = null
+			_hold_timer = COWER_CALM
+			var spot := _find_cover_point()
+			if spot != Vector3.INF:
+				_repath_to(spot)
+			else:
+				_path.clear()
 		State.SEARCH:
 			perception.awareness = minf(perception.awareness, SEARCH_AWARENESS)
 			_repath_to(_last_seen)
@@ -422,7 +523,7 @@ func _enter(next: State) -> void:
 
 func _tick_patrol() -> void:
 	if _spotted():
-		_enter(State.HUNT)
+		_react_spotted()
 		return
 	if _suspicious():
 		_enter(State.INVESTIGATE)
@@ -480,13 +581,18 @@ func _tick_routine() -> void:
 				_start_job()
 
 
-## Sets off for the current Job, skipping any whose spot turns out to be
-## blocked; with none reachable it just wanders its Post.
+## Sets off for the current Job. A patrol stop whose centre is blocked
+## moves to any free spot in that Room; a work Job whose spot is blocked is
+## skipped. With nothing reachable it just wanders its Post.
 func _start_job() -> void:
 	var spot := Vector3.INF
 	for _try in routine.jobs.size():
-		if not _solid(routine.current().at):
-			spot = routine.current().at
+		var job := routine.current()
+		if not _solid(job.at):
+			spot = job.at
+			break
+		if job.patrol:
+			spot = _random_point_in_room(job.room)
 			break
 		routine.advance()
 	if spot == Vector3.INF:
@@ -528,7 +634,7 @@ func _start_chat(other: Crew3D, time: float) -> void:
 ## feeling fades with nothing more to see.
 func _tick_investigate() -> void:
 	if _spotted():
-		_enter(State.HUNT)
+		_react_spotted()
 		return
 	if _in_view:
 		# Still something there: keep closing on it.
@@ -555,8 +661,12 @@ func _tick_hunt() -> void:
 
 
 func _tick_fight() -> void:
+	if is_worker() and not _cornered() and target != null and is_instance_valid(target) \
+			and _flat_distance(global_position, target.global_position) > CORNER_RELEASE:
+		_enter(State.FLEE)
+		return
 	if _seen_ago > lose_target_after:
-		_enter(State.SEARCH)
+		_enter(_lost_state())
 		return
 
 	if _can_see:
@@ -579,7 +689,7 @@ func _tick_fight() -> void:
 
 func _tick_cover() -> void:
 	if _seen_ago > lose_target_after:
-		_enter(State.SEARCH)
+		_enter(_lost_state())
 		return
 	if not _path.is_empty():
 		return  # still getting there
@@ -588,9 +698,68 @@ func _tick_cover() -> void:
 	_enter(State.FIGHT)
 
 
+## A Worker running to the nearest Guard to raise it; it hides on arrival,
+## and fights only if cornered on the way.
+func _tick_flee() -> void:
+	if _cornered():
+		_enter(State.FIGHT)
+		return
+	if _flee_to == null or not is_instance_valid(_flee_to) or not _flee_to.is_alive():
+		# Its Guard is gone: on to the next one, without a second roll to hide.
+		_flee_to = _nearest_guard()
+		if _flee_to == null:
+			_enter(State.COWER)
+		else:
+			_repath_to(_flee_to.global_position)
+		return
+	if _flat_distance(global_position, _flee_to.global_position) <= GUARD_REACH:
+		_raise(_flee_to)
+		_enter(State.COWER)
+		return
+	if _repath_timer <= 0.0:
+		_repath_to(_flee_to.global_position)
+
+
+## Tucked behind cover; fights only if cornered, and once nothing has been
+## seen for a while creeps back to its routine.
+func _tick_cower() -> void:
+	if _cornered():
+		_enter(State.FIGHT)
+		return
+	if _can_see:
+		_hold_timer = COWER_CALM
+	if _path.is_empty() and _hold_timer <= 0.0:
+		perception.awareness = CrewPerception.SUSPICIOUS * 0.5
+		_enter(State.PATROL)
+
+
+## A Worker reaching a Guard tells it where the Pirate was: it hunts there.
+func _raise(guard: Crew3D) -> void:
+	guard._last_seen = _last_seen
+	guard._seen_ago = 0.0
+	guard.perception.awareness = 1.0
+	if not guard._in_combat():
+		guard._enter(State.HUNT)
+
+
+## The nearest living Guard this crew member has a route to, or null.
+func _nearest_guard() -> Crew3D:
+	var best: Crew3D = null
+	var best_distance := INF
+	for node in get_tree().get_nodes_in_group(&"crew"):
+		var other := node as Crew3D
+		if other == null or other == self or other.is_worker() or not other.is_alive():
+			continue
+		var distance := _flat_distance(global_position, other.global_position)
+		if distance < best_distance:
+			best = other
+			best_distance = distance
+	return best
+
+
 func _tick_search() -> void:
 	if _spotted():
-		_enter(State.HUNT)
+		_react_spotted()
 		return
 	if _path.is_empty() and _hold_timer <= 0.0:
 		_enter(State.PATROL)
