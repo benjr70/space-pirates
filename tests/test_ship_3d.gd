@@ -42,6 +42,8 @@ var built_sample: BuiltSampleChecks
 
 
 func _initialize() -> void:
+	# Any Raid this suite ends banks into a throwaway profile, never the player's.
+	Profile.path = RaidChecks.TEST_PROFILE
 	RoomDataChecks.run(_expect)
 
 	var layout := PlayerShipLayout.create()
@@ -854,6 +856,7 @@ func _check_built_geometry(layout: ShipLayout) -> void:
 
 
 func _finish() -> void:
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(RaidChecks.TEST_PROFILE))
 	_report()
 	quit(1 if failures.size() > 0 else 0)
 

@@ -24,6 +24,10 @@ const HITMARKER_GAP := 6.0
 const HITMARKER_LENGTH := 7.0
 const AMMO_COLOR := Color(1.0, 1.0, 1.0)
 const AMMO_EMPTY_COLOR := Color(1.0, 0.25, 0.2)
+const LOOT_COLOR := Color(1.0, 0.8, 0.3)
+const XP_COLOR := Color(0.55, 0.85, 1.0)
+## Seconds a "+100 XP" or "+40 gold" toast takes to rise and fade.
+const TOAST_TIME := 1.4
 ## Pixels between the centre and a crosshair line at zero spread, and per
 ## degree of spread on top.
 const CROSSHAIR_GAP_MIN := 5.0
@@ -46,6 +50,8 @@ var _magazine := 0
 var _reloading := false
 var _spread_degrees := 0.0
 var _ads := false
+var _loot_label: Label
+var _toasts: VBoxContainer
 
 
 func _ready() -> void:
@@ -123,6 +129,23 @@ func _ready() -> void:
 	_prompt_label.add_theme_font_size_override("font_size", 18)
 	_prompt_label.text = ""
 	root.add_child(_prompt_label)
+
+	# Gold carried this Raid, above the health pips: what dying would cost.
+	_loot_label = Label.new()
+	_loot_label.name = "Loot"
+	_loot_label.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	_loot_label.position = Vector2(24, -76)
+	_loot_label.add_theme_font_size_override("font_size", 20)
+	_loot_label.add_theme_color_override("font_color", LOOT_COLOR)
+	root.add_child(_loot_label)
+	set_loot(0)
+
+	_toasts = VBoxContainer.new()
+	_toasts.name = "Toasts"
+	_toasts.set_anchors_preset(Control.PRESET_CENTER)
+	_toasts.position = Vector2(40, 20)
+	_toasts.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(_toasts)
 
 
 ## Everything the HUD reports on the Pirate, in one place for the main scene
@@ -232,6 +255,38 @@ func _layout_crosshair() -> void:
 
 
 ## A hit landed: the X shows and fades, red when it killed.
+## Gold carried this Raid.
+func set_loot(gold: int) -> void:
+	_loot_label.text = "Loot  %d gold" % gold
+
+
+func loot_text() -> String:
+	return _loot_label.text
+
+
+## A short line beside the crosshair that rises and fades: "+100 XP".
+func toast(text: String, color: Color = XP_COLOR) -> void:
+	var label := Label.new()
+	label.text = text
+	label.add_theme_font_size_override("font_size", 20)
+	label.add_theme_color_override("font_color", color)
+	label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.8))
+	label.add_theme_constant_override("outline_size", 4)
+	_toasts.add_child(label)
+	var tween := label.create_tween()
+	tween.tween_interval(TOAST_TIME * 0.5)
+	tween.tween_property(label, "modulate:a", 0.0, TOAST_TIME * 0.5)
+	tween.tween_callback(label.queue_free)
+
+
+## The toasts still on screen, newest last; a seam for the headless suite.
+func toast_texts() -> Array[String]:
+	var out: Array[String] = []
+	for label: Label in _toasts.get_children():
+		out.append(label.text)
+	return out
+
+
 func flash_hitmarker(_target: Node3D = null, killed: bool = false) -> void:
 	_hitmarker_kill = killed
 	for arm in _hitmarker.get_children():

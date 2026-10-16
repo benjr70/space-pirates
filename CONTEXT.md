@@ -168,6 +168,17 @@ a countdown inside the tube. Stepping out of the pod or going down calls it
 off. An extracted Raid offers a New Raid on a fresh ship of the same Class;
 a lost one offers a Retry of the same ship.
 
+## XP
+
+What the pirate earns for kills and for extracting, and keeps whichever way
+a Raid ends. XP adds up across Raids into his level.
+
+## Loot
+
+Gold taken from Containers during a Raid. It is carried, not kept: only an
+Extraction banks it into the pirate's hold. Going down, or walking away from
+the Raid, leaves it on the ship.
+
 ## Ship Class
 
 How big a ship is, counted in Rooms: small, medium or large. A Class is chosen

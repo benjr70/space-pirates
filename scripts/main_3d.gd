@@ -29,6 +29,8 @@ var tracker: RoomTracker
 var extraction: Extraction
 ## Seconds since boarding, for the extracted screen.
 var raid_time := 0.0
+## This Raid's XP and carried gold, settled into the Profile when it ends.
+var ledger: RaidLedger
 
 
 func _ready() -> void:
@@ -64,6 +66,7 @@ func _ready() -> void:
 		for i in layout.rooms.size():
 			reveal.reveal(i)
 
+	ledger = RaidLedger.new(layout.ship_class)
 	_wire_hud()
 	_wire_raid_end()
 	if ship.has_node("BoardingPod"):
@@ -99,6 +102,10 @@ func _wire_hud() -> void:
 		hud.flash_damage())
 	player.health.died.connect(func(_from: Node) -> void: hud.set_health(0))
 	player.died.connect(func() -> void: hud.show_prompt(""))
+	player.hit_landed.connect(func(_target: Node3D, killed: bool) -> void:
+		if killed:
+			ledger.record_kill()
+			hud.toast("+%d XP" % RaidLedger.KILL_XP))
 
 
 ## Down is down: the pirate stays dead until Retry rebuilds the ship from its
@@ -106,12 +113,17 @@ func _wire_hud() -> void:
 func _wire_raid_end() -> void:
 	player.auto_respawn = false
 	player.died.connect(func() -> void:
+		var lost := ledger.carried_gold
+		ledger.settle_lost()
 		_close_raid()
-		end_screen.show_death(_death_detail()))
+		end_screen.show_death("%s\n%s" % [_death_detail(), _lost_tally(lost)]))
 	end_screen.retry_pressed.connect(Raid.retry)
 	end_screen.new_raid_pressed.connect(Raid.new_raid)
 	end_screen.menu_pressed.connect(Raid.to_menu)
-	pause_menu.menu_pressed.connect(Raid.to_menu)
+	# Walking away is a Raid lost: the XP is kept, the gold is not.
+	pause_menu.menu_pressed.connect(func() -> void:
+		ledger.settle_lost()
+		Raid.to_menu())
 
 
 ## Out the way he came: the home door at the back of the pod, once he has
@@ -123,9 +135,10 @@ func _wire_extraction(pod: BoardingPod) -> void:
 	extraction.setup(pod, player)
 	tracker.room_changed.connect(func(_room: int, _previous: int) -> void: extraction.boarded = true)
 	extraction.extracted.connect(func() -> void:
+		ledger.settle_extracted()
 		_close_raid()
 		get_tree().paused = true
-		end_screen.show_extracted(_extract_detail()))
+		end_screen.show_extracted("%s\n%s" % [_extract_detail(), _extract_tally()]))
 
 
 ## Whichever way the Raid ended, the HUD and the pause menu step aside.
@@ -145,6 +158,24 @@ func _extract_detail() -> String:
 	return "Off %s  ·  %s aboard  ·  %d of %d crew down" % [layout.display_name(), clock, down, crew.size()]
 
 
+func _extract_tally() -> String:
+	return "+%d XP  (%s, %d extraction)  ·  %d gold banked\n%s" % [
+		ledger.kill_xp() + ledger.extract_xp(), _kills_text(), ledger.extract_xp(), ledger.carried_gold, _profile_line()]
+
+
+func _lost_tally(lost_gold: int) -> String:
+	var gold := "%d gold left behind" % lost_gold if lost_gold > 0 else "no gold carried"
+	return "+%d XP kept  (%s)  ·  %s\n%s" % [ledger.kill_xp(), _kills_text(), gold, _profile_line()]
+
+
+func _kills_text() -> String:
+	return "1 kill" if ledger.kills == 1 else "%d kills" % ledger.kills
+
+
+static func _profile_line() -> String:
+	return "Level %d  ·  %d XP  ·  %d gold in the hold" % [Profile.level(), Profile.xp, Profile.gold]
+
+
 func _death_detail() -> String:
 	if layout.gen_seed > 0:
 		return "Aboard %s  ·  %s  ·  seed %d" % [layout.display_name(), String(layout.ship_class).capitalize(), layout.gen_seed]
@@ -153,9 +184,46 @@ func _death_detail() -> String:
 
 func _process(delta: float) -> void:
 	raid_time += delta
-	if extraction != null and Input.is_action_just_pressed("interact") and extraction.can_begin():
-		extraction.begin()
+	if Input.is_action_just_pressed("interact"):
+		_interact()
 	hud.show_prompt(_prompt())
+
+
+## The interact key for what main owns: the home door and Containers. Doors
+## work their own controls, so a Container behind one waits its turn.
+func _interact() -> void:
+	if extraction != null and extraction.can_begin():
+		extraction.begin()
+		return
+	if _door_prompt() != "":
+		return
+	var box := _container_in_reach()
+	if box != null and not box.is_open:
+		search(box)
+
+
+## Takes a Container's gold into the carried loot.
+func search(box: Container3D) -> void:
+	var taken := box.open()
+	ledger.carry(taken)
+	hud.set_loot(ledger.carried_gold)
+	hud.toast("+%d gold" % taken if taken > 0 else "Empty", Hud.LOOT_COLOR)
+
+
+## The nearest Container the pirate is facing and close enough to work.
+func _container_in_reach() -> Container3D:
+	if not player.is_alive():
+		return null
+	var forward := -player.global_basis.z
+	var best: Container3D = null
+	var best_distance := INF
+	for node in get_tree().get_nodes_in_group(&"containers"):
+		var box: Container3D = node
+		var distance := box.global_position.distance_to(player.global_position)
+		if box.in_reach(player, forward) and distance < best_distance:
+			best = box
+			best_distance = distance
+	return best
 
 
 ## What the HUD offers: the Extraction under way, the home door, or a door.
@@ -165,7 +233,11 @@ func _prompt() -> String:
 			return "Extracting — %.1f s  (leave the pod to abort)" % extraction.time_left()
 		if extraction.can_begin():
 			return "E — Extract"
-	return _door_prompt()
+	var door := _door_prompt()
+	if door != "":
+		return door
+	var box := _container_in_reach()
+	return box.prompt_text() if box != null else ""
 
 
 ## The prompt for the nearest door the pirate can reach, or nothing.

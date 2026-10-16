@@ -60,8 +60,12 @@ func _ready() -> void:
 	tagline.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	column.add_child(tagline)
 	var gap := Control.new()
-	gap.custom_minimum_size = Vector2(0, 48)
+	gap.custom_minimum_size = Vector2(0, 28)
 	column.add_child(gap)
+	column.add_child(_profile_panel())
+	var gap_after := Control.new()
+	gap_after.custom_minimum_size = Vector2(0, 24)
+	column.add_child(gap_after)
 
 	_home = _menu(column, "Home", [["Play", _show_classes], ["Exit", _quit]])
 	_classes = _menu(column, "Classes", [
@@ -75,6 +79,36 @@ func _ready() -> void:
 	_classes.add_child(pick)
 	_classes.move_child(pick, 0)
 	_show_home()
+
+
+## What the pirate has kept from every Raid: level, XP toward the next one
+## and the gold in his hold.
+func _profile_panel() -> Control:
+	Profile.load_saved()
+	var box := VBoxContainer.new()
+	box.name = "Profile"
+	box.add_theme_constant_override("separation", 6)
+	var progress := Profile.level_progress(Profile.xp)
+	var line := MenuStyle.heading("LEVEL %d   ·   %d / %d XP   ·   %d GOLD IN THE HOLD" % [
+			Profile.level(), progress.x, progress.y, Profile.gold], 16, MenuStyle.TEXT)
+	line.name = "Line"
+	line.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	box.add_child(line)
+	var bar := ProgressBar.new()
+	bar.name = "Bar"
+	bar.show_percentage = false
+	bar.custom_minimum_size = Vector2(380, 6)
+	bar.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	bar.max_value = progress.y
+	bar.value = progress.x
+	var back := StyleBoxFlat.new()
+	back.bg_color = Color(1, 1, 1, 0.1)
+	var fill := StyleBoxFlat.new()
+	fill.bg_color = MenuStyle.ACCENT
+	bar.add_theme_stylebox_override("background", back)
+	bar.add_theme_stylebox_override("fill", fill)
+	box.add_child(bar)
+	return box
 
 
 func _unhandled_input(event: InputEvent) -> void:
