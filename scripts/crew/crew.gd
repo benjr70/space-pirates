@@ -65,6 +65,12 @@ const CORNER_RELEASE := 5.0
 const HIDE_CHANCE := 0.25
 ## A fleeing Worker has reached its Guard this close, and raises it.
 const GUARD_REACH := 2.5
+## A Worker has reached an Alarm Panel this close to its use spot.
+const PANEL_REACH := 0.9
+## On Edge, a patrolling Guard pauses this fraction as long at each stop.
+const ON_EDGE_PAUSE := 0.5
+## Under the Alarm, a sweeping Guard's pause at each Room it checks.
+const SWEEP_PAUSE := 1.5
 ## Seconds a hiding Worker stays put with nothing in sight before it
 ## creeps back to its routine.
 const COWER_CALM := 15.0
@@ -144,6 +150,9 @@ var crew_type: CrewTypes.Type = CrewTypes.Type.GUARD
 var body_tint := Color.WHITE
 ## The Guard a fleeing Worker is running to.
 var _flee_to: Crew3D
+## The Alarm Panel a fleeing Worker is running to, instead of a Guard.
+var _flee_panel: AlarmPanel
+var _alarm: ShipAlarm
 ## Chance this Worker hides rather than runs; [constant HIDE_CHANCE] unless
 ## a test wants it certain.
 var hide_chance := HIDE_CHANCE
@@ -502,13 +511,15 @@ func _enter(next: State) -> void:
 				_path.clear()
 			_hold_timer = cover_hold_time
 		State.FLEE:
-			_flee_to = _nearest_guard()
-			if _flee_to == null or _rng.randf() < hide_chance:
+			_flee_panel = null
+			_flee_to = null
+			if _rng.randf() < hide_chance:
 				_enter(State.COWER)
 				return
-			_repath_to(_flee_to.global_position)
+			_pick_flight()
 		State.COWER:
 			_flee_to = null
+			_flee_panel = null
 			_hold_timer = COWER_CALM
 			var spot := _find_cover_point()
 			if spot != Vector3.INF:
@@ -516,6 +527,7 @@ func _enter(next: State) -> void:
 			else:
 				_path.clear()
 		State.SEARCH:
+			perception.on_edge = true
 			perception.awareness = minf(perception.awareness, SEARCH_AWARENESS)
 			_repath_to(_last_seen)
 			_hold_timer = 2.5
@@ -548,6 +560,12 @@ func _glance() -> void:
 
 ## Walk to the Job, do it, move on to the next; stop to chat now and then.
 func _tick_routine() -> void:
+	if _alarm_raised():
+		if is_worker():
+			_enter(State.COWER)
+		else:
+			_tick_sweep()
+		return
 	_speed_scale = ROUTINE_SPEED
 	var job := routine.current()
 	match job_phase:
@@ -559,7 +577,7 @@ func _tick_routine() -> void:
 			_walk_clock += get_physics_process_delta_time()
 			if _path.is_empty():
 				job_phase = JobPhase.WORKING
-				_hold_timer = job.duration
+				_hold_timer = job.duration * (ON_EDGE_PAUSE if perception.on_edge and job.patrol else 1.0)
 			elif _walk_clock > JOB_GIVE_UP:
 				routine.advance()
 				_start_job()
@@ -579,6 +597,20 @@ func _tick_routine() -> void:
 			if _hold_timer <= 0.0 or not is_instance_valid(_chat_with) or _chat_with.state != State.PATROL:
 				_chat_with = null
 				_start_job()
+
+
+## Under the Alarm a Guard has no routine: it sweeps the ship at full
+## speed, Room to random Room, pausing briefly to look about in each.
+func _tick_sweep() -> void:
+	_speed_scale = 1.0
+	job_phase = JobPhase.WALKING
+	if not _path.is_empty():
+		return
+	if _hold_timer > 0.0:
+		_glance()
+		return
+	_repath_to(_random_point_in_room(_rng.randi_range(0, layout.rooms.size() - 1)))
+	_hold_timer = SWEEP_PAUSE
 
 
 ## Sets off for the current Job. A patrol stop whose centre is blocked
@@ -704,6 +736,16 @@ func _tick_flee() -> void:
 	if _cornered():
 		_enter(State.FIGHT)
 		return
+	if _flee_panel != null:
+		if _flee_panel.broken or _alarm_raised():
+			# Shot out, or someone beat it there: somewhere else to run.
+			_pick_flight()
+		elif _flat_distance(global_position, _flee_panel.use_at) <= PANEL_REACH:
+			_raise_alarm()
+			_enter(State.COWER)
+		elif _repath_timer <= 0.0:
+			_repath_to(_flee_panel.use_at)
+		return
 	if _flee_to == null or not is_instance_valid(_flee_to) or not _flee_to.is_alive():
 		# Its Guard is gone: on to the next one, without a second roll to hide.
 		_flee_to = _nearest_guard()
@@ -726,11 +768,78 @@ func _tick_cower() -> void:
 	if _cornered():
 		_enter(State.FIGHT)
 		return
-	if _can_see:
+	if _can_see or _alarm_raised():
+		# Under the Alarm a Worker stays hidden for good.
 		_hold_timer = COWER_CALM
 	if _path.is_empty() and _hold_timer <= 0.0:
 		perception.awareness = CrewPerception.SUSPICIOUS * 0.5
+		perception.on_edge = true
 		_enter(State.PATROL)
+
+
+## Where a fleeing Worker runs: while the Alarm is down, the nearest working
+## Alarm Panel to raise it; otherwise the nearest Guard; with neither, it
+## hides.
+func _pick_flight() -> void:
+	_flee_panel = null if _alarm_raised() else _nearest_panel()
+	if _flee_panel != null:
+		_flee_to = null
+		_repath_to(_flee_panel.use_at)
+		return
+	_flee_to = _nearest_guard()
+	if _flee_to == null:
+		_enter(State.COWER)
+	else:
+		_repath_to(_flee_to.global_position)
+
+
+func _nearest_panel() -> AlarmPanel:
+	var best: AlarmPanel = null
+	var best_distance := INF
+	for node in get_tree().get_nodes_in_group(&"alarm_panels"):
+		var panel := node as AlarmPanel
+		if panel == null or panel.broken:
+			continue
+		var distance := _flat_distance(global_position, panel.use_at)
+		if distance < best_distance:
+			best = panel
+			best_distance = distance
+	return best
+
+
+func _ship_alarm() -> ShipAlarm:
+	if _alarm == null or not is_instance_valid(_alarm):
+		_alarm = ShipAlarm.of(get_tree())
+	return _alarm
+
+
+func _alarm_raised() -> bool:
+	var alarm := _ship_alarm()
+	return alarm != null and alarm.is_raised
+
+
+func _raise_alarm() -> void:
+	var alarm := _ship_alarm()
+	if alarm != null:
+		alarm.raise(_last_seen)
+
+
+## The ship's Alarm went up, the Pirate last known at [param at]: every
+## routine stops. A Guard not already fighting hunts there; a Worker not
+## already running or fighting hides. Everyone is On Edge from now on.
+func on_alarm(at: Vector3) -> void:
+	if state == State.DEAD:
+		return
+	perception.on_edge = true
+	if is_worker():
+		if state in [State.PATROL, State.INVESTIGATE, State.SEARCH]:
+			_enter(State.COWER)
+		return
+	if state in [State.PATROL, State.INVESTIGATE, State.SEARCH]:
+		_last_seen = at
+		_seen_ago = 0.0
+		perception.awareness = 1.0
+		_enter(State.HUNT)
 
 
 ## A Worker reaching a Guard tells it where the Pirate was: it hunts there.

@@ -20,10 +20,15 @@ const DECAY_PER_SECOND := 0.2
 const SPOT_TIMES := [Vector2(3.0, 0.3), Vector2(10.0, 1.5), Vector2(14.0, 3.0)]
 ## A crouched Pirate takes this many times as long to spot.
 const CROUCH_FACTOR := 2.0
+## On Edge, every spot time is this fraction of the calm one.
+const ON_EDGE_FACTOR := 0.6
 
 enum Band { UNAWARE, SUSPICIOUS, SPOTTED }
 
 var awareness := 0.0
+## Set once a crew member has lost the Pirate or heard the Alarm: it never
+## goes back to fully calm, and spots him faster for the rest of the Raid.
+var on_edge := false
 
 
 ## Seconds a crew member takes to spot the Pirate at [param distance].
@@ -70,7 +75,8 @@ func band() -> Band:
 func sense(delta: float, in_view: bool, distance: float, crouched := false) -> bool:
 	var was_spotted := awareness >= 1.0
 	if in_view:
-		awareness = minf(awareness + delta / spot_time(distance, crouched), 1.0)
+		var time := spot_time(distance, crouched) * (ON_EDGE_FACTOR if on_edge else 1.0)
+		awareness = minf(awareness + delta / time, 1.0)
 	else:
 		awareness = maxf(awareness - DECAY_PER_SECOND * delta, 0.0)
 	return awareness >= 1.0 and not was_spotted

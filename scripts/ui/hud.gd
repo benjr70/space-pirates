@@ -51,6 +51,7 @@ var _reloading := false
 var _spread_degrees := 0.0
 var _ads := false
 var _loot_label: Label
+var _alarm_label: Label
 ## Crew Awareness bars over heads, and the spotted sting.
 var markers: AwarenessMarkers
 var _toasts: VBoxContainer
@@ -145,6 +146,21 @@ func _ready() -> void:
 	_loot_label.add_theme_color_override("font_color", LOOT_COLOR)
 	root.add_child(_loot_label)
 	set_loot(0)
+
+	# Up for good once the ship's Alarm is raised.
+	_alarm_label = Label.new()
+	_alarm_label.name = "Alarm"
+	_alarm_label.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	_alarm_label.position = Vector2(-120, 18)
+	_alarm_label.custom_minimum_size = Vector2(240, 0)
+	_alarm_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_alarm_label.add_theme_font_size_override("font_size", 26)
+	_alarm_label.add_theme_color_override("font_color", Color(1.0, 0.25, 0.2))
+	_alarm_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.8))
+	_alarm_label.add_theme_constant_override("outline_size", 5)
+	_alarm_label.text = "ALARM RAISED"
+	_alarm_label.visible = false
+	root.add_child(_alarm_label)
 
 	_toasts = VBoxContainer.new()
 	_toasts.name = "Toasts"
@@ -260,7 +276,15 @@ func _layout_crosshair() -> void:
 		line.position = direction * reach + across
 
 
-## A hit landed: the X shows and fades, red when it killed.
+## Shows or hides the ALARM RAISED banner.
+func set_alarm(on: bool) -> void:
+	_alarm_label.visible = on
+
+
+func alarm_showing() -> bool:
+	return _alarm_label.visible
+
+
 ## Gold carried this Raid.
 func set_loot(gold: int) -> void:
 	_loot_label.text = "Loot  %d gold" % gold
@@ -293,6 +317,7 @@ func toast_texts() -> Array[String]:
 	return out
 
 
+## A hit landed: the X shows and fades, red when it killed.
 func flash_hitmarker(_target: Node3D = null, killed: bool = false) -> void:
 	_hitmarker_kill = killed
 	for arm in _hitmarker.get_children():

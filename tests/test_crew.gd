@@ -58,6 +58,9 @@ func _initialize() -> void:
 	await _check_hearing()
 	_check_doorway()
 	await _check_worker()
+	_check_on_edge()
+	await _check_alarm()
+	_check_panel_spots()
 	await _check_routines()
 	_check_types()
 	_report()
@@ -341,6 +344,20 @@ func _check_routines() -> void:
 				var near := crew.any(func(m: Crew3D) -> bool: return m.global_position.distance_to(door.global_position) < Crew3D.DOOR_FORGET + 1.0)
 				if not near:
 					stray_doors += 1
+	# The Alarm going up stops every routine: Workers hide, Guards hunt.
+	var alarm: ShipAlarm = ship.get_node("Alarm")
+	alarm.raise(ShipBuilder3D.room_center_world(ship_layout.rooms[0]))
+	for i in 30:
+		await physics_frame
+	var still_routine := []
+	for member in crew:
+		if member.is_worker() and member.state != Crew3D.State.COWER:
+			still_routine.append("worker in state %d" % member.state)
+		elif not member.is_worker() and member.state == Crew3D.State.PATROL:
+			still_routine.append("guard on patrol")
+	_expect(still_routine.is_empty(), "alarm: %d crew carried on their routine: %s" % [still_routine.size(), still_routine.slice(0, 3)])
+	_expect(ship.get_node("AlarmPanels").get_child_count() == AlarmPanel.spots(ship_layout).size()
+			and ship.get_node("AlarmPanels").get_child_count() > 0, "alarm: the built ship's panels do not match its spots")
 	Engine.time_scale = 1.0
 	Engine.max_physics_steps_per_frame = 8
 	_expect(away.size() * 2 >= crew.size(), "routines: only %d of %d crew left their Post in 60 s" % [away.size(), crew.size()])
@@ -416,3 +433,82 @@ func _check_types() -> void:
 			_expect(member.is_worker() and not member.routine.patroller, "a crew member posted in the %s is not a working Worker" % role)
 			seen[role] = true
 	_expect(seen.size() == 4, "the medium ship had crew in only %s of armory, bridge, engine, cargo" % [seen.keys()])
+
+
+## Losing the Pirate leaves a crew member On Edge: it spots him faster.
+func _check_on_edge() -> void:
+	var crew := _crew()
+	_place(10.0)
+	var calm := _time_to_spot(crew)
+	crew._last_seen = player.global_position
+	crew._enter(Crew3D.State.SEARCH)
+	crew.state = Crew3D.State.PATROL
+	var edgy := _time_to_spot(crew)
+	_expect(crew.perception.on_edge and edgy < calm * 0.8, "On Edge: spotted at 10 m in %.2f s, calm %.2f s" % [edgy, calm])
+	crew.free()
+
+
+## In the open test Room: a spotted Worker runs for the nearest working
+## panel. Shot out on the way, that panel raises nothing and the Worker
+## runs on to the other, which raises the Alarm: red lights, the Worker
+## hides, the panels show it.
+func _check_alarm() -> void:
+	var ship := world.get_node("Ship")
+	var alarm: ShipAlarm = ship.get_node("Alarm")
+	var near := AlarmPanel.new()
+	near.setup(0, Vector2i(1, 21), Vector2i.LEFT)
+	ship.add_child(near)
+	var far := AlarmPanel.new()
+	far.setup(0, Vector2i(6, 13), Vector2i.RIGHT)
+	ship.add_child(far)
+	await physics_frame
+	var worker := _crew(CrewTypes.Type.WORKER)
+	worker.hide_chance = 0.0
+	_place(8.0)
+	worker.set_physics_process(true)
+	var broke_near := false
+	var ran_to_near := false
+	for i in 600:
+		await physics_frame
+		if not broke_near and worker._flee_panel == near:
+			ran_to_near = true
+			near.take_damage(1, player)
+			broke_near = true
+		if alarm.is_raised:
+			break
+	worker.set_physics_process(false)
+	_expect(ran_to_near, "alarm: the spotted Worker never ran for the nearest panel")
+	_expect(near.broken, "alarm: a panel shot by the pirate is not broken")
+	_expect(alarm.is_raised, "alarm: the Worker never raised the Alarm at the other panel")
+	_expect(worker.global_position.distance_to(far.use_at) < 1.5, "alarm: the Alarm went up with the Worker away from the working panel")
+	near.take_damage(1, worker)
+	var crew_shot := AlarmPanel.new()
+	crew_shot.setup(0, Vector2i(6, 5), Vector2i.RIGHT)
+	ship.add_child(crew_shot)
+	crew_shot.take_damage(1, worker)
+	_expect(not crew_shot.broken, "alarm: a crew member's shot broke a panel")
+	var red := true
+	for light: OmniLight3D in ship.get_node("Lights").get_children():
+		red = red and light.light_color.r > light.light_color.g * 3.0
+	_expect(red, "alarm: the room lights did not turn red")
+	for i in 5:
+		await physics_frame
+	worker._tick_cower()
+	_expect(worker.state == Crew3D.State.COWER, "alarm: the Worker that raised it is in state %d, not hiding" % worker.state)
+	worker.free()
+	near.free()
+	far.free()
+	crew_shot.free()
+
+
+## Every generated ship has an Alarm Panel in its Bridge.
+func _check_panel_spots() -> void:
+	var missing := []
+	for ship_class in ShipGenerator.CLASSES:
+		for seed in range(1, 16):
+			var ship := ShipGenerator.generate(ship_class, seed)
+			var in_bridge := AlarmPanel.spots(ship).any(func(spot: Dictionary) -> bool:
+					return ship.rooms[spot.room].role == &"bridge")
+			if not in_bridge:
+				missing.append("%s %d" % [ship_class, seed])
+	_expect(missing.is_empty(), "alarm: no Bridge panel on %s" % [missing])

@@ -13,12 +13,15 @@ being built toward is spec #52 (tickets #53–#63).
 | `crew_perception.gd` (`CrewPerception`) | Awareness: the sight cone, how fast Awareness fills and drains, and its bands. Pure arithmetic, tested without physics. |
 | `crew_types.gd` (`CrewTypes`) | Guard or Worker, from the Post Room's Role, and the Worker tint. |
 | `crew_routine.gd` (`CrewRoutine`) | Routines: a crew member's Post and its loop of Jobs, planned from the layout's props and Rooms. Pure planning; the body walks it. |
+| `ship_alarm.gd` (`ShipAlarm`) | The ship-wide Alarm: raised once, red lights, every crew member told. Built per ship as `Ship/Alarm`. |
+| `alarm_panel.gd` (`AlarmPanel`) | The wall panels the Alarm is raised from, where they go, and breaking them. Built under `Ship/AlarmPanels`. |
 | `crew_noise.gd` (`CrewNoise`) | Hearing: noise events (footsteps, gunshots, doors), how far each reaches, and which Rooms it carries into. |
 | `../ui/awareness_markers.gd` (`AwarenessMarkers`) | The bar over each crew member's head and the spotted sting, drawn by the HUD. |
 
 Scene: `scenes/crew_3d.tscn`. Tests: `tests/test_crew.gd` (Awareness, the walk
 to look, being shot, the sting, hearing, Workers fleeing and cornered, crew
-types, and 60 simulated seconds of routines on a generated medium ship), plus the crew fight in
+types, On Edge, the Alarm and its panels, and 60 simulated seconds of routines
+on a generated medium ship ending in the Alarm), plus the crew fight in
 `tests/test_ship_3d.gd`.
 
 ## Crew types
@@ -34,11 +37,13 @@ its Post Room's Role (`CrewTypes.for_role`):
 
 - **Guards** walk patrol loops (see Routines) and, once spotted, hunt and fight
   as described under States.
-- **Workers** walk work loops. Spotted, a Worker does not hunt: it **flees** to
-  the nearest living Guard (75 %) or **cowers** behind cover where it is
-  (25 %, or always when no Guard lives). Reaching within 2.5 m of its Guard it
-  **raises** it (the Guard gets the Pirate's last-seen position, goes to
-  Awareness 1 and hunts) and then cowers. A cowering Worker returns to its
+- **Workers** walk work loops. Spotted, a Worker does not hunt. One time in
+  four it **cowers** behind cover where it is; otherwise it **flees**: to the
+  nearest working Alarm Panel while the Alarm is down (raising it on arrival,
+  see Alarm), else to the nearest living Guard, else it cowers. Reaching within
+  2.5 m of a Guard it **raises** it (the Guard gets the Pirate's last-seen
+  position, goes to Awareness 1 and hunts) and then cowers. If its Guard dies
+  on the way it runs on to the next, without a second roll to hide. A cowering Worker returns to its
   routine after 15 s with nothing in sight, at Awareness 0.15.
 - A Worker fights only when **cornered**: the Pirate in sight within 3 m.
   Then it fires a sidearm (12° spread, 2-round bursts, against a Guard's 7°
@@ -138,6 +143,34 @@ mid-fill speeds it up.
 **Tipping into spotted** (reaching 1 from below, by sight or by being shot)
 calls `on_crew_spotted(crew)` on every node in the `awareness_listeners` group.
 
+## Alarm
+
+**Alarm Panels** (`AlarmPanel.spots`): one in every Bridge and every Armory, on
+the wall beside the floor tile nearest the Room's centre that has wall straight
+behind it, is not a prop's tile, and is not beside a doorway or Hatch gap. The
+panel's screen glows orange; a crew member works it from the tile in front.
+
+**Raising**: a fleeing Worker that gets within 0.9 m of a working panel raises
+the **Alarm** (`ShipAlarm.raise`) with the Pirate's last-seen position, then
+cowers. Once raised it stays up for the rest of the Raid:
+- every Room light turns red and pulses (55 %–100 %, ~0.5 Hz); working panels
+  turn red; the HUD shows **ALARM RAISED**;
+- every crew member is told (`on_alarm`) and goes **On Edge**;
+- **routines stop**: Workers on routine, investigating or searching hide
+  (COWER) and never come out; Guards on routine, investigating or searching
+  hunt the last-seen position, and once that goes cold they **sweep** the ship
+  at full speed, Room to random Room, pausing 1.5 s in each, instead of their
+  patrol loop. Crew already fighting or fleeing carry on.
+
+**Breaking a panel**: the Pirate's shot breaks a panel (screen goes dark); crew
+shots do not. A broken panel raises nothing: a Worker running to it when it
+breaks re-picks the nearest working panel, then a Guard. Breaking one is a
+gunshot like any other, heard 24 m off.
+
+**On Edge**: a crew member that has lost the Pirate (entered SEARCH), crept
+back from hiding, or heard the Alarm is On Edge for the rest of the Raid: every
+spot time is **0.6×**, and a patrolling Guard pauses half as long at each stop.
+
 ## Routines
 
 Every crew member has a **Post**, the Room it spawned in (the Threat Budget
@@ -217,7 +250,9 @@ and `crew.gd` (`SEARCH_AWARENESS`, `INVESTIGATE_SPEED`, `INVESTIGATE_LINGER`,
 `GLANCE_DEGREES`, `TURN_RATE`, `INVESTIGATE_GIVE_UP`, `ROUTINE_SPEED`,
 `WALK_ANIM_SPEED`, `DOOR_CLOSE_AFTER`, `DOOR_FORGET`, `DOOR_ADOPT`, `CHAT_*`,
 `JOB_GIVE_UP`, `CORNERED_RANGE`, `CORNER_RELEASE`, `HIDE_CHANCE`,
-`GUARD_REACH`, `COWER_CALM`, `WORKER_SPREAD`, `WORKER_BURST`),
+`GUARD_REACH`, `COWER_CALM`, `WORKER_SPREAD`, `WORKER_BURST`, `PANEL_REACH`,
+`ON_EDGE_PAUSE`, `SWEEP_PAUSE`), `crew_perception.gd` (`ON_EDGE_FACTOR`),
+`ship_alarm.gd` (`RED`, `PULSE_*`), `alarm_panel.gd` (`ROLES`, `SIZE`, `HEIGHT`),
 `crew_types.gd` (`GUARD_ROLES`, `WORKER_ROLES`, `WORKER_TINT`), `HEARD_NOISE`, `HEARD_GUNSHOT`, `HEARD_CAP`) and
 `crew_routine.gd` (`WORK_PROPS`, `JOBS_MIN`/`MAX`, `WORK_TIME`,
 `PATROL_PAUSE`, `AWAY_CHANCE`) and `crew_noise.gd` (`SPRINT_STEP`, `WALK_STEP`, `GUNSHOT`, `DOOR`). They are starting values to be tuned by
@@ -225,5 +260,5 @@ playtest.
 
 ## Not yet built
 
-The ship-wide Alarm (#57), Guard teamwork (#58), bodies (#59), traces (#60) and
+Guard teamwork (#58), bodies (#59), traces (#60) and
 stealth XP (#61).

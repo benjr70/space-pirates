@@ -182,6 +182,23 @@ A crew member posted in the Engine, Cargo, Shield or Medbay (and half of
 Quarters): works at props around the ship, and on spotting the Pirate runs to
 raise the nearest Guard or hides. It fights back only when cornered.
 
+## Alarm
+
+The ship-wide state a crew member raises by reaching an Alarm Panel. Once
+raised it stays up for the rest of the Raid: the lights turn red, routines
+stop, Guards hunt and sweep the ship, Workers hide.
+
+## Alarm Panel
+
+A wall panel in each Bridge and Armory from which the Alarm is raised. The
+Pirate can shoot one out so it raises nothing, at the cost of the noise.
+
+## On Edge
+
+How a crew member stays once it has lost the Pirate or heard the Alarm: it
+goes back to its routine but spots him faster, and never returns to fully
+unaware for the rest of the Raid.
+
 ## Raid
 
 One visit to a target ship: board through a Hatch, take what can be taken,

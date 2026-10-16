@@ -148,6 +148,21 @@ static func build(layout: ShipLayout, parent: Node3D, boarding_hatch := -1) -> v
 		lights.add_child(light)
 		reveal.register_light(i, light)
 
+	var alarm := ShipAlarm.new()
+	alarm.name = "Alarm"
+	var room_lights: Array[OmniLight3D] = []
+	for light in lights.get_children():
+		room_lights.append(light)
+	alarm.setup(room_lights)
+	parent.add_child(alarm)
+	var panels := Node3D.new()
+	panels.name = "AlarmPanels"
+	parent.add_child(panels)
+	for spot in AlarmPanel.spots(layout):
+		var panel := AlarmPanel.new()
+		panel.setup(spot.room, spot.stand, spot.wall_dir)
+		panels.add_child(panel)
+
 	var props := Node3D.new()
 	props.name = "Props"
 	parent.add_child(props)

@@ -68,6 +68,8 @@ func _ready() -> void:
 
 	ledger = RaidLedger.new(layout.ship_class)
 	_wire_hud()
+	var alarm: ShipAlarm = ship.get_node("Alarm")
+	alarm.raised.connect(func(_at: Vector3) -> void: hud.set_alarm(true))
 	_wire_raid_end()
 	if ship.has_node("BoardingPod"):
 		_wire_extraction(ship.get_node("BoardingPod"))
