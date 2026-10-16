@@ -11,11 +11,13 @@ being built toward is spec #52 (tickets #53–#63).
 |---|---|
 | `crew.gd` (`Crew3D`) | The body: movement, health, animation, door handling, gunnery, cover search, and the state machine that ties them together. |
 | `crew_perception.gd` (`CrewPerception`) | Awareness: the sight cone, how fast Awareness fills and drains, and its bands. Pure arithmetic, tested without physics. |
+| `crew_routine.gd` (`CrewRoutine`) | Routines: a crew member's Post and its loop of Jobs, planned from the layout's props and Rooms. Pure planning; the body walks it. |
 | `crew_noise.gd` (`CrewNoise`) | Hearing: noise events (footsteps, gunshots, doors), how far each reaches, and which Rooms it carries into. |
 | `../ui/awareness_markers.gd` (`AwarenessMarkers`) | The bar over each crew member's head and the spotted sting, drawn by the HUD. |
 
 Scene: `scenes/crew_3d.tscn`. Tests: `tests/test_crew.gd` (Awareness, the walk
-to look, being shot, the sting, hearing), plus the crew fight in
+to look, being shot, the sting, hearing, and 60 simulated seconds of routines
+on a generated medium ship), plus the crew fight in
 `tests/test_ship_3d.gd`.
 
 ## States
@@ -33,15 +35,18 @@ PATROL ──suspicious──▶ INVESTIGATE ──spotted──▶ HUNT ◀─�
                                        nothing found ▶ PATROL
 ```
 
-- **PATROL**: wanders random floor points in its own Room (its Post Room,
-  `home_room`), holding 0.8–2.2 s between walks. While stood still it glances
+- **PATROL**: on routine (see Routines below): walking its loop of Jobs at
+  half speed, working at props, now and then stopping to chat. A crew member
+  with no layout to plan from (a test rig) wanders random floor points in its
+  own Room instead. While stood still and not working at a prop it glances
   around: every 1.5–4 s it turns up to 70° either way, so the sight cone is
   never a fixed wedge.
 - **INVESTIGATE** (new in #53): entered when Awareness is suspicious but not
   spotted, whether from a glimpse or a noise. Walks at 45 % speed toward where the Pirate was last noticed, faces
   it, re-paths while it still has him in view, and lingers 2 s at the spot.
-  Goes back to PATROL once nothing is in view, it has arrived, the linger is
-  over and Awareness has drained below suspicious.
+  Goes back to PATROL once Awareness has drained below suspicious and either it
+  has arrived and the linger is over, or 10 s have passed with nothing in view
+  (the spot may be inside a prop). Back on PATROL it picks up the Job it was on.
 - **HUNT / FIGHT / COVER / SEARCH**: the combat loop, unchanged from before #53
   apart from how it is entered. HUNT paths to the last-seen position; FIGHT
   fires 3-round bursts (0.14 s apart, 7° spread) inside 10.6 m; a spent burst
@@ -96,6 +101,34 @@ mid-fill speeds it up.
 **Tipping into spotted** (reaching 1 from below, by sight or by being shot)
 calls `on_crew_spotted(crew)` on every node in the `awareness_listeners` group.
 
+## Routines
+
+Every crew member has a **Post**, the Room it spawned in (the Threat Budget
+still decides how many start in each Room), and a loop of 3–5 **Jobs**
+(`CrewRoutine.plan`). The whole ship starts mid-routine: each crew member
+begins at a random point in its loop, after a random 0–5 s pause.
+
+- **Work Jobs**: stand on the floor tile beside a prop and face it for 3–8 s.
+  Work props are consoles, engine consoles, generators, lockers, containers,
+  safes, cabinets, footlockers and cryopods, plus crates in Cargo; a Breaker
+  never. The loop's first Job is at the Post and its second elsewhere, so
+  every loop both comes home and leaves; the rest are elsewhere half the time.
+- **Patrol loops**: a third of the crew patrol instead. Each stop is a Room's
+  centre (Corridors included), never the same Room twice running, with a
+  1.5–3.5 s pause looking about.
+- Crew walk routine at **50 %** speed (Walk clip below 2.4 m/s, Run above).
+- A Job whose spot turns out blocked is skipped; one not reached within 30 s
+  is given up for the next.
+- **Chat**: two routine crew walking within 1.6 m of each other have a 30 %
+  chance to stop face to face for 3–5 s; either way neither chats again for
+  40 s.
+- **Doors**: crew open shut Doors within 1.75 m of their path. On routine they
+  shut the ones they opened (or walked through open, within 1 m) once 2 m past,
+  unless someone is still in the doorway, trying each tick until 6 m away.
+  So the last crew member through a doorway closes it.
+- Suspicion or combat interrupts the routine; returning to PATROL resumes the
+  current Job.
+
 ## Hearing
 
 `CrewNoise.make(tree, at, kind, reach, source)` rings a noise for every living
@@ -143,12 +176,15 @@ ear in the sound booth.
 All numbers above are constants in `crew_perception.gd` (`CONE_HALF_DEGREES`,
 `SIGHT_RANGE`, `SUSPICIOUS`, `DECAY_PER_SECOND`, `SPOT_TIMES`, `CROUCH_FACTOR`)
 and `crew.gd` (`SEARCH_AWARENESS`, `INVESTIGATE_SPEED`, `INVESTIGATE_LINGER`,
-`GLANCE_DEGREES`, `TURN_RATE`, `HEARD_NOISE`, `HEARD_GUNSHOT`, `HEARD_CAP`) and
-`crew_noise.gd` (`SPRINT_STEP`, `WALK_STEP`, `GUNSHOT`, `DOOR`). They are starting values to be tuned by
+`GLANCE_DEGREES`, `TURN_RATE`, `INVESTIGATE_GIVE_UP`, `ROUTINE_SPEED`,
+`WALK_ANIM_SPEED`, `DOOR_CLOSE_AFTER`, `DOOR_FORGET`, `DOOR_ADOPT`, `CHAT_*`,
+`JOB_GIVE_UP`, `HEARD_NOISE`, `HEARD_GUNSHOT`, `HEARD_CAP`) and
+`crew_routine.gd` (`WORK_PROPS`, `JOBS_MIN`/`MAX`, `WORK_TIME`,
+`PATROL_PAUSE`, `PATROLLER_SHARE`, `AWAY_CHANCE`) and `crew_noise.gd` (`SPRINT_STEP`, `WALK_STEP`, `GUNSHOT`, `DOOR`). They are starting values to be tuned by
 playtest.
 
 ## Not yet built
 
-Routines and roaming (#55), Guard and Worker types (#56), the
+Guard and Worker types (#56), the
 ship-wide Alarm (#57), Guard teamwork (#58), bodies (#59), traces (#60) and
 stealth XP (#61).

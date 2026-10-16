@@ -29,6 +29,9 @@ const SEARCH_AWARENESS := 0.7
 const INVESTIGATE_SPEED := 0.45
 ## Seconds stood at the spot it came to look at before giving up.
 const INVESTIGATE_LINGER := 2.0
+## Seconds an investigation may run with nothing in view before it is
+## dropped, even short of the spot (it may be inside a prop).
+const INVESTIGATE_GIVE_UP := 10.0
 ## Awareness a heard noise lifts a crew member to: a footstep or door, and
 ## a gunshot. Hearing never reaches spotted.
 const HEARD_NOISE := 0.45
@@ -36,6 +39,24 @@ const HEARD_GUNSHOT := 0.6
 const HEARD_CAP := 0.95
 ## How far an unaware crew member's idle glances turn, either way.
 const GLANCE_DEGREES := 70.0
+## Fraction of full speed a crew member walks at about its routine.
+const ROUTINE_SPEED := 0.5
+## Below this flat speed a moving crew member walks rather than runs.
+const WALK_ANIM_SPEED := 2.4
+## Doors a crew member opened on routine are shut again once it is this far
+## past them; further off than DOOR_FORGET, it no longer bothers.
+const DOOR_CLOSE_AFTER := 2.0
+const DOOR_FORGET := 6.0
+## An open door a routine crew member passes this close to becomes its to shut.
+const DOOR_ADOPT := 1.0
+## Two routine crew passing this close may stop to chat: the chance, how
+## long it lasts, and how long before either chats again.
+const CHAT_RANGE := 1.6
+const CHAT_CHANCE := 0.3
+const CHAT_TIME := Vector2(3.0, 5.0)
+const CHAT_COOLDOWN := 40.0
+## Seconds walking toward one Job before giving it up as unreachable.
+const JOB_GIVE_UP := 30.0
 ## How fast the body turns to face where it is looking, radians a second.
 const TURN_RATE := 6.0
 
@@ -128,6 +149,17 @@ var perception := CrewPerception.new()
 var _noticed_at := Vector3.ZERO
 var _glance_timer := 0.0
 var _speed_scale := 1.0
+## Its loop of Jobs ([CrewRoutine]); null without a layout to plan from,
+## when it falls back to wandering its own Room.
+var routine: CrewRoutine
+enum JobPhase { WAITING, WALKING, WORKING, CHATTING }
+var job_phase := JobPhase.WAITING
+var _opened_doors: Array[Door3D] = []
+var _chat_with: Crew3D
+var _chat_cooldown := 0.0
+## Seconds spent walking to the current Job; a route that never arrives
+## (blocked by a body in a doorway, say) is given up on.
+var _walk_clock := 0.0
 var _rng := RandomNumberGenerator.new()
 var _gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)
 var _anim: AnimationPlayer
@@ -145,7 +177,14 @@ func _ready() -> void:
 		for clip in LOOPING_CLIPS:
 			if _anim.has_animation(clip):
 				_anim.get_animation(clip).loop_mode = Animation.LOOP_LINEAR
+	if layout != null and home_room >= 0 and home_room < layout.rooms.size():
+		routine = CrewRoutine.plan(layout, home_room, _rng)
 	_enter(State.PATROL)
+	# Each starts its routine after a moment of its own, not all at once.
+	job_phase = JobPhase.WAITING
+	_path.clear()
+	_hold_timer = _rng.randf_range(0.0, 5.0)
+	_chat_cooldown = _rng.randf_range(5.0, CHAT_COOLDOWN)
 	_update_animation()
 
 
@@ -223,6 +262,7 @@ func _physics_process(delta: float) -> void:
 	_hold_timer = maxf(_hold_timer - delta, 0.0)
 	_repath_timer = maxf(_repath_timer - delta, 0.0)
 	_glance_timer = maxf(_glance_timer - delta, 0.0)
+	_chat_cooldown = maxf(_chat_cooldown - delta, 0.0)
 
 	match state:
 		State.PATROL:
@@ -240,6 +280,7 @@ func _physics_process(delta: float) -> void:
 
 	_steer(delta)
 	_open_doors_ahead()
+	_close_doors_behind()
 	move_and_slide()
 	_face()
 	_update_animation()
@@ -352,8 +393,13 @@ func _enter(next: State) -> void:
 		State.PATROL:
 			_path.clear()
 			_hold_timer = _rng.randf_range(0.4, 1.6)
+			if routine != null:
+				# Back to whatever Job it was on.
+				_speed_scale = ROUTINE_SPEED
+				_start_job()
 		State.INVESTIGATE:
 			_speed_scale = INVESTIGATE_SPEED
+			_walk_clock = 0.0
 			_repath_to(_noticed_at)
 			_hold_timer = INVESTIGATE_LINGER
 		State.HUNT:
@@ -381,13 +427,101 @@ func _tick_patrol() -> void:
 	if _suspicious():
 		_enter(State.INVESTIGATE)
 		return
+	if routine != null:
+		_tick_routine()
+		return
 	if _path.is_empty() and _hold_timer <= 0.0:
 		_path.append(_random_point_in_room(home_room))
 		_hold_timer = _rng.randf_range(0.8, 2.2)
-	elif _path.is_empty() and _glance_timer <= 0.0:
-		# Stood still and unaware: look about, so the cone is not a fixed wedge.
-		_aim = _aim.rotated(Vector3.UP, deg_to_rad(_rng.randf_range(-GLANCE_DEGREES, GLANCE_DEGREES)))
-		_glance_timer = _rng.randf_range(1.5, 4.0)
+	elif _path.is_empty():
+		_glance()
+
+
+## Stood still and unaware: look about, so the cone is not a fixed wedge.
+func _glance() -> void:
+	if _glance_timer > 0.0:
+		return
+	_aim = _aim.rotated(Vector3.UP, deg_to_rad(_rng.randf_range(-GLANCE_DEGREES, GLANCE_DEGREES)))
+	_glance_timer = _rng.randf_range(1.5, 4.0)
+
+
+## Walk to the Job, do it, move on to the next; stop to chat now and then.
+func _tick_routine() -> void:
+	_speed_scale = ROUTINE_SPEED
+	var job := routine.current()
+	match job_phase:
+		JobPhase.WAITING:
+			_glance()
+			if _hold_timer <= 0.0:
+				_start_job()
+		JobPhase.WALKING:
+			_walk_clock += get_physics_process_delta_time()
+			if _path.is_empty():
+				job_phase = JobPhase.WORKING
+				_hold_timer = job.duration
+			elif _walk_clock > JOB_GIVE_UP:
+				routine.advance()
+				_start_job()
+			else:
+				_maybe_chat()
+		JobPhase.WORKING:
+			if job.patrol:
+				_glance()
+			else:
+				_aim = job.face.normalized()
+			if _hold_timer <= 0.0:
+				routine.advance()
+				_start_job()
+		JobPhase.CHATTING:
+			if is_instance_valid(_chat_with):
+				_aim = (_chat_with.global_position - global_position).normalized()
+			if _hold_timer <= 0.0 or not is_instance_valid(_chat_with) or _chat_with.state != State.PATROL:
+				_chat_with = null
+				_start_job()
+
+
+## Sets off for the current Job, skipping any whose spot turns out to be
+## blocked; with none reachable it just wanders its Post.
+func _start_job() -> void:
+	var spot := Vector3.INF
+	for _try in routine.jobs.size():
+		if not _solid(routine.current().at):
+			spot = routine.current().at
+			break
+		routine.advance()
+	if spot == Vector3.INF:
+		spot = _random_point_in_room(home_room)
+	_repath_to(spot)
+	job_phase = JobPhase.WALKING
+	_walk_clock = 0.0
+
+
+## Two crew passing each other on routine sometimes stop to talk.
+func _maybe_chat() -> void:
+	if _chat_cooldown > 0.0:
+		return
+	for node in get_tree().get_nodes_in_group(&"crew"):
+		var other := node as Crew3D
+		if other == null or other == self or other.state != State.PATROL \
+				or other.job_phase != JobPhase.WALKING or other._chat_cooldown > 0.0:
+			continue
+		if _flat_distance(global_position, other.global_position) > CHAT_RANGE:
+			continue
+		_chat_cooldown = CHAT_COOLDOWN
+		other._chat_cooldown = CHAT_COOLDOWN
+		if _rng.randf() >= CHAT_CHANCE:
+			return
+		var time := _rng.randf_range(CHAT_TIME.x, CHAT_TIME.y)
+		_start_chat(other, time)
+		other._start_chat(self, time)
+		return
+
+
+func _start_chat(other: Crew3D, time: float) -> void:
+	_path.clear()
+	_chat_with = other
+	job_phase = JobPhase.CHATTING
+	_hold_timer = time
 
 
 ## Suspicious: walk to where he was noticed, look, and give up once the
@@ -401,8 +535,11 @@ func _tick_investigate() -> void:
 		if _repath_timer <= 0.0:
 			_repath_to(_noticed_at)
 		_hold_timer = INVESTIGATE_LINGER
+		_walk_clock = 0.0
 		return
-	if _path.is_empty() and _hold_timer <= 0.0 and perception.awareness < CrewPerception.SUSPICIOUS:
+	_walk_clock += get_physics_process_delta_time()
+	var calm := perception.awareness < CrewPerception.SUSPICIOUS
+	if calm and ((_path.is_empty() and _hold_timer <= 0.0) or _walk_clock > INVESTIGATE_GIVE_UP):
 		_enter(State.PATROL)
 
 
@@ -494,10 +631,33 @@ func _open_doors_ahead() -> void:
 		return
 	for node in get_tree().get_nodes_in_group(&"doors"):
 		var door: Door3D = node
-		if door.is_open or door.locked:
+		if door.locked:
+			continue
+		if door.is_open:
+			# On routine, a door it walks through is its to shut, whoever
+			# opened it: so whichever crew member passes last closes it.
+			if state == State.PATROL and not door in _opened_doors \
+					and _flat_distance(global_position, door.global_position) <= DOOR_ADOPT:
+				_opened_doors.append(door)
 			continue
 		if _flat_distance(global_position, door.global_position) <= 1.75:
 			door.open(self)
+			if door.is_open and not door in _opened_doors:
+				_opened_doors.append(door)
+
+
+## On routine, a crew member shuts the Doors it opened once it is through,
+## unless someone is still in the doorway; it tries again next tick.
+func _close_doors_behind() -> void:
+	for door in _opened_doors.duplicate():
+		if not is_instance_valid(door) or not door.is_open:
+			_opened_doors.erase(door)
+			continue
+		var distance := _flat_distance(global_position, door.global_position)
+		if distance > DOOR_FORGET:
+			_opened_doors.erase(door)
+		elif state == State.PATROL and distance > DOOR_CLOSE_AFTER and door.close(self):
+			_opened_doors.erase(door)
 
 
 func _face() -> void:
@@ -663,8 +823,11 @@ func _play_any(names: Array[String]) -> bool:
 func _update_animation() -> void:
 	if state == State.DEAD:
 		return
-	if Vector2(velocity.x, velocity.z).length_squared() > 0.25:
+	var speed := Vector2(velocity.x, velocity.z).length()
+	if speed > WALK_ANIM_SPEED:
 		_play_any(["CharacterArmature|Run", "CharacterArmature|Walk", "Run", "Walk"])
+	elif speed > 0.5:
+		_play_any(["CharacterArmature|Walk", "CharacterArmature|Run", "Walk", "Run"])
 	elif state == State.FIGHT:
 		_play_any(["CharacterArmature|Idle_Gun_Pointing", "CharacterArmature|Idle_Gun", "Idle_Gun", "Idle"])
 	else:

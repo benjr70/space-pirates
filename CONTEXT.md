@@ -158,6 +158,18 @@ up by seeing him in a forward cone, faster the closer and the more upright he
 is, and drained slowly once he is out of view. Being shot spots him at once.
 Shown over each crew member's head as a bar filling white, yellow, red.
 
+## Post
+
+The Room a crew member belongs to: where it starts the Raid (the Threat
+Budget decides how many start in each Room) and where its routine keeps
+bringing it back.
+
+## Job
+
+One stop in a crew member's routine: working at a prop in some Room for a
+while, or pausing at a Room on a patrol route. A crew member loops through
+its Jobs until something makes it suspicious, then picks up where it was.
+
 ## Raid
 
 One visit to a target ship: board through a Hatch, take what can be taken,

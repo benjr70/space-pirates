@@ -54,6 +54,7 @@ func _initialize() -> void:
 	_check_sting()
 	await _check_hearing()
 	_check_doorway()
+	await _check_routines()
 	_report()
 	quit(1 if failures.size() > 0 else 0)
 
@@ -268,3 +269,69 @@ func _check_doorway() -> void:
 	CrewNoise.make(self, shot, CrewNoise.Kind.GUNSHOT, CrewNoise.GUNSHOT, player)
 	_expect(crew.perception.band() == CrewPerception.Band.SUSPICIOUS, "a gunshot did not carry through an open door")
 	crew.free()
+
+
+## A generated medium ship left alone for 60 simulated seconds, the Pirate
+## parked far off the hull: crew roam beyond their Posts, stand at their
+## props facing them, shut the Doors they open, and one made suspicious goes
+## back to its routine once it calms down.
+func _check_routines() -> void:
+	world.free()
+	world = Node3D.new()
+	root.add_child(world)
+	var ship_layout := ShipGenerator.generate(&"medium", 7)
+	var ship := Node3D.new()
+	ship.name = "Ship"
+	world.add_child(ship)
+	ShipBuilder3D.build(ship_layout, ship)
+	player = load("res://scenes/player_3d.tscn").instantiate()
+	world.add_child(player)
+	player.set_physics_process(false)
+	player.global_position = Vector3(-500, 0, -500)
+	var crew: Array[Crew3D] = []
+	for node: Crew3D in ship.get_node("Crew").get_children():
+		node.target = player
+		crew.append(node)
+	var away := {}
+	var bad_work := []
+	var worked := 0
+	var stray_doors := 0
+	var probe := crew[0]
+	var probe_resumed := false
+	Engine.time_scale = 6.0
+	Engine.max_physics_steps_per_frame = 16
+	for frame in 3600:
+		await physics_frame
+		if frame == 600:
+			probe.perception.awareness = 0.5
+			probe._noticed_at = probe.global_position + probe.facing() * 2.0
+		if frame > 600 and probe.state == Crew3D.State.PATROL and probe.job_phase in [Crew3D.JobPhase.WALKING, Crew3D.JobPhase.WORKING]:
+			probe_resumed = probe_resumed or frame > 700
+		if frame % 10 != 0:
+			continue
+		for member in crew:
+			var room := ship_layout.room_at(ShipBuilder3D.world_to_tile(member.global_position))
+			if room >= 0 and room != member.home_room:
+				away[member] = true
+			var job := member.routine.current()
+			if member.job_phase == Crew3D.JobPhase.WORKING and not job.patrol and member._hold_timer < job.duration - 0.6:
+				worked += 1
+				var to_prop := job.prop_at - member.global_position
+				to_prop.y = 0.0
+				if to_prop.length() > 1.5 or member.facing().dot(to_prop.normalized()) < 0.8:
+					bad_work.append("%.1f m, facing %.2f" % [to_prop.length(), member.facing().dot(to_prop.normalized())])
+		if frame % 60 == 0:
+			for node in get_nodes_in_group(&"doors"):
+				var door: Door3D = node
+				if not door.is_open:
+					continue
+				var near := crew.any(func(m: Crew3D) -> bool: return m.global_position.distance_to(door.global_position) < Crew3D.DOOR_FORGET + 1.0)
+				if not near:
+					stray_doors += 1
+	Engine.time_scale = 1.0
+	Engine.max_physics_steps_per_frame = 8
+	_expect(away.size() * 2 >= crew.size(), "routines: only %d of %d crew left their Post in 60 s" % [away.size(), crew.size()])
+	_expect(worked > 0, "routines: no crew member was ever seen working at a prop")
+	_expect(bad_work.is_empty(), "routines: %d working samples away from or facing off their prop, e.g. %s" % [bad_work.size(), bad_work.slice(0, 3)])
+	_expect(stray_doors == 0, "routines: doors left standing open with no crew near, %d times" % stray_doors)
+	_expect(probe_resumed, "routines: a crew member made suspicious never went back to its routine")
