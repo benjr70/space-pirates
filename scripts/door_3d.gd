@@ -37,6 +37,11 @@ var is_open := false
 ## The doorway this leaf fills, for working out which Rooms a noise joins;
 ## null for a Hatch.
 var data: DoorData
+## Standing open because someone other than crew opened it: a trace of the
+## robbery ([CrewTraces]). Cleared when it shuts.
+var left_open := false
+## A crew member has already reported it standing open.
+var reported := false
 
 var _span := 3
 var _horizontal := true
@@ -129,6 +134,11 @@ func _build_geometry() -> void:
 	if sealed:
 		_add_seal_marks(size)
 	_update_trim()
+
+
+## A Hatch through the Hull rather than a doorway between Rooms.
+func is_hatch() -> bool:
+	return data == null
 
 
 ## Hazard stripes over both leaves and a red lamp bar above: shut for good.
@@ -234,6 +244,7 @@ func open(by: Node = null) -> void:
 	if locked or is_open:
 		return
 	is_open = true
+	left_open = not (by is Crew3D)
 	_ring(by)
 	_blocker_shape.set_deferred("disabled", true)
 	_slide(_span * TILE / 2.0)
@@ -249,6 +260,8 @@ func close(by: Node = null) -> bool:
 		refused.emit()
 		return false
 	is_open = false
+	left_open = false
+	reported = false
 	_ring(by)
 	_blocker_shape.set_deferred("disabled", false)
 	_slide(0.0)

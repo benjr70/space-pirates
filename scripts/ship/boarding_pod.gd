@@ -31,6 +31,8 @@ const COLOR_HOME_GO := Color(0.25, 1.0, 0.4)
 ## How close to the home door the pirate must stand to work it.
 const HOME_REACH := 1.2
 
+## The Hatch it is docked at.
+var hatch: HatchData
 var _width := 2.0
 var _beacon: StandardMaterial3D
 var _home_light: StandardMaterial3D
@@ -40,8 +42,10 @@ var _time := 0.0
 
 ## Size the pod to [param hatch] and place it on [param layout]'s Hull.
 ## Call before adding to the tree.
-func setup(layout: ShipLayout, hatch: HatchData) -> void:
+func setup(layout: ShipLayout, hatch_data: HatchData) -> void:
 	name = "BoardingPod"
+	hatch = hatch_data
+	add_to_group(&"boarding_pod")
 	_width = hatch.width * ShipBuilder3D.TILE + SIDE_ROOM * 2.0
 	transform = Transform3D(_facing(layout, hatch), ShipBuilder3D.hatch_center_world(hatch))
 	_build()

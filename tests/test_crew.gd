@@ -22,6 +22,9 @@ var pair_door: Door3D
 ## Three Rooms: A (the Pirate's) with Doors to B west and C north, and B
 ## and C joined round A's corner, for flanking.
 var tri_layout: ShipLayout
+## One Room with a Hatch in its north wall and the Pirate's pod docked on it.
+var hatch_layout: ShipLayout
+var hatch_ship: Node3D
 ## The generated medium ship's crew, kept for the type checks.
 var routine_crew: Array[Crew3D] = []
 var routine_layout: ShipLayout
@@ -42,6 +45,7 @@ func _initialize() -> void:
 	ShipBuilder3D.build(layout, ship)
 	_build_pair()
 	_build_tri()
+	_build_hatched()
 	var shots := Node3D.new()
 	shots.add_to_group(&"projectiles")
 	world.add_child(shots)
@@ -70,6 +74,8 @@ func _initialize() -> void:
 	await _check_bodies()
 	await _check_alarm()
 	_check_reported_body()
+	await _check_container_and_door()
+	await _check_hatch()
 	_check_panel_spots()
 	await _check_routines()
 	_check_types()
@@ -731,3 +737,98 @@ func _check_reported_body() -> void:
 	_expect(late._trace == null, "bodies: a crew member kept walking to a body already reported")
 	late.free()
 	body.free()
+
+
+## Room 0 at x 300-307, y 0-7, with a Hatch at (303, -1) and the pod outside.
+func _build_hatched() -> void:
+	hatch_layout = ShipLayout.new()
+	var room := RoomData.new()
+	room.rects = [Rect2i(300, 0, 8, 8)]
+	hatch_layout.rooms = [room]
+	var hatch := HatchData.new()
+	hatch.room = 0
+	hatch.tile = Vector2i(303, -1)
+	hatch.horizontal = true
+	hatch_layout.hatches = [hatch]
+	hatch_ship = Node3D.new()
+	hatch_ship.name = "HatchShip"
+	world.add_child(hatch_ship)
+	ShipBuilder3D.build(hatch_layout, hatch_ship, 0)
+
+
+## An unopened Container draws nobody, an emptied one does. A Door crew
+## opened draws nobody; one the Pirate left open does, and the crew member
+## that reports it shuts it and goes On Edge.
+func _check_container_and_door() -> void:
+	var crew := _crew()
+	player.global_position = Vector3(60.0, 0.0, 60.0)
+	var box: Container3D = load("res://scenes/props3d/prop_container_3d.tscn").instantiate()
+	box.position = CREW_AT + Vector3.FORWARD * 5.0
+	world.add_child(box)
+	for i in 2:
+		await physics_frame
+	crew._look_for_traces(1.0)
+	_expect(crew._trace == null and crew.perception.awareness == 0.0, "traces: an unopened Container drew a crew member")
+	box.open()
+	crew._look_for_traces(1.0)
+	_expect(crew._trace == box and crew.perception.band() == CrewPerception.Band.SUSPICIOUS,
+			"traces: an emptied Container did not make a crew member suspicious")
+	crew.free()
+	box.free()
+
+	var watcher := _guard_at(ShipBuilder3D.tile_to_world(Vector2i(112, 4)), pair_layout, Vector3.LEFT)
+	pair_door.close()
+	var opener := _crew()
+	pair_door.open(opener)
+	for i in 2:
+		await physics_frame
+	watcher._look_for_traces(1.0)
+	_expect(watcher._trace == null, "traces: a Door crew opened counts as left open")
+	pair_door.close(opener)
+	pair_door.open()
+	for i in 2:
+		await physics_frame
+	watcher.perception.awareness = 0.0
+	watcher._look_for_traces(1.0)
+	_expect(watcher._trace == pair_door and watcher.perception.band() == CrewPerception.Band.SUSPICIOUS,
+			"traces: a Door the pirate left open did not make a crew member suspicious")
+	watcher._report(pair_door)
+	_expect(not pair_door.is_open and watcher.perception.on_edge and watcher.state == Crew3D.State.SEARCH,
+			"traces: reporting a Door left open did not shut it and put a Guard On Edge searching")
+	watcher.free()
+	opener.free()
+
+
+## A Guard that sees the boarding Hatch standing open walks into the pod;
+## a Guard hunting the Pirate while he is in the pod routes in through the
+## Hatch.
+func _check_hatch() -> void:
+	var pod: BoardingPod = hatch_ship.get_node("BoardingPod")
+	var leaf: Door3D = hatch_ship.get_node("Hatches").get_child(0)
+	var guard := _guard_at(ShipBuilder3D.tile_to_world(Vector2i(304, 6)), hatch_layout, Vector3.FORWARD)
+	player.global_position = Vector3(60.0, 0.0, 60.0)
+	leaf.open()
+	for i in 2:
+		await physics_frame
+	guard.set_physics_process(true)
+	var suspicious := false
+	var in_pod := false
+	for i in 600:
+		await physics_frame
+		suspicious = suspicious or guard.perception.awareness >= CrewPerception.SUSPICIOUS
+		if pod.contains(guard.global_position):
+			in_pod = true
+			break
+	guard.set_physics_process(false)
+	_expect(suspicious and leaf.reported, "traces: the open boarding Hatch was not noticed and reported")
+	_expect(in_pod, "traces: the Guard that found the open Hatch never walked into the pod")
+	guard.free()
+
+	var hunter := _guard_at(ShipBuilder3D.tile_to_world(Vector2i(302, 6)), hatch_layout, Vector3.FORWARD)
+	hunter._last_seen = pod.spawn_point()
+	hunter._enter(Crew3D.State.HUNT)
+	var gap := ShipBuilder3D.hatch_center_world(hatch_layout.hatches[0])
+	_expect(hunter._path.size() >= 2 and hunter._path[-1].is_equal_approx(pod.spawn_point())
+			and hunter._path.any(func(p: Vector3) -> bool: return p.distance_to(gap) < 0.1),
+			"traces: a Guard hunting the pirate in his pod does not route in through the Hatch: %s" % [hunter._path])
+	hunter.free()

@@ -15,6 +15,8 @@ const COLOR_EMPTY := Color(0.18, 0.2, 0.2)
 @export var gold := 0
 
 var is_open := false
+## A crew member has already reported it emptied ([CrewTraces]).
+var reported := false
 
 
 ## The gold the pirate sees when opening this Container.

@@ -470,17 +470,33 @@ func _look_for_traces(delta: float) -> void:
 		_hold_timer = INVESTIGATE_LINGER
 
 
-## Reached a trace: report it, once. A Worker runs to raise the Alarm (or
-## for a Guard once it is up); a Guard hunts from there and tells the others.
+## Reached a trace: report it, once. A serious one (a body, the boarding
+## Hatch) sends a Worker to raise the Alarm (or to a Guard once it is up)
+## and a Guard hunting from there, telling the others; for the Hatch, the
+## hunt goes into the Pirate's Boarding Pod. A minor one (an emptied
+## Container, a Door left open) puts it On Edge: it shuts the Door, a Guard
+## searches about, a Worker goes back to work.
 func _report(trace: Node3D) -> void:
 	_trace = null
-	if trace.get("reported") == true:
+	if not CrewTraces.is_trace(trace):
 		return
 	trace.set("reported", true)
 	perception.on_edge = true
 	_last_seen = trace.global_position
 	_seen_ago = 0.0
-	if is_worker():
+	if trace is Door3D:
+		var door := trace as Door3D
+		if door.is_hatch():
+			var pod := get_tree().get_first_node_in_group(&"boarding_pod") as BoardingPod
+			if pod != null:
+				_last_seen = pod.spawn_point()
+		else:
+			door.close(self)
+	if not CrewTraces.serious(trace):
+		# Awareness is left to drain on its own: a minor trace never calms
+		# a crew member already suspicious of something else.
+		_enter(State.PATROL if is_worker() else State.SEARCH)
+	elif is_worker():
 		_no_hiding = true
 		_enter(State.FLEE)
 		_no_hiding = false
@@ -536,9 +552,13 @@ func _announce_spotted() -> void:
 
 
 ## True when the ship itself stands between two points.
-func _blocked(from: Vector3, to: Vector3) -> bool:
+func _blocked(from: Vector3, to: Vector3, ignore: Node = null) -> bool:
 	var params := PhysicsRayQueryParameters3D.create(from, to, WORLD_LAYER)
-	params.exclude = [get_rid()]
+	var skip: Array[RID] = [get_rid()]
+	if ignore is CollisionObject3D:
+		skip.append((ignore as CollisionObject3D).get_rid())
+	# Assigned whole: appending to params.exclude edits a copy.
+	params.exclude = skip
 	return not get_world_3d().direct_space_state.intersect_ray(params).is_empty()
 
 
@@ -754,7 +774,7 @@ func _tick_investigate() -> void:
 		_walk_clock = 0.0
 		return
 	_walk_clock += get_physics_process_delta_time()
-	if is_instance_valid(_trace) and _trace.get("reported") == true:
+	if is_instance_valid(_trace) and not CrewTraces.is_trace(_trace):
 		# Someone else got there first: nothing left to look at.
 		_trace = null
 	if is_instance_valid(_trace):
@@ -1040,11 +1060,39 @@ func _steer(delta: float) -> void:
 func _repath_to(destination: Vector3) -> void:
 	_repath_timer = 0.5
 	_path.clear()
+	if layout != null and _route_by_pod(destination):
+		return
 	if layout != null:
 		# Empty when the crew is stood in a doorway, which belongs to no room.
 		_path.assign(ShipNavigator.waypoints_3d(layout, global_position, destination))
 	if _path.is_empty():
 		_path.append(destination)
+
+
+## The Pirate's Boarding Pod is in no Room, so the door graph cannot reach
+## it: a route into it runs to the boarding Hatch and through, and one out
+## of it runs through the Hatch first. False when neither end is in a pod.
+func _route_by_pod(destination: Vector3) -> bool:
+	var pod := get_tree().get_first_node_in_group(&"boarding_pod") as BoardingPod
+	if pod == null or pod.hatch == null:
+		return false
+	var into := pod.contains(destination)
+	var out_of := pod.contains(global_position)
+	if into == out_of:
+		if into:
+			_path.append(destination)
+		return into
+	var gap := ShipBuilder3D.hatch_center_world(pod.hatch)
+	var inside := ShipBuilder3D.hatch_entry_world(layout, pod.hatch)
+	if into:
+		_path.assign(ShipNavigator.waypoints_3d(layout, global_position, inside))
+		_path.append(gap)
+		_path.append(destination)
+	else:
+		_path.append(gap)
+		_path.append(inside)
+		_path.append_array(ShipNavigator.waypoints_3d(layout, inside, destination))
+	return true
 
 
 ## Crew work the doors they walk into; the pirate has to press E, they do not.
