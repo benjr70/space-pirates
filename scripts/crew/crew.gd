@@ -153,6 +153,16 @@ var _flee_to: Crew3D
 ## The Alarm Panel a fleeing Worker is running to, instead of a Guard.
 var _flee_panel: AlarmPanel
 var _alarm: ShipAlarm
+## The physics frame this crew member last started a burst on, so no two
+## start in step ([method CrewCombat.burst_blocked]).
+var burst_frame := -1000
+## Seconds the Pirate has been in its sight without a break: its aim
+## tightens with it ([method CrewCombat.spread]).
+var _exposed_for := 0.0
+var _share_timer := 0.0
+## A Guard going round through another Door while another pins him.
+var flanking := false
+var _flank_clock := 0.0
 ## Chance this Worker hides rather than runs; [constant HIDE_CHANCE] unless
 ## a test wants it certain.
 var hide_chance := HIDE_CHANCE
@@ -202,11 +212,17 @@ func _ready() -> void:
 	health.died.connect(_on_died)
 	if target == null:
 		target = get_tree().get_first_node_in_group(&"player")
+	_rng.randomize()
 	if is_worker():
 		spread_degrees = WORKER_SPREAD
 		burst_size = WORKER_BURST
+	else:
+		# No two Guards keep the same rhythm.
+		burst_size = clampi(burst_size + _rng.randi_range(-1, 1), 2, 4)
+	burst_gap *= CrewCombat.jitter(_rng)
+	reload_time *= CrewCombat.jitter(_rng)
+	cover_hold_time *= CrewCombat.jitter(_rng)
 	_shots_left = burst_size
-	_rng.randomize()
 	_dress()
 	_anim = _find_animation_player(model)
 	if _anim != null:
@@ -384,9 +400,16 @@ func _update_perception(delta: float) -> void:
 		if _can_see:
 			_last_seen = target.global_position
 			_seen_ago = 0.0
+			_exposed_for += delta
+			_share_timer -= delta
+			if not is_worker() and _share_timer <= 0.0:
+				_share_timer = CrewCombat.SHARE_EVERY
+				CrewCombat.share(self, _last_seen)
 		else:
 			_seen_ago += delta
+			_exposed_for = 0.0
 		return
+	_exposed_for = 0.0
 
 	var crouched: bool = target.has_method("is_crouched") and target.is_crouched()
 	if _in_view:
@@ -432,6 +455,8 @@ func _in_combat() -> bool:
 func _react_spotted() -> void:
 	if not is_worker():
 		_enter(State.HUNT)
+		_share_timer = CrewCombat.SHARE_EVERY
+		CrewCombat.share(self, _last_seen)
 	elif _cornered():
 		_enter(State.FIGHT)
 	else:
@@ -485,6 +510,7 @@ func _flat_distance(a: Vector3, b: Vector3) -> float:
 func _enter(next: State) -> void:
 	state = next
 	_speed_scale = 1.0
+	flanking = false
 	match next:
 		State.PATROL:
 			_path.clear()
@@ -500,9 +526,12 @@ func _enter(next: State) -> void:
 			_hold_timer = INVESTIGATE_LINGER
 		State.HUNT:
 			_repath_to(_last_seen)
+			_try_flank()
 		State.FIGHT:
 			_path.clear()
 			_shots_left = burst_size
+			# A beat before the first shot, different every time.
+			_shot_timer = _rng.randf_range(0.05, 0.35)
 		State.COVER:
 			var spot := _find_cover_point()
 			if spot != Vector3.INF:
@@ -681,7 +710,54 @@ func _tick_investigate() -> void:
 		_enter(State.PATROL)
 
 
+## Told by another Guard where the Pirate is: hunt there, or keep hunting
+## with the fresher position.
+func hear_position(at: Vector3) -> void:
+	if state == State.DEAD or is_worker():
+		return
+	if state in [State.FIGHT, State.COVER]:
+		return
+	_last_seen = at
+	_seen_ago = 0.0
+	perception.awareness = 1.0
+	if state != State.HUNT:
+		_enter(State.HUNT)
+
+
+## With another Guard already pinning him, go round through his Room's
+## other Door rather than in behind it.
+func _try_flank() -> void:
+	if is_worker():
+		return
+	var pinner: Crew3D = null
+	for node in get_tree().get_nodes_in_group(&"crew"):
+		var other := node as Crew3D
+		if other == null or other == self or other.is_worker() or not other.is_alive():
+			continue
+		if other.flanking:
+			return  # someone is already going round
+		if other.state in [State.FIGHT, State.COVER]:
+			pinner = other
+	if pinner == null:
+		return
+	var route := CrewCombat.flank_route(self, _last_seen, pinner.global_position)
+	if route.is_empty():
+		return
+	_path = route
+	flanking = true
+	_flank_clock = 0.0
+
+
 func _tick_hunt() -> void:
+	if flanking:
+		_flank_clock += get_physics_process_delta_time()
+		if _can_see and _flat_distance(global_position, target.global_position) <= engage_range:
+			_enter(State.FIGHT)
+		elif _path.is_empty() or _flank_clock > CrewCombat.FLANK_GIVE_UP:
+			# Arrived, or given up: back to hunting him the straight way.
+			flanking = false
+			_repath_to(_last_seen)
+		return
 	if _can_see and _flat_distance(global_position, target.global_position) <= engage_range:
 		_enter(State.FIGHT)
 		return
@@ -707,6 +783,12 @@ func _tick_fight() -> void:
 				- (global_position + Vector3.UP * MUZZLE_HEIGHT)).normalized()
 		if _shots_left > 0:
 			if _shot_timer <= 0.0:
+				if _shots_left == burst_size:
+					# Start of a burst: never in step with another's.
+					if CrewCombat.burst_blocked(self):
+						_shot_timer = 0.05
+						return
+					burst_frame = Engine.get_physics_frames()
 				_fire()
 		else:
 			# Burst spent: get behind something while reloading.
@@ -966,7 +1048,8 @@ func _fire() -> Projectile3D:
 	if _shots_left <= 0:
 		_reload_timer = reload_time
 
-	var spread := deg_to_rad(_rng.randf_range(-spread_degrees, spread_degrees))
+	var cone := CrewCombat.spread(spread_degrees, _exposed_for)
+	var spread := deg_to_rad(_rng.randf_range(-cone, cone))
 	var direction := _aim.rotated(Vector3.UP, spread)
 	var origin := global_position + Vector3.UP * MUZZLE_HEIGHT + direction * muzzle_offset
 	var shot: Projectile3D = projectile_scene.instantiate()

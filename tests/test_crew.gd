@@ -19,6 +19,9 @@ var layout: ShipLayout
 ## Two Rooms side by side, joined by one Door, for noise through doorways.
 var pair_layout: ShipLayout
 var pair_door: Door3D
+## Three Rooms: A (the Pirate's) with Doors to B west and C north, and B
+## and C joined round A's corner, for flanking.
+var tri_layout: ShipLayout
 ## The generated medium ship's crew, kept for the type checks.
 var routine_crew: Array[Crew3D] = []
 var routine_layout: ShipLayout
@@ -38,6 +41,7 @@ func _initialize() -> void:
 	world.add_child(ship)
 	ShipBuilder3D.build(layout, ship)
 	_build_pair()
+	_build_tri()
 	var shots := Node3D.new()
 	shots.add_to_group(&"projectiles")
 	world.add_child(shots)
@@ -59,6 +63,10 @@ func _initialize() -> void:
 	_check_doorway()
 	await _check_worker()
 	_check_on_edge()
+	await _check_share()
+	_check_aim()
+	await _check_stagger()
+	_check_flank()
 	await _check_alarm()
 	_check_panel_spots()
 	await _check_routines()
@@ -512,3 +520,137 @@ func _check_panel_spots() -> void:
 			if not in_bridge:
 				missing.append("%s %d" % [ship_class, seed])
 	_expect(missing.is_empty(), "alarm: no Bridge panel on %s" % [missing])
+
+
+## A at x 200-207, B west of it at 191-198, C a long Room north of both at
+## y -9 to -2; Doors A-B (x 199), A-C (y -1) and B-C (y -1).
+func _build_tri() -> void:
+	tri_layout = ShipLayout.new()
+	var a := RoomData.new()
+	a.rects = [Rect2i(200, 0, 8, 8)]
+	var b := RoomData.new()
+	b.rects = [Rect2i(191, 0, 8, 8)]
+	var c := RoomData.new()
+	c.rects = [Rect2i(191, -9, 17, 8)]
+	tri_layout.rooms = [a, b, c]
+	tri_layout.doors = [_door(0, 1, Vector2i(199, 3), false), _door(0, 2, Vector2i(204, -1), true),
+			_door(1, 2, Vector2i(194, -1), true)]
+	var ship := Node3D.new()
+	ship.name = "TriShip"
+	world.add_child(ship)
+	ShipBuilder3D.build(tri_layout, ship)
+
+
+func _door(a: int, b: int, tile: Vector2i, horizontal: bool) -> DoorData:
+	var door := DoorData.new()
+	door.room_a = a
+	door.room_b = b
+	door.tile = tile
+	door.horizontal = horizontal
+	return door
+
+
+func _guard_at(at: Vector3, ship_layout: ShipLayout, facing: Vector3) -> Crew3D:
+	var guard := _crew(CrewTypes.Type.GUARD)
+	guard.layout = ship_layout
+	guard.global_position = at
+	guard.face_direction(facing)
+	return guard
+
+
+## A Guard that spots the Pirate tells a Guard in the next Room, which
+## hunts him without seeing him: the Door between them is shut.
+func _check_share() -> void:
+	pair_door.close()
+	# A door's blocker comes back on the next physics frame.
+	for i in 2:
+		await physics_frame
+	var spotter := _guard_at(ShipBuilder3D.tile_to_world(Vector2i(102, 4)), pair_layout, Vector3.RIGHT)
+	var told := _guard_at(ShipBuilder3D.tile_to_world(Vector2i(113, 4)), pair_layout, Vector3.RIGHT)
+	player.global_position = ShipBuilder3D.tile_to_world(Vector2i(106, 4))
+	player.state = player.State.WALK
+	for i in 120:
+		spotter._update_perception(STEP)
+		if spotter.perception.band() == CrewPerception.Band.SPOTTED:
+			spotter._react_spotted()
+			break
+	told._update_perception(STEP)
+	_expect(not told._can_see, "share: the told Guard could see the pirate through the shut door")
+	_expect(told.state == Crew3D.State.HUNT and told._last_seen.distance_to(player.global_position) < 0.5,
+			"share: the Guard next door is in state %d, not hunting the pirate's position" % told.state)
+	spotter.free()
+	told.free()
+
+
+## Spread opens at 1.5x base and closes to half that or less after 3 s of
+## exposure; breaking line of sight resets it.
+func _check_aim() -> void:
+	_expect(is_equal_approx(CrewCombat.spread(7.0, 0.0), 10.5) and CrewCombat.spread(7.0, 3.0) <= 10.5 / 2.0,
+			"aim: spread does not tighten from 10.5 to half over 3 s")
+	var guard := _crew()
+	guard.state = Crew3D.State.FIGHT
+	_place(5.0)
+	var opening := CrewCombat.spread(guard.spread_degrees, guard._exposed_for)
+	for i in 185:
+		guard._update_perception(STEP)
+	var tight := CrewCombat.spread(guard.spread_degrees, guard._exposed_for)
+	_expect(tight <= opening / 2.0, "aim: after 3 s exposed the spread is %.1f°, opening %.1f°" % [tight, opening])
+	player.global_position = CREW_AT + Vector3.FORWARD * 40.0
+	guard._update_perception(STEP)
+	_expect(guard._exposed_for == 0.0, "aim: losing sight did not reset the tightening")
+	guard.free()
+
+
+## Two Guards fighting the Pirate for 10 s never start a burst on the same
+## frame, or within the stagger of each other.
+func _check_stagger() -> void:
+	player.health.max_health = 100000
+	player.health.reset()
+	var a := _crew()
+	var b := _crew()
+	b.global_position = CREW_AT + Vector3(-2.0, 0.0, 0.0)
+	_place(6.0)
+	for guard in [a, b]:
+		guard.perception.awareness = 1.0
+		guard._last_seen = player.global_position
+		guard._enter(Crew3D.State.FIGHT)
+		guard.set_physics_process(true)
+	var starts := {a: [], b: []}
+	for i in 600:
+		await physics_frame
+		for guard in [a, b]:
+			if starts[guard].is_empty() or starts[guard][-1] != guard.burst_frame:
+				if guard.burst_frame > 0:
+					starts[guard].append(guard.burst_frame)
+	var closest := 1000
+	for fa in starts[a]:
+		for fb in starts[b]:
+			closest = mini(closest, absi(fa - fb))
+	_expect(starts[a].size() >= 2 and starts[b].size() >= 2, "stagger: the Guards fired %d and %d bursts in 10 s" % [starts[a].size(), starts[b].size()])
+	_expect(closest >= CrewCombat.BURST_STAGGER_FRAMES, "stagger: two bursts started %d frames apart" % closest)
+	a.free()
+	b.free()
+	player.health.max_health = 5
+	player.health.reset()
+	for shot in get_first_node_in_group(&"projectiles").get_children():
+		shot.free()
+
+
+## With one Guard pinning the Pirate through the A-B Door, a second Guard
+## in B goes round through C and in by the A-C Door.
+func _check_flank() -> void:
+	var pirate := ShipBuilder3D.tile_to_world(Vector2i(204, 4))
+	var pinner := _guard_at(ShipBuilder3D.tile_to_world(Vector2i(197, 4)), tri_layout, Vector3.RIGHT)
+	var flanker := _guard_at(ShipBuilder3D.tile_to_world(Vector2i(193, 5)), tri_layout, Vector3.RIGHT)
+	pinner._last_seen = pirate
+	pinner._enter(Crew3D.State.FIGHT)
+	flanker._last_seen = pirate
+	flanker._enter(Crew3D.State.HUNT)
+	var second := ShipBuilder3D.door_center_world(tri_layout.doors[1])
+	var first := ShipBuilder3D.door_center_world(tri_layout.doors[0])
+	var through_second := flanker._path.any(func(p: Vector3) -> bool: return p.distance_to(second) < 0.6)
+	var through_first := flanker._path.any(func(p: Vector3) -> bool: return p.distance_to(first) < 0.6)
+	_expect(flanker.flanking and through_second and not through_first,
+			"flank: the second Guard's route %s does not go round through the other door" % [flanker._path])
+	pinner.free()
+	flanker.free()

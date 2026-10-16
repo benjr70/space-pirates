@@ -13,6 +13,7 @@ being built toward is spec #52 (tickets #53–#63).
 | `crew_perception.gd` (`CrewPerception`) | Awareness: the sight cone, how fast Awareness fills and drains, and its bands. Pure arithmetic, tested without physics. |
 | `crew_types.gd` (`CrewTypes`) | Guard or Worker, from the Post Room's Role, and the Worker tint. |
 | `crew_routine.gd` (`CrewRoutine`) | Routines: a crew member's Post and its loop of Jobs, planned from the layout's props and Rooms. Pure planning; the body walks it. |
+| `crew_combat.gd` (`CrewCombat`) | Guard teamwork: sharing the Pirate's position, aim that tightens, staggered bursts, flank routes. |
 | `ship_alarm.gd` (`ShipAlarm`) | The ship-wide Alarm: raised once, red lights, every crew member told. Built per ship as `Ship/Alarm`. |
 | `alarm_panel.gd` (`AlarmPanel`) | The wall panels the Alarm is raised from, where they go, and breaking them. Built under `Ship/AlarmPanels`. |
 | `crew_noise.gd` (`CrewNoise`) | Hearing: noise events (footsteps, gunshots, doors), how far each reaches, and which Rooms it carries into. |
@@ -20,7 +21,8 @@ being built toward is spec #52 (tickets #53–#63).
 
 Scene: `scenes/crew_3d.tscn`. Tests: `tests/test_crew.gd` (Awareness, the walk
 to look, being shot, the sting, hearing, Workers fleeing and cornered, crew
-types, On Edge, the Alarm and its panels, and 60 simulated seconds of routines
+types, On Edge, Guards sharing his position, aim tightening, staggered bursts,
+flanking, the Alarm and its panels, and 60 simulated seconds of routines
 on a generated medium ship ending in the Alarm), plus the crew fight in
 `tests/test_ship_3d.gd`.
 
@@ -89,11 +91,12 @@ PATROL / INVESTIGATE ──spotted──▶ FLEE ──reached its Guard──�
   Goes back to PATROL once Awareness has drained below suspicious and either it
   has arrived and the linger is over, or 10 s have passed with nothing in view
   (the spot may be inside a prop). Back on PATROL it picks up the Job it was on.
-- **HUNT / FIGHT / COVER / SEARCH**: the combat loop, unchanged from before #53
-  apart from how it is entered. HUNT paths to the last-seen position; FIGHT
-  fires 3-round bursts (0.14 s apart, 7° spread) inside 10.6 m; a spent burst
-  goes to COVER for a 1.1 s reload and a 1.2 s hold; 3 s out of sight sends
-  any of them to SEARCH, which walks to the last-seen spot and waits 2.5 s.
+- **HUNT / FIGHT / COVER / SEARCH**: the combat loop. HUNT paths to the
+  last-seen position (or flanks, see Guard combat); FIGHT fires bursts inside
+  10.6 m after a 0.05–0.35 s beat; a spent burst goes to COVER to reload and
+  hold; 3 s out of sight sends any of them to SEARCH, which walks to the
+  last-seen spot and waits 2.5 s. Base numbers, before each Guard's jitter:
+  3-round bursts 0.14 s apart, 7° spread, 1.1 s reload, 1.2 s cover hold.
 - **DEAD**: collision off, death clip or tip-over.
 
 The body turns toward where it is looking at 6 rad/s rather than snapping;
@@ -142,6 +145,30 @@ mid-fill speeds it up.
 
 **Tipping into spotted** (reaching 1 from below, by sight or by being shot)
 calls `on_crew_spotted(crew)` on every node in the `awareness_listeners` group.
+
+## Guard combat
+
+- **Sharing**: a Guard that spots the Pirate, and once a second while it keeps
+  him in sight, tells every living Guard in its own Room and the Rooms a Door
+  joins to it (open or shut: radios) where he is (`CrewCombat.share`). A Guard
+  told it while on routine, investigating or searching goes to Awareness 1 and
+  hunts there; one already hunting takes the fresher position; one fighting
+  ignores it.
+- **Aim**: spread is `base × 1.5` on first sight, closing linearly to
+  `base × 0.5` after 3 s of continuous sight, and back to 1.5× the moment the
+  Pirate breaks line of sight. A Guard's first shots mostly warn; staying
+  exposed is what gets him hit. Workers' sidearms follow the same curve from
+  their wider base.
+- **Rhythm**: each crew member draws its own multipliers (0.75–1.35×) on burst
+  gap, reload and cover hold, and each Guard's burst is 2–4 rounds. No crew
+  member starts a burst within 18 physics frames (0.3 s) of another's; it waits.
+- **Pin and flank**: a Guard entering HUNT while another Guard is already
+  fighting (FIGHT or COVER), and no Guard is already flanking, tries to go
+  round: the Door into the Pirate's Room furthest from the pinning Guard, if
+  that is not the Door its own straight route would use anyway, reached by a
+  route that avoids the Pirate's Room, then through the Door and one metre in.
+  It fights as soon as it has him in range and sight, and drops the flank on
+  arrival or after 20 s.
 
 ## Alarm
 
@@ -252,6 +279,8 @@ and `crew.gd` (`SEARCH_AWARENESS`, `INVESTIGATE_SPEED`, `INVESTIGATE_LINGER`,
 `JOB_GIVE_UP`, `CORNERED_RANGE`, `CORNER_RELEASE`, `HIDE_CHANCE`,
 `GUARD_REACH`, `COWER_CALM`, `WORKER_SPREAD`, `WORKER_BURST`, `PANEL_REACH`,
 `ON_EDGE_PAUSE`, `SWEEP_PAUSE`), `crew_perception.gd` (`ON_EDGE_FACTOR`),
+`crew_combat.gd` (`OPEN_SPREAD`, `TIGHT_SPREAD`, `TIGHTEN_TIME`,
+`BURST_STAGGER_FRAMES`, `SHARE_EVERY`, `FLANK_GIVE_UP`, `JITTER`),
 `ship_alarm.gd` (`RED`, `PULSE_*`), `alarm_panel.gd` (`ROLES`, `SIZE`, `HEIGHT`),
 `crew_types.gd` (`GUARD_ROLES`, `WORKER_ROLES`, `WORKER_TINT`), `HEARD_NOISE`, `HEARD_GUNSHOT`, `HEARD_CAP`) and
 `crew_routine.gd` (`WORK_PROPS`, `JOBS_MIN`/`MAX`, `WORK_TIME`,
@@ -260,5 +289,5 @@ playtest.
 
 ## Not yet built
 
-Guard teamwork (#58), bodies (#59), traces (#60) and
+Bodies (#59), traces (#60) and
 stealth XP (#61).

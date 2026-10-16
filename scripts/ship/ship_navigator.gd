@@ -13,8 +13,9 @@ extends RefCounted
 
 ## Room indices from [param from_room] to [param to_room] inclusive, or an empty
 ## array if there is no way through unlocked doors. Breadth-first, so the route
-## passes through as few rooms as possible.
-static func room_path(layout: ShipLayout, from_room: int, to_room: int) -> Array[int]:
+## passes through as few rooms as possible. [param avoid] names a room the
+## route must not pass through (a flanker going round the Pirate's).
+static func room_path(layout: ShipLayout, from_room: int, to_room: int, avoid := -1) -> Array[int]:
 	if from_room == -1 or to_room == -1:
 		return []
 	if from_room == to_room:
@@ -34,7 +35,7 @@ static func room_path(layout: ShipLayout, from_room: int, to_room: int) -> Array
 				next = door.room_b
 			elif door.room_b == room:
 				next = door.room_a
-			if next == -1 or came_from.has(next):
+			if next == -1 or came_from.has(next) or (next == avoid and next != to_room):
 				continue
 			came_from[next] = room
 			queue.append(next)
@@ -61,10 +62,10 @@ static func door_between(layout: ShipLayout, room_a: int, room_b: int) -> DoorDa
 
 ## Same routing on the 3D floor plane: doorway centres and seam crossings on
 ## the way, then the destination. Positions are metres on XZ, heights ignored.
-static func waypoints_3d(layout: ShipLayout, from: Vector3, to: Vector3) -> Array[Vector3]:
+static func waypoints_3d(layout: ShipLayout, from: Vector3, to: Vector3, avoid := -1) -> Array[Vector3]:
 	var points: Array[Vector3] = []
 	for p in waypoint_tiles(layout, Vector2(from.x, from.z) / ShipBuilder3D.TILE,
-			Vector2(to.x, to.z) / ShipBuilder3D.TILE):
+			Vector2(to.x, to.z) / ShipBuilder3D.TILE, avoid):
 		points.append(Vector3(p.x * ShipBuilder3D.TILE, 0.0, p.y * ShipBuilder3D.TILE))
 	return points
 
@@ -81,10 +82,10 @@ static func waypoints(layout: ShipLayout, from: Vector2, to: Vector2) -> Array[V
 ## The route in tile units: through each room on the way (crossing seams
 ## between its rects where needed), out through the doorway to the next, and
 ## finally to `to`. Empty when either end is in no room, or unreachable.
-static func waypoint_tiles(layout: ShipLayout, from: Vector2, to: Vector2) -> Array[Vector2]:
+static func waypoint_tiles(layout: ShipLayout, from: Vector2, to: Vector2, avoid := -1) -> Array[Vector2]:
 	var start := layout.room_at(Vector2i(from.floor()))
 	var goal := layout.room_at(Vector2i(to.floor()))
-	var rooms := room_path(layout, start, goal)
+	var rooms := room_path(layout, start, goal, avoid)
 	var points: Array[Vector2] = []
 	if rooms.is_empty():
 		return points
