@@ -163,6 +163,16 @@ var _share_timer := 0.0
 ## A Guard going round through another Door while another pins him.
 var flanking := false
 var _flank_clock := 0.0
+## Set once this crew member's body has been found and reported, so the
+## crew raise nothing over it twice.
+var reported := false
+## The trace this crew member is walking to look at ([CrewTraces]).
+var _trace: Node3D
+var _trace_timer := 0.0
+## Traces this crew member gave up on reaching: it does not keep going back.
+var abandoned_traces: Array[Node3D] = []
+## A Worker running to raise the Alarm over a trace does not stop to hide.
+var _no_hiding := false
 ## Chance this Worker hides rather than runs; [constant HIDE_CHANCE] unless
 ## a test wants it certain.
 var hide_chance := HIDE_CHANCE
@@ -411,6 +421,7 @@ func _update_perception(delta: float) -> void:
 		return
 	_exposed_for = 0.0
 
+	_look_for_traces(delta)
 	var crouched: bool = target.has_method("is_crouched") and target.is_crouched()
 	if _in_view:
 		_noticed_at = target.global_position
@@ -439,6 +450,44 @@ func hear(at: Vector3, kind: CrewNoise.Kind, source: Node = null) -> bool:
 		_repath_to(at)
 		_hold_timer = INVESTIGATE_LINGER
 	return true
+
+
+## Every so often, a look round for something the Pirate left behind. A new
+## one makes it suspicious and sends it to look.
+func _look_for_traces(delta: float) -> void:
+	_trace_timer -= delta
+	if _trace_timer > 0.0:
+		return
+	_trace_timer = CrewTraces.LOOK_EVERY
+	var found := CrewTraces.spot(self)
+	if found == null or found == _trace:
+		return
+	_trace = found
+	_noticed_at = found.global_position
+	perception.awareness = maxf(perception.awareness, CrewTraces.AWARENESS)
+	if state == State.INVESTIGATE:
+		_repath_to(_noticed_at)
+		_hold_timer = INVESTIGATE_LINGER
+
+
+## Reached a trace: report it, once. A Worker runs to raise the Alarm (or
+## for a Guard once it is up); a Guard hunts from there and tells the others.
+func _report(trace: Node3D) -> void:
+	_trace = null
+	if trace.get("reported") == true:
+		return
+	trace.set("reported", true)
+	perception.on_edge = true
+	_last_seen = trace.global_position
+	_seen_ago = 0.0
+	if is_worker():
+		_no_hiding = true
+		_enter(State.FLEE)
+		_no_hiding = false
+	else:
+		perception.awareness = 1.0
+		_enter(State.HUNT)
+		CrewCombat.share(self, _last_seen)
 
 
 ## Which way this crew member is looking, flat.
@@ -542,7 +591,7 @@ func _enter(next: State) -> void:
 		State.FLEE:
 			_flee_panel = null
 			_flee_to = null
-			if _rng.randf() < hide_chance:
+			if not _no_hiding and _rng.randf() < hide_chance:
 				_enter(State.COWER)
 				return
 			_pick_flight()
@@ -705,6 +754,19 @@ func _tick_investigate() -> void:
 		_walk_clock = 0.0
 		return
 	_walk_clock += get_physics_process_delta_time()
+	if is_instance_valid(_trace) and _trace.get("reported") == true:
+		# Someone else got there first: nothing left to look at.
+		_trace = null
+	if is_instance_valid(_trace):
+		if _flat_distance(global_position, _trace.global_position) <= CrewTraces.REACH:
+			_report(_trace)
+			return
+		if _walk_clock <= INVESTIGATE_GIVE_UP * 2.0:
+			# Something to look at: stays suspicious until it gets there.
+			perception.awareness = maxf(perception.awareness, CrewPerception.SUSPICIOUS + 0.05)
+		else:
+			abandoned_traces.append(_trace)
+			_trace = null
 	var calm := perception.awareness < CrewPerception.SUSPICIOUS
 	if calm and ((_path.is_empty() and _hold_timer <= 0.0) or _walk_clock > INVESTIGATE_GIVE_UP):
 		_enter(State.PATROL)

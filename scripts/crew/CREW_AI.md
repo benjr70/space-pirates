@@ -13,6 +13,7 @@ being built toward is spec #52 (tickets #53–#63).
 | `crew_perception.gd` (`CrewPerception`) | Awareness: the sight cone, how fast Awareness fills and drains, and its bands. Pure arithmetic, tested without physics. |
 | `crew_types.gd` (`CrewTypes`) | Guard or Worker, from the Post Room's Role, and the Worker tint. |
 | `crew_routine.gd` (`CrewRoutine`) | Routines: a crew member's Post and its loop of Jobs, planned from the layout's props and Rooms. Pure planning; the body walks it. |
+| `crew_traces.gd` (`CrewTraces`) | What the Pirate leaves behind that crew find: bodies. |
 | `crew_combat.gd` (`CrewCombat`) | Guard teamwork: sharing the Pirate's position, aim that tightens, staggered bursts, flank routes. |
 | `ship_alarm.gd` (`ShipAlarm`) | The ship-wide Alarm: raised once, red lights, every crew member told. Built per ship as `Ship/Alarm`. |
 | `alarm_panel.gd` (`AlarmPanel`) | The wall panels the Alarm is raised from, where they go, and breaking them. Built under `Ship/AlarmPanels`. |
@@ -22,7 +23,7 @@ being built toward is spec #52 (tickets #53–#63).
 Scene: `scenes/crew_3d.tscn`. Tests: `tests/test_crew.gd` (Awareness, the walk
 to look, being shot, the sting, hearing, Workers fleeing and cornered, crew
 types, On Edge, Guards sharing his position, aim tightening, staggered bursts,
-flanking, the Alarm and its panels, and 60 simulated seconds of routines
+flanking, bodies, the Alarm and its panels, and 60 simulated seconds of routines
 on a generated medium ship ending in the Alarm), plus the crew fight in
 `tests/test_ship_3d.gd`.
 
@@ -145,6 +146,25 @@ mid-fill speeds it up.
 
 **Tipping into spotted** (reaching 1 from below, by sight or by being shot)
 calls `on_crew_spotted(crew)` on every node in the `awareness_listeners` group.
+
+## Traces
+
+Things the Pirate leaves behind that crew can find (`CrewTraces`). So far:
+**bodies**. A dead crew member stays where it fell.
+
+- Four times a second, a crew member not in combat looks for an unreported
+  trace: within 14.4 m, in its sight cone, with a clear line from its eyes to
+  0.4 m up the trace. The nearest one it sees becomes its trace to look at.
+- Seeing one lifts Awareness to at least 0.5 (suspicious, never spotted) and
+  sends it to INVESTIGATE at the trace. It stays suspicious until it gets
+  there, giving up after 20 s (and never going back to one it gave up on),
+  or dropping it as soon as another crew member reports it.
+- Within 1.6 m it **reports** the trace, once: the trace is marked and no
+  crew member reacts to it again. The finder goes On Edge, takes the trace's
+  position as the last place the Pirate was, and:
+  - a **Worker** flees as if it had spotted him, without the chance to hide:
+    to an Alarm Panel while the Alarm is down, else to a Guard;
+  - a **Guard** hunts from there and shares the position with nearby Guards.
 
 ## Guard combat
 
@@ -281,6 +301,7 @@ and `crew.gd` (`SEARCH_AWARENESS`, `INVESTIGATE_SPEED`, `INVESTIGATE_LINGER`,
 `ON_EDGE_PAUSE`, `SWEEP_PAUSE`), `crew_perception.gd` (`ON_EDGE_FACTOR`),
 `crew_combat.gd` (`OPEN_SPREAD`, `TIGHT_SPREAD`, `TIGHTEN_TIME`,
 `BURST_STAGGER_FRAMES`, `SHARE_EVERY`, `FLANK_GIVE_UP`, `JITTER`),
+`crew_traces.gd` (`LOOK_EVERY`, `REACH`, `AWARENESS`, `BODY_HEIGHT`),
 `ship_alarm.gd` (`RED`, `PULSE_*`), `alarm_panel.gd` (`ROLES`, `SIZE`, `HEIGHT`),
 `crew_types.gd` (`GUARD_ROLES`, `WORKER_ROLES`, `WORKER_TINT`), `HEARD_NOISE`, `HEARD_GUNSHOT`, `HEARD_CAP`) and
 `crew_routine.gd` (`WORK_PROPS`, `JOBS_MIN`/`MAX`, `WORK_TIME`,
@@ -289,5 +310,5 @@ playtest.
 
 ## Not yet built
 
-Bodies (#59), traces (#60) and
+Other traces (#60) and
 stealth XP (#61).

@@ -67,7 +67,9 @@ func _initialize() -> void:
 	_check_aim()
 	await _check_stagger()
 	_check_flank()
+	await _check_bodies()
 	await _check_alarm()
+	_check_reported_body()
 	_check_panel_spots()
 	await _check_routines()
 	_check_types()
@@ -654,3 +656,78 @@ func _check_flank() -> void:
 			"flank: the second Guard's route %s does not go round through the other door" % [flanker._path])
 	pinner.free()
 	flanker.free()
+
+
+## A dead crew member lying 6 m in front of [param observer], the Pirate
+## parked far out of sight so only the body can draw it.
+func _body_ahead(observer: Crew3D, distance := 6.0) -> Crew3D:
+	var body := _crew()
+	body.global_position = observer.global_position + observer.facing() * distance
+	body.take_damage(1000)
+	player.global_position = Vector3(60.0, 0.0, 60.0)
+	return body
+
+
+## A Guard that sees a body walks to it, reports it and hunts from there; a
+## Worker that finds one runs for an Alarm Panel without stopping to hide.
+func _check_bodies() -> void:
+	var guard := _crew()
+	var body := _body_ahead(guard)
+	var start := guard.global_position.distance_to(body.global_position)
+	guard.set_physics_process(true)
+	var walked := false
+	for i in 400:
+		await physics_frame
+		if guard.state == Crew3D.State.INVESTIGATE and guard.global_position.distance_to(body.global_position) < start - 1.0:
+			walked = true
+		if body.reported:
+			break
+	guard.set_physics_process(false)
+	_expect(walked, "bodies: a Guard that saw a body did not walk to it suspicious")
+	_expect(body.reported and guard.state == Crew3D.State.HUNT, "bodies: the Guard did not report the body and hunt (state %d)" % guard.state)
+	guard.free()
+	body.free()
+
+	var ship := world.get_node("Ship")
+	var panel := AlarmPanel.new()
+	panel.setup(0, Vector2i(6, 23), Vector2i.RIGHT)
+	ship.add_child(panel)
+	var worker := _crew(CrewTypes.Type.WORKER)
+	worker.hide_chance = 1.0
+	body = _body_ahead(worker, 4.0)
+	worker.set_physics_process(true)
+	var to_panel := false
+	for i in 400:
+		await physics_frame
+		if worker.state == Crew3D.State.FLEE and worker._flee_panel == panel:
+			to_panel = true
+			break
+	worker.set_physics_process(false)
+	_expect(body.reported and to_panel, "bodies: a Worker that found a body did not run for the Alarm Panel (state %d)" % worker.state)
+	worker.free()
+	body.free()
+	panel.free()
+
+
+## Once the Alarm is up, a body already reported draws nobody.
+func _check_reported_body() -> void:
+	var alarm: ShipAlarm = world.get_node("Ship/Alarm")
+	_expect(alarm.is_raised, "bodies: the test room's Alarm is not up for the reported-body check")
+	var worker := _crew(CrewTypes.Type.WORKER)
+	var body := _body_ahead(worker)
+	body.reported = true
+	for i in 60:
+		worker._update_perception(STEP)
+	_expect(worker.perception.awareness == 0.0 and worker._trace == null, "bodies: a reported body drew a second crew member")
+	worker.free()
+	body.free()
+	# Walking to a body someone else then reports: it stops caring.
+	var late := _crew()
+	body = _body_ahead(late, 8.0)
+	late._update_perception(STEP)
+	late._enter(Crew3D.State.INVESTIGATE)
+	body.reported = true
+	late._tick_investigate()
+	_expect(late._trace == null, "bodies: a crew member kept walking to a body already reported")
+	late.free()
+	body.free()
