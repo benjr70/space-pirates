@@ -28,6 +28,12 @@ static func retry() -> void:
 	_tree().change_scene_to_file(RAID_SCENE)
 
 
+## A fresh target of the same Class, after getting out of the last one.
+## Medium when no Raid was on (the ship scene was launched on its own).
+static func new_raid() -> void:
+	start(ship_class if ship_class in ShipGenerator.CLASSES else &"medium")
+
+
 ## Abandons the Raid and goes back to pick another.
 static func to_menu() -> void:
 	ship_class = &""
@@ -46,5 +52,9 @@ static func layout() -> ShipLayout:
 	return ShipGenerator.generate(ship_class, seed)
 
 
+## Whatever scene comes next starts running, whether or not the one it
+## replaces was paused.
 static func _tree() -> SceneTree:
-	return Engine.get_main_loop() as SceneTree
+	var tree := Engine.get_main_loop() as SceneTree
+	tree.paused = false
+	return tree

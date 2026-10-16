@@ -54,19 +54,66 @@ static func _check_raid(expect: Callable, root: Node) -> void:
 	expect.call(main.layout.gen_seed == SEED and main.layout.ship_class == &"small",
 			"raid: the ship scene did not board the Raid's target")
 	var player: CharacterBody3D = main.get_node("Player")
-	var screen: DeathScreen = main.get_node("DeathScreen")
+	var pause: PauseMenu = main.get_node("PauseMenu")
+	expect.call(not pause.is_showing() and not root.get_tree().paused, "raid: starts paused")
+	pause.pause()
+	expect.call(pause.is_showing() and root.get_tree().paused, "raid: pause did not freeze the ship")
+	expect.call(not player.can_process() and pause.can_process(), "raid: pause froze the menu or not the pirate")
+	expect.call(_has_button(pause, "Resume") and _has_button(pause, "Menu"), "raid: pause menu lacks Resume or Main Menu")
+	pause.resume()
+	expect.call(not pause.is_showing() and not root.get_tree().paused, "raid: Resume did not unfreeze the ship")
+	var screen: RaidEndScreen = main.get_node("RaidEndScreen")
 	expect.call(not screen.is_showing(), "raid: death screen up before dying")
 	player.take_damage(player.health.max_health)
-	expect.call(screen.is_showing(), "raid: no death screen when the pirate went down")
+	expect.call(screen.title_text() == "YOU DIED", "raid: no death screen when the pirate went down")
 	expect.call(not player.auto_respawn and not player.is_alive(), "raid: the pirate got back up on his own")
 	expect.call(not (main.get_node("Hud") as Hud).visible, "raid: the HUD stayed up over the death screen")
 	expect.call(_has_button(screen, "Retry"), "raid: death screen has no Retry")
 	expect.call(_has_button(screen, "Menu"), "raid: death screen has no way back to the menu")
+	pause.pause()
+	expect.call(not pause.is_showing() and not root.get_tree().paused, "raid: paused over the death screen")
 	root.remove_child(main)
 	main.free()
+	_check_extraction(expect, root)
 	Raid.seed = 0
 	Raid.ship_class = &""
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+
+
+## Out through the pod: not before he has been aboard, not from where he
+## starts, called off by stepping out, and ending the Raid at zero.
+static func _check_extraction(expect: Callable, root: Node) -> void:
+	var main: Node3D = load(Raid.RAID_SCENE).instantiate()
+	root.add_child(main)
+	var player: CharacterBody3D = main.get_node("Player")
+	var extraction: Extraction = main.extraction
+	var pod: BoardingPod = main.get_node("Ship/BoardingPod")
+	var screen: RaidEndScreen = main.get_node("RaidEndScreen")
+	expect.call(extraction != null, "extract: no extraction on a ship with a pod")
+	expect.call(not pod.at_home_door(player.global_position), "extract: the home door is in reach from the spawn point")
+	var home := pod.to_global(Vector3(0, 0, BoardingPod.COLLAR_Z + BoardingPod.DEPTH - 0.4))
+	player.global_position = home
+	expect.call(pod.at_home_door(home) and not extraction.can_begin(), "extract: offered before he set foot aboard")
+	extraction.boarded = true
+	expect.call(extraction.can_begin() and main._prompt() == "E — Extract", "extract: not offered at the home door")
+	extraction.begin()
+	expect.call(extraction.is_counting(), "extract: working the home door started no countdown")
+	var hatch: HatchData = main.layout.hatches[main.entry_hatch]
+	player.global_position = ShipBuilder3D.hatch_entry_world(main.layout, hatch)
+	extraction._process(0.1)
+	expect.call(not extraction.is_counting() and not extraction.is_done, "extract: stepping out of the pod did not call it off")
+	player.global_position = home
+	extraction.begin()
+	extraction._process(extraction.duration * 0.5)
+	expect.call(extraction.is_counting() and not screen.is_showing(), "extract: ended halfway through the countdown")
+	extraction._process(extraction.duration)
+	expect.call(extraction.is_done and screen.title_text() == "EXTRACTED", "extract: the countdown ran out without extracting")
+	expect.call(root.get_tree().paused and not main.get_node("PauseMenu").enabled, "extract: the ship kept running under the extracted screen")
+	expect.call(_has_button(screen, "NewRaid") and _has_button(screen, "Menu"), "extract: no New Raid or Main Menu")
+	expect.call(not (screen.find_child("Retry", true, false) as Button).visible, "extract: offers a Retry after getting out")
+	root.get_tree().paused = false
+	root.remove_child(main)
+	main.free()
 
 
 static func _has_button(node: Node, button_name: String) -> bool:

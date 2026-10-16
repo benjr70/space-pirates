@@ -26,9 +26,15 @@ const COLOR_RIB := Color(0.14, 0.11, 0.1)
 const COLOR_FLOOR := Color(0.12, 0.12, 0.13)
 const COLOR_LAMP := Color(1.0, 0.5, 0.15)
 const COLOR_HOME_LIGHT := Color(1.0, 0.2, 0.15)
+## The home light while an Extraction counts down.
+const COLOR_HOME_GO := Color(0.25, 1.0, 0.4)
+## How close to the home door the pirate must stand to work it.
+const HOME_REACH := 1.2
 
 var _width := 2.0
 var _beacon: StandardMaterial3D
+var _home_light: StandardMaterial3D
+var _extracting := false
 var _time := 0.0
 
 
@@ -50,6 +56,28 @@ func spawn_point() -> Vector3:
 ## The way the pirate faces at the start: at the Hatch.
 func spawn_basis() -> Basis:
 	return Basis.looking_at(-global_basis.z, Vector3.UP)
+
+
+## Whether [param point] is inside the tube, between the Hull's outer face
+## and the back door: where an Extraction must be waited out.
+func contains(point: Vector3) -> bool:
+	var local := to_local(point)
+	return absf(local.x) <= _width / 2.0 and local.z >= COLLAR_Z and local.z <= COLLAR_Z + DEPTH \
+			and local.y > -0.5 and local.y < HEIGHT
+
+
+## Whether [param point] is close enough to the home door to work it.
+func at_home_door(point: Vector3) -> bool:
+	var local := to_local(point)
+	return contains(point) and local.z >= COLLAR_Z + DEPTH - HOME_REACH
+
+
+## Lights the home door green while an Extraction counts down, red otherwise.
+func set_extracting(on: bool) -> void:
+	_extracting = on
+	var color := COLOR_HOME_GO if on else COLOR_HOME_LIGHT
+	_home_light.albedo_color = color * 0.4
+	_home_light.emission = color
 
 
 ## Local +Z out of the Hull through [param hatch], X across the gap.
@@ -98,6 +126,8 @@ func _process(delta: float) -> void:
 	_time += delta
 	# The lamp over the Hatch pulses: the ship is through there.
 	_beacon.emission_energy_multiplier = 0.9 + sin(_time * 4.0) * 0.6
+	# The home light blinks fast while the pod gets ready to cast off.
+	_home_light.emission_energy_multiplier = (1.6 + sin(_time * 12.0) * 1.0) if _extracting else 1.2
 
 
 func _build() -> void:
@@ -159,7 +189,8 @@ func _build() -> void:
 	hatch_door.rotation_degrees.x = 90.0
 	hatch_door.position = Vector3(0, 1.2, back_z - WALL / 2.0 - 0.05)
 	add_child(hatch_door)
-	_mesh(Vector3(0.5, 0.08, 0.04), Vector3(0, 1.2, back_z - WALL / 2.0 - 0.12), _glow(COLOR_HOME_LIGHT, 1.2))
+	_home_light = _glow(COLOR_HOME_LIGHT, 1.2)
+	_mesh(Vector3(0.5, 0.08, 0.04), Vector3(0, 1.2, back_z - WALL / 2.0 - 0.12), _home_light)
 
 	# Strip lamps along the ceiling corners and a pulsing beacon over the Hatch.
 	var lamp := _glow(COLOR_LAMP, 0.8)

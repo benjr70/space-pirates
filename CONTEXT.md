@@ -160,6 +160,14 @@ A Raid's target is picked on the main menu as a Ship Class and rolled a fresh
 seed. Dying offers a Retry, which boards the same seed again with every crew
 member back at their post, or the way back to the menu to pick another.
 
+## Extraction
+
+Getting out of a Raid alive, the way the pirate came: once he has set foot
+aboard, he works the home door at the back of his Boarding Pod and waits out
+a countdown inside the tube. Stepping out of the pod or going down calls it
+off. An extracted Raid offers a New Raid on a fresh ship of the same Class;
+a lost one offers a Retry of the same ship.
+
 ## Ship Class
 
 How big a ship is, counted in Rooms: small, medium or large. A Class is chosen

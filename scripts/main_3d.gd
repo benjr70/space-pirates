@@ -20,10 +20,15 @@ extends Node3D
 @onready var ship: Node3D = $Ship
 @onready var player: CharacterBody3D = $Player
 @onready var hud: Hud = $Hud
-@onready var death_screen: DeathScreen = $DeathScreen
+@onready var end_screen: RaidEndScreen = $RaidEndScreen
+@onready var pause_menu: PauseMenu = $PauseMenu
 
 var layout: ShipLayout
 var tracker: RoomTracker
+## Null on a ship with no Hatch to dock a pod at.
+var extraction: Extraction
+## Seconds since boarding, for the extracted screen.
+var raid_time := 0.0
 
 
 func _ready() -> void:
@@ -60,7 +65,9 @@ func _ready() -> void:
 			reveal.reveal(i)
 
 	_wire_hud()
-	_wire_death_screen()
+	_wire_raid_end()
+	if ship.has_node("BoardingPod"):
+		_wire_extraction(ship.get_node("BoardingPod"))
 
 
 ## The hand-authored ship, or a generated target when `--seed=N` (and
@@ -95,14 +102,47 @@ func _wire_hud() -> void:
 
 
 ## Down is down: the pirate stays dead until Retry rebuilds the ship from its
-## seed, crew and all, or the menu takes him off it.
-func _wire_death_screen() -> void:
+## seed, crew and all, or the menu takes him off it. Esc pauses until then.
+func _wire_raid_end() -> void:
 	player.auto_respawn = false
 	player.died.connect(func() -> void:
-		hud.visible = false
-		death_screen.show_death(_death_detail()))
-	death_screen.retry_pressed.connect(Raid.retry)
-	death_screen.menu_pressed.connect(Raid.to_menu)
+		_close_raid()
+		end_screen.show_death(_death_detail()))
+	end_screen.retry_pressed.connect(Raid.retry)
+	end_screen.new_raid_pressed.connect(Raid.new_raid)
+	end_screen.menu_pressed.connect(Raid.to_menu)
+	pause_menu.menu_pressed.connect(Raid.to_menu)
+
+
+## Out the way he came: the home door at the back of the pod, once he has
+## set foot aboard. Getting out freezes the ship under the extracted screen.
+func _wire_extraction(pod: BoardingPod) -> void:
+	extraction = Extraction.new()
+	extraction.name = "Extraction"
+	add_child(extraction)
+	extraction.setup(pod, player)
+	tracker.room_changed.connect(func(_room: int, _previous: int) -> void: extraction.boarded = true)
+	extraction.extracted.connect(func() -> void:
+		_close_raid()
+		get_tree().paused = true
+		end_screen.show_extracted(_extract_detail()))
+
+
+## Whichever way the Raid ended, the HUD and the pause menu step aside.
+func _close_raid() -> void:
+	hud.visible = false
+	pause_menu.enabled = false
+
+
+func _extract_detail() -> String:
+	var crew := get_tree().get_nodes_in_group(&"crew")
+	var down := 0
+	for body in crew:
+		if not body.is_alive():
+			down += 1
+	@warning_ignore("integer_division")
+	var clock := "%d:%02d" % [int(raid_time) / 60, int(raid_time) % 60]
+	return "Off %s  ·  %s aboard  ·  %d of %d crew down" % [layout.display_name(), clock, down, crew.size()]
 
 
 func _death_detail() -> String:
@@ -111,8 +151,21 @@ func _death_detail() -> String:
 	return "Aboard %s" % layout.display_name()
 
 
-func _process(_delta: float) -> void:
-	hud.show_prompt(_door_prompt())
+func _process(delta: float) -> void:
+	raid_time += delta
+	if extraction != null and Input.is_action_just_pressed("interact") and extraction.can_begin():
+		extraction.begin()
+	hud.show_prompt(_prompt())
+
+
+## What the HUD offers: the Extraction under way, the home door, or a door.
+func _prompt() -> String:
+	if extraction != null:
+		if extraction.is_counting():
+			return "Extracting — %.1f s  (leave the pod to abort)" % extraction.time_left()
+		if extraction.can_begin():
+			return "E — Extract"
+	return _door_prompt()
 
 
 ## The prompt for the nearest door the pirate can reach, or nothing.
