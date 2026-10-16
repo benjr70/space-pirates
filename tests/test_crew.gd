@@ -62,6 +62,7 @@ func _initialize() -> void:
 	_check_decay()
 	await _check_investigate()
 	_check_shot()
+	_check_died_unaware()
 	_check_sting()
 	await _check_hearing()
 	_check_doorway()
@@ -832,3 +833,16 @@ func _check_hatch() -> void:
 			and hunter._path.any(func(p: Vector3) -> bool: return p.distance_to(gap) < 0.1),
 			"traces: a Guard hunting the pirate in his pod does not route in through the Hatch: %s" % [hunter._path])
 	hunter.free()
+
+
+## A crew member killed before it spotted the Pirate died unaware; one
+## killed after did not.
+func _check_died_unaware() -> void:
+	var quiet := _crew()
+	quiet.take_damage(1000, player)
+	var loud := _crew()
+	loud.perception.awareness = 1.0
+	loud.take_damage(1000, player)
+	_expect(quiet.died_unaware and not loud.died_unaware, "stealth: died_unaware is %s for an unaware kill, %s for a spotted one" % [quiet.died_unaware, loud.died_unaware])
+	quiet.free()
+	loud.free()

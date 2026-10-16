@@ -84,6 +84,11 @@ func is_showing() -> bool:
 	return _root.visible
 
 
+## The tally under the heading; a seam for the headless suite.
+func detail_text() -> String:
+	return _detail.text
+
+
 ## Which way the Raid ended: the heading's text, empty while hidden.
 func title_text() -> String:
 	return _title.text if is_showing() else ""

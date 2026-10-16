@@ -329,6 +329,18 @@ and `crew.gd` (`SEARCH_AWARENESS`, `INVESTIGATE_SPEED`, `INVESTIGATE_LINGER`,
 `PATROL_PAUSE`, `AWAY_CHANCE`) and `crew_noise.gd` (`SPRINT_STEP`, `WALK_STEP`, `GUNSHOT`, `DOOR`). They are starting values to be tuned by
 playtest.
 
+## Stealth XP
+
+The crew's Awareness feeds the Pirate's XP (`RaidLedger`):
+- A crew member records, as it falls, whether it **died unaware**: not in
+  combat (HUNT, FIGHT, COVER, FLEE, COWER) and not spotted. A kill on one is
+  worth **150 XP** against 100, and its toast reads "+150 XP unaware". A shot
+  that only wounds spots the Pirate, so the kill that follows is a normal one.
+- **Ghost**: extracting with the Alarm never raised this Raid adds 150 / 250 /
+  350 XP for a small / medium / large ship. The EXTRACTED tally shows unaware
+  kills and the Ghost bonus when earned. Avoiding kills earns nothing extra.
+
 ## Not yet built
 
-Stealth XP (#61).
+The Officer (#63, deferred) and each type's own model (#62, picked by the
+player in the model booth).

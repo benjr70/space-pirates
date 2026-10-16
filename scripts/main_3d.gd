@@ -69,7 +69,9 @@ func _ready() -> void:
 	ledger = RaidLedger.new(layout.ship_class)
 	_wire_hud()
 	var alarm: ShipAlarm = ship.get_node("Alarm")
-	alarm.raised.connect(func(_at: Vector3) -> void: hud.set_alarm(true))
+	alarm.raised.connect(func(_at: Vector3) -> void:
+		hud.set_alarm(true)
+		ledger.alarm_raised = true)
 	_wire_raid_end()
 	if ship.has_node("BoardingPod"):
 		_wire_extraction(ship.get_node("BoardingPod"))
@@ -104,10 +106,14 @@ func _wire_hud() -> void:
 		hud.flash_damage())
 	player.health.died.connect(func(_from: Node) -> void: hud.set_health(0))
 	player.died.connect(func() -> void: hud.show_prompt(""))
-	player.hit_landed.connect(func(_target: Node3D, killed: bool) -> void:
+	player.hit_landed.connect(func(target: Node3D, killed: bool) -> void:
 		if killed:
-			ledger.record_kill()
-			hud.toast("+%d XP" % RaidLedger.KILL_XP))
+			var unaware: bool = target.get("died_unaware") == true
+			ledger.record_kill(unaware)
+			if unaware:
+				hud.toast("+%d XP  unaware" % RaidLedger.UNAWARE_KILL_XP)
+			else:
+				hud.toast("+%d XP" % RaidLedger.KILL_XP))
 
 
 ## Down is down: the pirate stays dead until Retry rebuilds the ship from its
@@ -161,8 +167,10 @@ func _extract_detail() -> String:
 
 
 func _extract_tally() -> String:
-	return "+%d XP  (%s, %d extraction)  ·  %d gold banked\n%s" % [
-		ledger.kill_xp() + ledger.extract_xp(), _kills_text(), ledger.extract_xp(), ledger.carried_gold, _profile_line()]
+	var ghost := "" if ledger.ghost_xp() == 0 else ", %d Ghost" % ledger.ghost_xp()
+	return "+%d XP  (%s, %d extraction%s)  ·  %d gold banked\n%s" % [
+		ledger.kill_xp() + ledger.extract_xp() + ledger.ghost_xp(), _kills_text(), ledger.extract_xp(), ghost,
+		ledger.carried_gold, _profile_line()]
 
 
 func _lost_tally(lost_gold: int) -> String:
@@ -171,7 +179,10 @@ func _lost_tally(lost_gold: int) -> String:
 
 
 func _kills_text() -> String:
-	return "1 kill" if ledger.kills == 1 else "%d kills" % ledger.kills
+	var text := "1 kill" if ledger.kills == 1 else "%d kills" % ledger.kills
+	if ledger.unaware_kills > 0:
+		text += ", %d unaware" % ledger.unaware_kills
+	return text
 
 
 static func _profile_line() -> String:

@@ -222,6 +222,12 @@ a lost one offers a Retry of the same ship.
 What the pirate earns for kills and for extracting, and keeps whichever way
 a Raid ends. XP adds up across Raids into his level.
 
+## Ghost
+
+An Extraction with the Alarm never raised. It earns a bonus on top of the
+extraction XP, as kills on crew that never spotted the Pirate earn more than
+kills in a fight.
+
 ## Loot
 
 Gold taken from Containers during a Raid. It is carried, not kept: only an

@@ -166,6 +166,8 @@ var _flank_clock := 0.0
 ## Set once this crew member's body has been found and reported, so the
 ## crew raise nothing over it twice.
 var reported := false
+## It fell without having spotted the Pirate: a stealth kill.
+var died_unaware := false
 ## The trace this crew member is walking to look at ([CrewTraces]).
 var _trace: Node3D
 var _trace_timer := 0.0
@@ -1308,6 +1310,7 @@ func _update_animation() -> void:
 # --- death --------------------------------------------------------------------
 
 func _on_died(_from: Node) -> void:
+	died_unaware = not _in_combat() and not _spotted()
 	state = State.DEAD
 	_path.clear()
 	velocity = Vector3.ZERO

@@ -51,10 +51,27 @@ static func _check_ledger(expect: Callable) -> void:
 	won.record_kill()
 	won.carry(120)
 	won.settle_extracted()
-	expect.call(Profile.xp == start.x + 3 * RaidLedger.KILL_XP + RaidLedger.EXTRACT_XP[&"large"]
-			and Profile.gold == start.y + 120, "ledger: extracting did not bank kill XP, the bonus and the gold")
+	expect.call(Profile.xp == start.x + 3 * RaidLedger.KILL_XP + RaidLedger.EXTRACT_XP[&"large"] + RaidLedger.GHOST_XP[&"large"]
+			and Profile.gold == start.y + 120, "ledger: extracting did not bank kill XP, the bonuses and the gold")
 	Profile.load_saved()
 	expect.call(Profile.gold == start.y + 120, "ledger: banked gold did not survive a reload from disk")
+	# Stealth: an unaware kill is worth 150, a spotted one 100; Ghost only
+	# with the Alarm never raised.
+	var quiet := RaidLedger.new(&"medium")
+	quiet.record_kill(true)
+	quiet.record_kill(false)
+	expect.call(quiet.kill_xp() == RaidLedger.UNAWARE_KILL_XP + RaidLedger.KILL_XP and RaidLedger.UNAWARE_KILL_XP == 150,
+			"ledger: an unaware and a spotted kill are worth %d XP, want 250" % quiet.kill_xp())
+	var before := Profile.xp
+	quiet.settle_extracted()
+	expect.call(Profile.xp - before == 250 + RaidLedger.EXTRACT_XP[&"medium"] + RaidLedger.GHOST_XP[&"medium"],
+			"ledger: extracting unseen did not bank the Ghost bonus")
+	var loud := RaidLedger.new(&"medium")
+	loud.alarm_raised = true
+	before = Profile.xp
+	loud.settle_extracted()
+	expect.call(Profile.xp - before == RaidLedger.EXTRACT_XP[&"medium"] and loud.ghost_xp() == 0,
+			"ledger: extracting after the Alarm still banked the Ghost bonus")
 
 
 static func _check_menu(expect: Callable, root: Node) -> void:
@@ -160,6 +177,7 @@ static func _check_extraction(expect: Callable, root: Node) -> void:
 	extraction._process(extraction.duration)
 	expect.call(extraction.is_done and screen.title_text() == "EXTRACTED", "extract: the countdown ran out without extracting")
 	expect.call(carried > 0 and Profile.gold == gold_before + carried, "extract: the carried gold was not banked")
+	expect.call(screen.detail_text().contains("Ghost"), "extract: the tally does not show the Ghost bonus earned")
 	expect.call(root.get_tree().paused and not main.get_node("PauseMenu").enabled, "extract: the ship kept running under the extracted screen")
 	expect.call(_has_button(screen, "NewRaid") and _has_button(screen, "Menu"), "extract: no New Raid or Main Menu")
 	expect.call(not (screen.find_child("Retry", true, false) as Button).visible, "extract: offers a Retry after getting out")
