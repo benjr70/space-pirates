@@ -143,6 +143,13 @@ always into a Cargo Room — the legible boarding point a silhouette can be read
 by. A Bridge or Engine Room never takes a Hatch. Which Hatch a raid enters
 through is a choice made at Raid start, not a fact about the ship.
 
+## Boarding Pod
+
+The pirate's own airlock tube, docked outside the one Hatch a Raid boards
+through. A Raid starts inside it, facing the shut Hatch; it is the way home.
+Every other Hatch has nothing docked outside and is **sealed**: locked for
+good and striped so it never reads as an ordinary Door.
+
 ## Raid
 
 One visit to a target ship: board through a Hatch, take what can be taken,

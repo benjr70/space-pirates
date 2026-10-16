@@ -29,6 +29,9 @@ const COLOR_TRIM_LOCKED := Color(0.72, 0.27, 0.27)
 
 ## Locked doors refuse to open -- the hook for keycards.
 @export var locked := false
+## A Hatch with no Boarding Pod docked outside: locked for good, and striped
+## so it never reads as an ordinary door. Only space is on the other side.
+var sealed := false
 
 var is_open := false
 
@@ -51,10 +54,12 @@ func setup(data: DoorData) -> void:
 	setup_span(data.width, data.horizontal, data.locked)
 
 
-## Configure from a hatch through the hull. Hatches are never locked: the
-## pirate chose this one to board by.
-func setup_hatch(data: HatchData) -> void:
-	setup_span(data.width, data.horizontal, false)
+## Configure from a hatch through the hull. The one the pirate boarded by
+## opens like any door; [param is_sealed] marks the rest, with nothing
+## docked outside.
+func setup_hatch(data: HatchData, is_sealed := false) -> void:
+	sealed = is_sealed
+	setup_span(data.width, data.horizontal, is_sealed)
 
 
 ## Size the leaf to a gap `width` tiles long, running along X when
@@ -117,7 +122,31 @@ func _build_geometry() -> void:
 	add_child(_leaf_a)
 	add_child(_leaf_b)
 	_place_leaves(0.0)
+	if sealed:
+		_add_seal_marks(size)
 	_update_trim()
+
+
+## Hazard stripes over both leaves and a red lamp bar above: shut for good.
+func _add_seal_marks(size: Vector3) -> void:
+	var stripes := HazardStripes.material()
+	_leaf_a.mesh.material = stripes
+	_leaf_b.mesh.material = stripes
+	var lamp_material := StandardMaterial3D.new()
+	lamp_material.albedo_color = COLOR_TRIM_LOCKED
+	lamp_material.emission_enabled = true
+	lamp_material.emission = Color(1.0, 0.15, 0.1)
+	lamp_material.emission_energy_multiplier = 3.0
+	var bar := BoxMesh.new()
+	# Most of the way along the gap, proud of the leaves on both faces.
+	bar.size = Vector3(size.x * 0.6, 0.12, size.z + 0.1) if _horizontal \
+			else Vector3(size.x + 0.1, 0.12, size.z * 0.6)
+	bar.material = lamp_material
+	var lamp := MeshInstance3D.new()
+	lamp.name = "SealLamp"
+	lamp.mesh = bar
+	lamp.position = Vector3(0.0, HEIGHT - 0.25, 0.0)
+	add_child(lamp)
 
 
 func _box_shape(size: Vector3) -> CollisionShape3D:
@@ -179,6 +208,8 @@ func in_reach() -> bool:
 
 ## What the HUD should offer whoever is stood at the controls.
 func prompt_text() -> String:
+	if sealed:
+		return "Hatch sealed — nothing docked outside"
 	if locked:
 		return "Hatch locked"
 	return "E — Close hatch" if is_open else "E — Open hatch"

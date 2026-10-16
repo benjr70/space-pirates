@@ -78,6 +78,9 @@ func _physics_process(_delta: float) -> bool:
 		floors = built_layout.floor_tiles()
 		boarding_room = built_layout.hatches[main.entry_hatch].room
 		_check_boarding(built_layout)
+		# The walks below start inside the ship, a step in from the boarding
+		# hatch, rather than out in the pod behind its shut leaf.
+		player.global_position = ShipBuilder3D.hatch_entry_world(built_layout, built_layout.hatches[main.entry_hatch])
 		_check_built_geometry(built_layout)
 		# Needs a live tree for global positions and tweens.
 		TwoRectRoomChecks.run(_expect, root)
@@ -682,22 +685,36 @@ func _outside_tiles(floors_all: Dictionary, walls: Dictionary) -> Dictionary:
 	return seen
 
 
-## The main scene boards through its chosen hatch: the pirate stands just
-## inside it, on his own floor, and that room is the one lit.
+## The main scene boards through its chosen hatch: the pirate starts in the
+## Boarding Pod docked outside it, facing the shut hatch, and that room is
+## the one lit. Every other hatch is sealed.
 func _check_boarding(layout: ShipLayout) -> void:
 	_expect(main.entry_hatch >= 0 and main.entry_hatch < layout.hatches.size(),
 			"main scene boards through hatch %d of %d" % [main.entry_hatch, layout.hatches.size()])
 	var hatch: HatchData = layout.hatches[main.entry_hatch]
-	var expected := ShipBuilder3D.hatch_entry_world(layout, hatch)
-	_expect(player.global_position.is_equal_approx(expected),
-			"pirate spawned at %s, expected just inside the hatch at %s" % [player.global_position, expected])
-	_expect(player.spawn_point.is_equal_approx(expected), "respawn point is not the boarding hatch")
+	var pod: BoardingPod = main.get_node("Ship/BoardingPod")
+	_expect(player.global_position.is_equal_approx(pod.spawn_point()),
+			"pirate spawned at %s, expected in the pod at %s" % [player.global_position, pod.spawn_point()])
+	_expect(player.spawn_point.is_equal_approx(pod.spawn_point()), "respawn point is not the boarding pod")
 	var tile := ShipBuilder3D.world_to_tile(player.global_position)
-	_expect(layout.room_at(tile) == hatch.room,
-			"pirate spawned on tile %s, not in hatch room %d" % [tile, hatch.room])
+	_expect(not layout.floor_tiles().has(tile), "pirate spawned on the ship's floor at %s, not in the pod" % tile)
 	var centre := ShipBuilder3D.hatch_center_world(hatch)
-	_expect(player.global_position.distance_to(centre) < 2.5,
-			"pirate spawned %.1f m from the hatch, not just inside it" % player.global_position.distance_to(centre))
+	var distance := player.global_position.distance_to(centre)
+	_expect(distance > 1.0 and distance < 3.5, "pirate spawned %.1f m from the hatch, not a few steps out" % distance)
+	var step := hatch.inward(layout.rooms[hatch.room])
+	var facing := -player.global_basis.z
+	_expect(facing.dot(Vector3(step.x, 0, step.y)) > 0.99, "pirate does not face the hatch, faces %s" % facing)
+	var leaves := main.get_node("Ship/Hatches").get_children()
+	for i in leaves.size():
+		var leaf: Door3D = leaves[i]
+		if i == main.entry_hatch:
+			_expect(not leaf.sealed and not leaf.locked and not leaf.is_open, "the boarding hatch is not shut and workable")
+		else:
+			leaf.open()
+			_expect(leaf.sealed and leaf.locked and not leaf.is_open, "hatch %d has no pod but is not sealed" % i)
+			_expect(leaf.prompt_text() != (leaves[main.entry_hatch] as Door3D).prompt_text(),
+					"a sealed hatch prompts like the boarding one")
+	_expect(BoardingPod.fits(layout, hatch, false), "the boarding pod runs into the ship's own hull")
 
 
 func _check_built_geometry(layout: ShipLayout) -> void:

@@ -95,8 +95,10 @@ static func room_center_world(room: RoomData) -> Vector3:
 
 
 ## Builds [param layout] as children of [param parent], which is cleared first
-## so a ship can be re-rolled in place.
-static func build(layout: ShipLayout, parent: Node3D) -> void:
+## so a ship can be re-rolled in place. With a [param boarding_hatch], a
+## [BoardingPod] docks outside that Hatch and every other Hatch is sealed;
+## without one, every Hatch opens like a door.
+static func build(layout: ShipLayout, parent: Node3D, boarding_hatch := -1) -> void:
 	for child in parent.get_children():
 		child.queue_free()
 		parent.remove_child(child)
@@ -167,14 +169,20 @@ static func build(layout: ShipLayout, parent: Node3D) -> void:
 
 	# A leaf in every hatch gap keeps the hull sealed until the pirate works
 	# it, so boarding and extracting are the same interaction as any door.
+	# Only the one with a pod outside can be worked at all.
 	var hatches := Node3D.new()
 	hatches.name = "Hatches"
 	parent.add_child(hatches)
-	for hatch_data in layout.hatches:
+	for i in layout.hatches.size():
+		var hatch_data: HatchData = layout.hatches[i]
 		var leaf: Door3D = DOOR_SCENE.instantiate()
-		leaf.setup_hatch(hatch_data)
+		leaf.setup_hatch(hatch_data, boarding_hatch >= 0 and i != boarding_hatch)
 		leaf.position = hatch_center_world(hatch_data)
 		hatches.add_child(leaf)
+	if boarding_hatch >= 0:
+		var pod := BoardingPod.new()
+		pod.setup(layout, layout.hatches[boarding_hatch])
+		parent.add_child(pod)
 
 	var crew := Node3D.new()
 	crew.name = "Crew"

@@ -1,6 +1,6 @@
 extends Node3D
-## Builds the ship the pirate is standing in, drops him just inside the hatch
-## this raid boards through and lifts the darkness off rooms as he walks into
+## Builds the ship the pirate is standing in, docks his Boarding Pod on the
+## hatch this raid boards through and starts him in it, facing in, and lifts the darkness off rooms as he walks into
 ## them. Also wires the HUD to everything it reports on.
 
 ## Leave null to board the [Raid] picked on the main menu, or with no Raid on,
@@ -10,7 +10,8 @@ extends Node3D
 
 ## Which of the ship's hatches this raid boards through, chosen at raid start.
 ## Not a fact about the ship: the same target can be entered by any of them.
-@export var entry_hatch := 0
+## -1 picks one a [BoardingPod] docks at cleanly, and is replaced by it.
+@export var entry_hatch := -1
 
 ## Unexplored rooms start dark with their crew hidden, lifting as the pirate
 ## walks in. Off means the whole ship starts lit and visible.
@@ -31,15 +32,19 @@ func _ready() -> void:
 		layout = Raid.layout()
 	if layout == null:
 		layout = _layout_from_args()
-	ShipBuilder3D.build(layout, ship)
 	# A layout with no Hatches (none is generated so) boards the aft-most Room.
 	var boarding_room := ShipGenerator.aft_most_room(layout)
 	if layout.hatches.is_empty():
+		ShipBuilder3D.build(layout, ship)
 		player.global_position = ShipBuilder3D.room_center_world(layout.rooms[boarding_room])
 	else:
-		var hatch: HatchData = layout.hatches[entry_hatch]
-		boarding_room = hatch.room
-		player.global_position = ShipBuilder3D.hatch_entry_world(layout, hatch)
+		if entry_hatch < 0:
+			entry_hatch = BoardingPod.choose_hatch(layout)
+		ShipBuilder3D.build(layout, ship, entry_hatch)
+		boarding_room = layout.hatches[entry_hatch].room
+		var pod: BoardingPod = ship.get_node("BoardingPod")
+		player.global_position = pod.spawn_point()
+		player.global_basis = pod.spawn_basis()
 	player.spawn_point = player.global_position
 
 	var reveal: RoomReveal = ship.get_node("Reveal")

@@ -66,20 +66,25 @@ static func run(expect: Callable, root: Node) -> void:
 	hud.set_ship_name(sample.display_name())
 	expect.call(hud.ship_name_text() == "ISV Kestrel", "HUD shows '%s' for 'ISV Kestrel'" % hud.ship_name_text())
 	hud.set_ship_name(layout.display_name())
-	var first := layout.room_at(ShipBuilder3D.world_to_tile(player.global_position))
-	expect.call(layout.hatches.size() > 0 and first == layout.hatches[0].room,
-			"generated: pirate boarded into room %d, expected hatch 0's room" % first)
+	# The pirate starts in the pod outside the hatch it docked at: the room
+	# he boards into is the one behind that hatch.
+	var first := _pod_room(layout, main)
+	expect.call(first == layout.hatches[main.entry_hatch].room,
+			"generated: pod docked into room %d, expected hatch %d's room" % [first, main.entry_hatch])
+	expect.call(player.global_position.is_equal_approx(main.get_node("Ship/BoardingPod").spawn_point()),
+			"generated: pirate did not start in the boarding pod")
 	expect.call(main.get_node("Ship/Hatches").get_child_count() == layout.hatches.size(),
 			"generated: %d hatch leaves for %d hatches" % [main.get_node("Ship/Hatches").get_child_count(), layout.hatches.size()])
 	if layout.hatches.size() > 1:
 		var other: Node3D = load("res://scenes/main_3d.tscn").instantiate()
 		other.layout_override = layout
 		other.explore_darkness = false
-		other.entry_hatch = 1
+		other.entry_hatch = 1 if main.entry_hatch != 1 else 0
 		root.add_child(other)
-		var second := layout.room_at(ShipBuilder3D.world_to_tile(other.get_node("Player").global_position))
-		expect.call(second == layout.hatches[1].room and second != first,
-				"generated: boarding through hatch 1 landed in room %d, hatch 0 in room %d" % [second, first])
+		var second := _pod_room(layout, other)
+		expect.call(second == layout.hatches[other.entry_hatch].room and second != first,
+				"generated: boarding through hatch %d docked into room %d, hatch %d into room %d"
+				% [other.entry_hatch, second, main.entry_hatch, first])
 		root.remove_child(other)
 		other.free()
 
@@ -157,3 +162,12 @@ static func _check_crew(expect: Callable, layout: ShipLayout, main: Node3D) -> v
 			empty_rooms += 1
 	expect.call(armory_crew > 0, "generated: no crew in the armory")
 	expect.call(empty_rooms > 0, "generated: every room is crewed")
+
+
+## The room behind whichever hatch the scene's Boarding Pod is docked at.
+static func _pod_room(layout: ShipLayout, scene: Node3D) -> int:
+	var pod: Node3D = scene.get_node("Ship/BoardingPod")
+	for hatch in layout.hatches:
+		if pod.global_position.is_equal_approx(ShipBuilder3D.hatch_center_world(hatch)):
+			return hatch.room
+	return -1

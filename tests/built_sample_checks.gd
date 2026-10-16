@@ -140,10 +140,18 @@ func _check_sweeps(ship: Dictionary) -> void:
 	for door in _layout.doors:
 		if _sweep_hits(player, ShipBuilder3D.door_center_world(door), door.horizontal):
 			blocked += 1
-	for hatch in _layout.hatches:
+	# Sealed hatches are shut for good; every gap is cut alike, so the one
+	# the pod docks at speaks for them.
+	var swept := _layout.doors.size()
+	var leaves := _main.get_node("Ship/Hatches").get_children()
+	for i in _layout.hatches.size():
+		if (leaves[i] as Door3D).sealed:
+			continue
+		swept += 1
+		var hatch: HatchData = _layout.hatches[i]
 		if _sweep_hits(player, ShipBuilder3D.hatch_center_world(hatch), hatch.horizontal):
 			blocked += 1
-	_expect.call(blocked == 0, "%s: the capsule caught on %d of %d doorways" % [_tag(ship), blocked, _layout.doors.size() + _layout.hatches.size()])
+	_expect.call(blocked == 0, "%s: the capsule caught on %d of %d doorways" % [_tag(ship), blocked, swept])
 
 
 func _sweep_hits(player: CharacterBody3D, centre: Vector3, horizontal: bool) -> bool:
