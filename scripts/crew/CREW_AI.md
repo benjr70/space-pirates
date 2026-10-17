@@ -11,7 +11,7 @@ being built toward is spec #52 (tickets #53–#63).
 |---|---|
 | `crew.gd` (`Crew3D`) | The body: movement, health, animation, door handling, gunnery, cover search, and the state machine that ties them together. |
 | `crew_perception.gd` (`CrewPerception`) | Awareness: the sight cone, how fast Awareness fills and drains, and its bands. Pure arithmetic, tested without physics. |
-| `crew_types.gd` (`CrewTypes`) | Guard or Worker, from the Post Room's Role, and the Worker tint. |
+| `crew_types.gd` (`CrewTypes`) | Guard or Worker, from the Post Room's Role. |
 | `crew_routine.gd` (`CrewRoutine`) | Routines: a crew member's Post and its loop of Jobs, planned from the layout's props and Rooms. Pure planning; the body walks it. |
 | `crew_traces.gd` (`CrewTraces`) | What the Pirate leaves behind that crew find: bodies, the open boarding Hatch, emptied Containers, Doors left open. |
 | `crew_combat.gd` (`CrewCombat`) | Guard teamwork: sharing the Pirate's position, aim that tightens, staggered bursts, flank routes. |
@@ -52,10 +52,11 @@ its Post Room's Role (`CrewTypes.for_role`):
   Then it fires a sidearm (12° spread, 2-round bursts, against a Guard's 7°
   and 3) and goes back to fleeing once he is more than 5 m off. A Worker that
   loses him hides (COWER) where a Guard would search.
-- Until each type's model is picked in the booth (#62), Workers wear the light
-  gunner rig tinted orange (`CrewTypes.WORKER_TINT`, multiplied into copies of
-  the rig's materials) and Guards the dark soldier rig, so they read apart at
-  a glance.
+- Guards wear the dark Quaternius Soldier; Workers wear the Engineer, the
+  Soldier's body and skeleton re-dressed in Blender in orange coveralls with
+  reflective bands, an open helmet, a tool belt and air tanks
+  (`assets/models/crew/build_engineer.py`). One skeleton, so both play every
+  crew clip, and they read apart at a glance.
 
 ## States
 
@@ -324,7 +325,7 @@ and `crew.gd` (`SEARCH_AWARENESS`, `INVESTIGATE_SPEED`, `INVESTIGATE_LINGER`,
 `BURST_STAGGER_FRAMES`, `SHARE_EVERY`, `FLANK_GIVE_UP`, `JITTER`),
 `crew_traces.gd` (`LOOK_EVERY`, `REACH`, `AWARENESS`, `AIM_HEIGHT`),
 `ship_alarm.gd` (`RED`, `PULSE_*`), `alarm_panel.gd` (`ROLES`, `SIZE`, `HEIGHT`),
-`crew_types.gd` (`GUARD_ROLES`, `WORKER_ROLES`, `WORKER_TINT`), `HEARD_NOISE`, `HEARD_GUNSHOT`, `HEARD_CAP`) and
+`crew_types.gd` (`GUARD_ROLES`, `WORKER_ROLES`), `HEARD_NOISE`, `HEARD_GUNSHOT`, `HEARD_CAP`) and
 `crew_routine.gd` (`WORK_PROPS`, `JOBS_MIN`/`MAX`, `WORK_TIME`,
 `PATROL_PAUSE`, `AWAY_CHANCE`) and `crew_noise.gd` (`SPRINT_STEP`, `WALK_STEP`, `GUNSHOT`, `DOOR`). They are starting values to be tuned by
 playtest.

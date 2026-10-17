@@ -13,9 +13,10 @@ extends CharacterBody3D
 ## than baked into the layout. Sight rays run at eye height; the cover ray runs
 ## lower, at the height of someone tucked down behind a crate.
 ##
-## Each crew member dresses at spawn in one of the `rigs`, drawn at random
-## for variety, stood `RIG_HEIGHT` tall on the floor under `Model`; the rigs
-## share Quaternius's clip names, which the brain plays by state.
+## Each crew member dresses at spawn in its type's rig, the Soldier for
+## Guards and the Engineer for Workers, stood `RIG_HEIGHT` tall on the floor
+## under `Model`; the rigs share one skeleton and Quaternius's clip names,
+## which the brain plays by state.
 
 ## Newer states go last so the older ones keep their numbers.
 enum State { PATROL, HUNT, FIGHT, COVER, SEARCH, DEAD, INVESTIGATE, FLEE, COWER }
@@ -126,7 +127,7 @@ const TORSO_HEIGHT := 1.0
 @export_group("Look")
 ## The bodies crew wear: the first for Workers, the second for Guards.
 @export var rigs: Array[PackedScene] = [
-	preload("res://assets/models/crew/gunner.glb"),
+	preload("res://assets/models/crew/engineer.glb"),
 	preload("res://assets/models/crew/soldier.glb"),
 ]
 ## How tall a rig stands once fitted, metres: a head over the Pirate, since
@@ -146,8 +147,6 @@ var layout: ShipLayout
 ## Guard or Worker ([CrewTypes]), set by [ShipBuilder3D] from the Post
 ## Room's Role before the crew member enters the tree.
 var crew_type: CrewTypes.Type = CrewTypes.Type.GUARD
-## The colour its rig is tinted, white for none.
-var body_tint := Color.WHITE
 ## The Guard a fleeing Worker is running to.
 var _flee_to: Crew3D
 ## The Alarm Panel a fleeing Worker is running to, instead of a Guard.
@@ -278,34 +277,14 @@ func _dress() -> void:
 		var fit := RIG_HEIGHT / height
 		rig.scale = Vector3.ONE * fit
 		rig.position.y = -lo.y * fit
-	_tint(rig, CrewTypes.tint(crew_type))
 
 
-## Until the booth picks a model per type (#62), each type wears one of the
-## two rigs so they read apart at a glance: Workers the light gunner, whose
-## armour shows the tint, Guards the dark soldier. A rig list of one serves
+## Workers wear the first rig, Guards the second. A rig list of one serves
 ## both.
 func _rig_for(type: CrewTypes.Type) -> PackedScene:
 	if rigs.size() < 2:
 		return rigs[0]
 	return rigs[0] if type == CrewTypes.Type.WORKER else rigs[1]
-
-
-## Multiplies every surface of the rig by [param color], on copies of its
-## materials so the other crew sharing the rig keep theirs.
-func _tint(rig: Node3D, color: Color) -> void:
-	body_tint = color
-	if color == Color.WHITE:
-		return
-	for node in rig.find_children("*", "MeshInstance3D", true, false):
-		var mesh := node as MeshInstance3D
-		for i in mesh.get_surface_override_material_count():
-			var material := mesh.get_active_material(i) as BaseMaterial3D
-			if material == null:
-				continue
-			var tinted := material.duplicate() as BaseMaterial3D
-			tinted.albedo_color *= color
-			mesh.set_surface_override_material(i, tinted)
 
 
 func is_worker() -> bool:

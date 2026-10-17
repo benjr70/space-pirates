@@ -392,7 +392,7 @@ func _has_fired(crew: Crew3D) -> bool:
 
 ## A Worker that spots the Pirate 8 m off runs for the Guard behind it and
 ## does not shoot; cornered at 2.5 m it fires its sidearm. Workers wear
-## their tint, Guards do not.
+## the Engineer, Guards the Soldier.
 func _check_worker() -> void:
 	var guard := _crew(CrewTypes.Type.GUARD)
 	guard.global_position = Vector3(1.5, 0.0, 23.0)
@@ -413,13 +413,8 @@ func _check_worker() -> void:
 			and worker.global_position.distance_to(player.global_position) > to_pirate,
 			"a fleeing Worker did not head for the Guard and away from the pirate")
 	_expect(not fired, "a Worker fired at a pirate 8 m away")
-	_expect(worker.body_tint == CrewTypes.WORKER_TINT and guard.body_tint == Color.WHITE, "Workers and Guards are not told apart by tint")
-	var tinted := false
-	for node in worker.model.find_children("*", "MeshInstance3D", true, false):
-		var material := (node as MeshInstance3D).get_surface_override_material(0) as BaseMaterial3D
-		if material != null and not material.albedo_color.is_equal_approx(Color.WHITE):
-			tinted = true
-	_expect(tinted, "the Worker's rig carries no tinted material")
+	_expect(worker.get_node("Model/Rig").scene_file_path.ends_with("engineer.glb"), "a Worker does not wear the Engineer")
+	_expect(guard.get_node("Model/Rig").scene_file_path.ends_with("soldier.glb"), "a Guard does not wear the Soldier")
 	worker.free()
 	guard.free()
 

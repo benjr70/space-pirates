@@ -1,9 +1,17 @@
 Two animated characters by Quaternius (https://quaternius.com), CC0
 (Public Domain), downloaded from poly.pizza:
 
-gunner.glb   https://poly.pizza/m/3hC2i0CTuO
 soldier.glb  https://poly.pizza/m/Btfn3G5Xv4
+gunner.glb   https://poly.pizza/m/3hC2i0CTuO
 
-Both carry the same clip set (Idle, Idle_Gun, Idle_Gun_Pointing, Gun_Shoot,
-Run, HitRecieve, Death, ...). Picked in the model booth on 2026-09-29 as
-the crew's rigs, replacing the KayKit rogue.
+Both carry the same skeleton and clip set (Idle, Idle_Gun,
+Idle_Gun_Pointing, Gun_Shoot, Run, Walk, HitRecieve, Death, ...).
+
+Guards wear soldier.glb, picked in the model booth on 2026-10-16.
+
+Workers wear engineer.glb, built in Blender on 2026-10-16 by
+build_engineer.py from those two CC0 models: the Soldier's body and
+skeleton recoloured into orange coveralls, the Gunner's helmet head, and
+added reflective bands, tool belt, pouches, wrench and air tanks. It is a
+derivative of CC0 work and is itself released CC0. gunner.glb stays as the
+source of its head.

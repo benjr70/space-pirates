@@ -1,13 +1,13 @@
 extends SceneTree
 ## PROTOTYPE: a model booth. Every glb under assets/models/audition stands in
 ## a row on a lit floor with its name over its head, playing its idle (or
-## first) clip; the camera slowly orbits. Keys 1-9 jump to one candidate and
-## cycle its clips with Space; Esc quits. Throwaway.
+## first) clip; the camera slowly orbits. Keys 1-9 (or Left/Right) focus one
+## candidate and cycle its clips with Space; Esc quits. Throwaway.
 ##
 ##   flatpak run org.godotengine.Godot --path . --script res://scripts/proto/proto_model_audition.gd
 
 const DIR := "res://assets/models/audition"
-const SPACING := 1.6
+const SPACING := 2.2
 
 var models: Array[Node3D] = []
 var names: Array[String] = []
@@ -96,7 +96,7 @@ func _initialize() -> void:
 	label = Label.new()
 	label.position = Vector2(20, 16)
 	label.add_theme_font_size_override("font_size", 20)
-	label.text = "MODEL BOOTH  -  1-9 focus a model, Space cycles its clips, Esc quits"
+	label.text = "MODEL BOOTH  -  1-9 or Left/Right focus a model, Space cycles its clips, Esc quits"
 	ui.add_child(label)
 	var booth := Booth.new()
 	booth.tree = self
@@ -146,13 +146,15 @@ func _key(keycode: int) -> void:
 		label.text = "%s  -  clip: %s" % [names[focus], list[clip_index]]
 		return
 	var n := keycode - KEY_1
+	if keycode == KEY_RIGHT or keycode == KEY_LEFT:
+		n = (focus + (1 if keycode == KEY_RIGHT else -1) + models.size()) % models.size()
 	if n >= 0 and n < models.size():
 		focus = n
 		clip_index = 0
 		label.text = "%s  -  Space cycles clips, 0 back to the row" % names[focus]
 	elif keycode == KEY_0:
 		focus = -1
-		label.text = "MODEL BOOTH  -  1-9 focus a model, Space cycles its clips, Esc quits"
+		label.text = "MODEL BOOTH  -  1-9 or Left/Right focus a model, Space cycles its clips, Esc quits"
 
 
 func _tick(delta: float) -> void:

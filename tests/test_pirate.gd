@@ -2139,7 +2139,7 @@ func _check_tracer() -> void:
 	_clear_shots()
 
 
-## The crew wear one of two Quaternius rigs, one per crew type, stood
+## The crew wear one of two rigs on one skeleton, one per crew type, stood
 ## RIG_HEIGHT tall and facing their forward, with the clips the crew brain
 ## plays.
 func _check_crew_models() -> void:
