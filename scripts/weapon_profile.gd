@@ -87,10 +87,11 @@ extends Resource
 ## else, so the Pirate and crew holding this weapon sound alike.
 @export var shot_sounds: Array[AudioStream] = []
 ## The reload, in order: the first as the magazine comes out, the second as
-## it goes in.
+## it goes in. A shell-by-shell reload plays the first as each shell seats.
 @export var reload_sounds: Array[AudioStream] = []
 ## A sound after each shot, such as a pump, `action_sound_delay` seconds
-## after it; none for a gun whose action is silent.
+## after it; none for a gun whose action is silent. A shell-by-shell reload
+## plays it again on the closing pump.
 @export var action_sound: AudioStream
 @export var action_sound_delay := 0.0
 ## Metres at which crew hear the shot.
@@ -108,10 +109,13 @@ extends Resource
 ## How far ahead of the eye the weapon is held in Aim Down Sights. The front
 ## sight centres itself; this only sets how big the weapon looks.
 @export var ads_distance := 0.32
-## The weapon mesh's own skeleton clips, by name on its AnimationPlayer.
+## The weapon mesh's own skeleton clips, by name on its AnimationPlayer. A
+## shell-by-shell reload plays the reload clip once per shell, over that
+## shell's time.
 @export var model_fire_clip: StringName = &"fire"
 @export var model_reload_clip: StringName = &"reload"
 ## Racks the slide to close an empty reload; blank for a weapon without one.
+## A shell-by-shell reload plays it over the closing pump.
 @export var model_rack_clip: StringName = &"rack"
 ## How long the action cycles on a shot.
 @export var fire_cycle_time := 0.15

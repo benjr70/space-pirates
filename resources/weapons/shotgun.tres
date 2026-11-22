@@ -3,8 +3,8 @@
 [ext_resource type="Script" path="res://scripts/weapon_profile.gd" id="1"]
 [ext_resource type="PackedScene" path="res://scenes/weapons/shotgun_model.tscn" id="2"]
 [ext_resource type="AudioStream" path="res://assets/audio/firearm_library_shotgun/shot.ogg" id="s1"]
-[ext_resource type="AudioStream" path="res://assets/audio/oga_reload/clipload1.ogg" id="r1"]
-[ext_resource type="AudioStream" path="res://assets/audio/oga_reload/clipload2.ogg" id="r2"]
+[ext_resource type="AudioStream" path="res://assets/audio/oga_shotgun_reload/shell_in.ogg" id="r1"]
+[ext_resource type="AudioStream" path="res://assets/audio/oga_gun_reload_sounds/shotgun_pump.ogg" id="a1"]
 
 [resource]
 script = ExtResource("1")
@@ -40,13 +40,15 @@ ads_recoil_kick_degrees = 6.0
 camera_kick_degrees = 3.0
 fire_clip = &""
 shot_sounds = Array[AudioStream]([ExtResource("s1")])
-reload_sounds = Array[AudioStream]([ExtResource("r1"), ExtResource("r2")])
+reload_sounds = Array[AudioStream]([ExtResource("r1")])
+action_sound = ExtResource("a1")
+action_sound_delay = 0.2
 loudness = 32.0
 model = ExtResource("2")
 pose_hip = Vector3(0.15, -0.24, -0.34)
 pose_low = Vector3(0.21, -0.36, -0.32)
 ads_distance = 0.3
 model_fire_clip = &"fire"
-model_reload_clip = &"reload"
-model_rack_clip = &""
-fire_cycle_time = 0.15
+model_reload_clip = &"shell"
+model_rack_clip = &"pump"
+fire_cycle_time = 0.55

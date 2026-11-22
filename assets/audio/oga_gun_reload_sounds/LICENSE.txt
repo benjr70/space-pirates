@@ -1,0 +1,12 @@
+"Gun reload sounds", published on OpenGameArt under CC0 (no attribution
+needed): https://opengameart.org/content/gun-reload-sounds
+
+shotgun_pump.ogg  the Shotgun's pump ("shotguncock.wav"), the whole file
+                  from its first onset, mono 44.1 kHz, 0.44 s, peak-normalised
+                  to -1.5 dB. Cut by the sound booth's cut.py (branch
+                  prototype/new-gun-sounds, where it is
+                  audition_picks/shotgun_pump.ogg). One pump: no gap of
+                  silence in it until its tail (silencedetect at -30 dB finds
+                  only the last 0.09 s). Plays 0.2 s after each Shotgun shot
+                  and on the closing pump. Picked by ear in the sound booth
+                  (new-weapons decision 12).

@@ -5,6 +5,7 @@
 import math
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import bpy
 import kit
 from palette import metal, bare, dark, brass, glow, hull
 
@@ -155,12 +156,56 @@ for i in range(9):
 pump = kit.join("Pump", [forend] + [
     kit.box("action_bar", (0.003, 0.085, 0.007), (side * 0.0165, -0.165, TUBE + 0.002), bare()) for side in (-1, 1)
 ])
-pump.parent = shotgun
+
+# One shell for the reload clip: it rests out of sight inside the magazine
+# tube, and the clip brings it up into the loading port and in.
+SHELL_REAR = -0.150
+shell = kit.join("Shell", [
+    kit.lathe("load_hull", [(SHELL_REAR - 0.008, 0.0102), (SHELL_REAR - 0.060, 0.0102), (SHELL_REAR - 0.063, 0.0085)],
+              TUBE, hull(), sides=16),
+    kit.lathe("load_brass", [(SHELL_REAR + 0.002, 0.0112), (SHELL_REAR, 0.0112), (SHELL_REAR, 0.0104), (SHELL_REAR - 0.009, 0.0104)],
+              TUBE, brass(), sides=16),
+])
+
+kit.report()
+kit.bake("shotgun", [shotgun, pump, shell])
+
+# Skeleton and the clips the Viewmodel plays, named in the Weapon Profile.
+# Keyed at 60 frames a second so the pump's 0.15 s wait lands on a frame.
+armature = kit.rig("Shotgun", shotgun, {"Pump": pump, "Shell": shell})
+FPS = 60
+bpy.context.scene.render.fps = FPS
+
+
+def f(seconds):
+    """The frame `seconds` into a clip. The exporter times a key at its frame
+    over the frame rate, so a clip starts on frame 0, not kit's frame 1."""
+    return round(seconds * FPS)
+
+
+REST = (0, 0, 0)
+BACK = (0, 0.075, 0)  # the fore-end's stroke, straight back toward the stock
+# From the rest in the tube, the shell's place under the loading port.
+UNDER_PORT = (0, -0.075 - (SHELL_REAR - 0.0315), 0.0)
+
+
+def below_port(drop):
+    """Under the loading port, `drop` metres below where it enters."""
+    return (UNDER_PORT[0], UNDER_PORT[1], -drop)
+
+
+# The pump after a shot: waits 0.15 s, 7.5 cm back and home by 0.55 s.
+kit.clip(armature, "fire", {"Pump": [(f(0), REST), (f(0.15), REST), (f(0.30), BACK), (f(0.38), BACK),
+                                     (f(0.52), REST), (f(0.55), REST)]})
+# One shell: up from below, pressed into the loading port, gone into the
+# tube just before the counter takes it. Played over each shell's time.
+kit.clip(armature, "shell", {"Shell": [(f(0), below_port(0.12)), (f(0.15), below_port(0.045)),
+                                       (f(0.30), below_port(0.030)), (f(0.38), UNDER_PORT), (f(0.45), REST)]})
+# The closing pump after loading from empty: the same stroke, at once.
+kit.clip(armature, "pump", {"Pump": [(f(0), REST), (f(0.15), BACK), (f(0.22), BACK), (f(0.40), REST), (f(0.45), REST)]})
 
 kit.marker("Muzzle", (0, -0.604, BORE), shotgun)
 kit.marker("SightTip", (0, -0.584, BORE + 0.051), shotgun)
 
-kit.report()
-kit.bake("shotgun", [shotgun, pump])
 kit.export("shotgun")
 kit.render("shotgun")

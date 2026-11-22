@@ -45,9 +45,9 @@ Every Sandbox number, generated from `resources/weapons/`, `resources/sandbox.tr
 | Fire Clip | fire | - | - |
 | **Sound** | | | |
 | Shot Sounds | kurt_22_magnum/shot_1.ogg, kurt_22_magnum/shot_2.ogg, kurt_22_magnum/shot_3.ogg | kurt_gunshots/shot_1.ogg, kurt_gunshots/shot_2.ogg, kurt_gunshots/shot_3.ogg, kurt_gunshots/shot_4.ogg | firearm_library_shotgun/shot.ogg |
-| Reload Sounds | oga_reload/clipload1.ogg, oga_reload/clipload2.ogg | oga_reload/clipload1.ogg, oga_reload/clipload2.ogg | oga_reload/clipload1.ogg, oga_reload/clipload2.ogg |
-| Action Sound | - | - | - |
-| Action Sound Delay | 0.0 | 0.0 | 0.0 |
+| Reload Sounds | oga_reload/clipload1.ogg, oga_reload/clipload2.ogg | oga_reload/clipload1.ogg, oga_reload/clipload2.ogg | oga_shotgun_reload/shell_in.ogg |
+| Action Sound | - | - | shotgun_pump.ogg |
+| Action Sound Delay | 0.0 | 0.0 | 0.2 |
 | Loudness | 24.0 | 24.0 | 32.0 |
 | **Viewmodel** | | | |
 | Model | pistol_model.tscn | assault_rifle_model.tscn | shotgun_model.tscn |
@@ -55,9 +55,9 @@ Every Sandbox number, generated from `resources/weapons/`, `resources/sandbox.tr
 | Pose Low | (0.2, -0.26, -0.3) | (0.2, -0.3, -0.38) | (0.21, -0.36, -0.32) |
 | Ads Distance | 0.32 | 0.265 | 0.3 |
 | Model Fire Clip | fire | fire | fire |
-| Model Reload Clip | reload | reload | reload |
-| Model Rack Clip | rack | rack | - |
-| Fire Cycle Time | 0.15 | 0.08 | 0.15 |
+| Model Reload Clip | reload | reload | shell |
+| Model Rack Clip | rack | rack | pump |
+| Fire Cycle Time | 0.15 | 0.08 | 0.55 |
 | Rack Time | 0.3 | 0.35 | 0.3 |
 | **Derived** | | | |
 | = Reach (m) | 40.0 | 50.0 | 15.0 |

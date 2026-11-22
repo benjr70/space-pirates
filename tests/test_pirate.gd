@@ -128,6 +128,7 @@ func _run() -> void:
 	await _check_shotgun_hit_marker()
 	await _check_shotgun_model()
 	await _check_shell_reload()
+	await _check_shotgun_rig()
 	await _check_ads_states()
 	await _check_ads_ends()
 	await _check_ads_raise()
@@ -874,6 +875,129 @@ func _check_assault_rifle_model() -> void:
 	await _place(RUNWAY)
 
 
+
+## The skeleton of the model showing in the holder.
+func _mounted_skeleton() -> Skeleton3D:
+	for model in weapon.holder.get_children():
+		if (model as Node3D).visible:
+			return model.find_child("Skeleton3D", true, false)
+	return null
+
+
+## How far [param bone] on the mounted model's skeleton sits from its rest.
+func _bone_offset(bone: String) -> float:
+	var skeleton := _mounted_skeleton()
+	var i := skeleton.find_bone(bone)
+	return (skeleton.get_bone_pose_position(i) - skeleton.get_bone_rest(i).origin).length()
+
+
+## The Shotgun's rig: the fore-end racks 7.5 cm after every shot, starting
+## 0.15 s in and back by 0.55 s, with the pump sound 0.2 s after the shot.
+## Each shell loaded plays the shell clip and the shell sound once, the
+## sound with the counter; a reload from empty ends with the pump clip and
+## sound, a top-up does not; a shot breaking in stops the clip and puts the
+## bones back at rest.
+func _check_shotgun_rig() -> void:
+	# Read through variables: the Profile is a constant, and a field still
+	# blank would not parse.
+	var pump_sound: AudioStream = SHOTGUN.action_sound
+	var shell_sound: AudioStream = SHOTGUN.reload_sounds[0] if not SHOTGUN.reload_sounds.is_empty() else null
+	await _place(RUNWAY)
+	await _hold(SHOTGUN)
+	var anim: AnimationPlayer = weapon.model_clips
+	var skeleton := _mounted_skeleton()
+	for bone in ["Pump", "Shell"]:
+		_expect(skeleton != null and skeleton.find_bone(bone) >= 0, "the Shotgun's skeleton has no %s bone" % bone)
+	for clip_name in [SHOTGUN.model_fire_clip, SHOTGUN.model_reload_clip, SHOTGUN.model_rack_clip]:
+		_expect(clip_name != &"" and anim.has_animation(clip_name), "the Shotgun mesh lacks the '%s' clip" % clip_name)
+	if skeleton == null or skeleton.find_bone("Pump") < 0 or not anim.has_animation(SHOTGUN.model_rack_clip) \
+			or not anim.has_animation(SHOTGUN.model_reload_clip):
+		await _hold(player.weapons[0])
+		return
+	_expect(is_equal_approx(anim.get_animation(SHOTGUN.model_fire_clip).length, 0.55)
+			and is_equal_approx(SHOTGUN.fire_cycle_time, 0.55),
+			"the Shotgun's pump clip is %.2f s played over %.2f s, not 0.55" % [anim.get_animation(SHOTGUN.model_fire_clip).length, SHOTGUN.fire_cycle_time])
+	_expect(pump_sound != null and pump_sound.resource_path.ends_with("shotgun_pump.ogg")
+			and is_equal_approx(SHOTGUN.action_sound_delay, 0.2),
+			"the Shotgun's action sound is %s after %.2f s, not the pump after 0.2 s" % [pump_sound, SHOTGUN.action_sound_delay])
+
+	# The pump after a shot.
+	sounds.clear()
+	_expect(_fire_and_drop(), "no Shotgun shot for the pump")
+	await _seconds(0.1)
+	_expect(_bone_offset("Pump") < 0.003, "the fore-end moved %.3f m before 0.15 s" % _bone_offset("Pump"))
+	_expect(not sounds.any(func(s: Array) -> bool: return s[0] == &"action"), "the pump sounded before 0.2 s")
+	await _seconds(0.2)
+	_expect(absf(_bone_offset("Pump") - 0.075) < 0.006, "0.3 s after the shot the fore-end is %.3f m back, not 0.075" % _bone_offset("Pump"))
+	var pumps := sounds.filter(func(s: Array) -> bool: return s[0] == &"action")
+	_expect(pumps.size() == 1 and pumps[0][1] == pump_sound, "the pump after the shot sounded %s" % [sounds])
+	await _seconds(0.3)
+	_expect(_bone_offset("Pump") < 0.003 and not anim.is_playing(), "0.6 s after the shot the fore-end is still %.3f m back" % _bone_offset("Pump"))
+	_clear_shots()
+
+	# Empty to full: one shell clip and one shell sound per shell, then the pump.
+	var started: Array = []
+	var on_clip := func(clip: StringName) -> void: started.append(clip)
+	anim.animation_started.connect(on_clip)
+	var out_of_step: Array = []
+	var on_shell := func() -> void:
+		var shell_sounds := sounds.filter(func(s: Array) -> bool: return s[0] == &"shell_in").size()
+		if shell_sounds != player.ammo:
+			out_of_step.append([player.ammo, shell_sounds])
+	player.shell_loaded.connect(on_shell)
+	sounds.clear()
+	player.ammo = 0
+	player.start_reload()
+	await _frames(1)
+	_expect(anim.current_animation == SHOTGUN.model_reload_clip, "loading the first shell plays '%s'" % anim.current_animation)
+	await _seconds(SHOTGUN.seconds_empty_to_full() + 0.2)
+	_expect(player.ammo == 6 and not player.is_reloading(), "the Shotgun did not fill from empty (%d)" % player.ammo)
+	var shells := started.count(SHOTGUN.model_reload_clip)
+	_expect(shells == 6, "six shells played the shell clip %d times" % shells)
+	_expect(started.back() == SHOTGUN.model_rack_clip and started.count(SHOTGUN.model_rack_clip) == 1,
+			"a reload from empty did not end on one pump clip: %s" % [started])
+	var shell_in := sounds.filter(func(s: Array) -> bool: return s[0] == &"shell_in")
+	_expect(shell_in.size() == 6 and shell_in.all(func(s: Array) -> bool: return s[1] == shell_sound),
+			"six shells sounded %d shell sounds" % shell_in.size())
+	_expect(shell_sound != null and shell_sound.resource_path.ends_with("shell_in.ogg"), "the Shotgun's shell sound is %s" % shell_sound)
+	_expect(out_of_step.is_empty(), "the shell sound fell out of step with the counter: [shells, sounds] %s" % [out_of_step])
+	var closing := sounds.filter(func(s: Array) -> bool: return s[0] == &"pump")
+	_expect(closing.size() == 1 and closing[0][1] == pump_sound, "the closing pump sounded %s" % [closing])
+	_expect(_bone_offset("Pump") < 0.003 and _bone_offset("Shell") < 0.003, "the bones did not come to rest after the reload")
+
+	# A top-up from 4: two shells, no pump.
+	started.clear()
+	sounds.clear()
+	player.ammo = 4
+	player.start_reload()
+	await _seconds(SHOTGUN.first_shell_time + SHOTGUN.shell_time + 0.2)
+	_expect(player.ammo == 6 and not player.is_reloading(), "the top-up from 4 left %d shells" % player.ammo)
+	_expect(started.count(SHOTGUN.model_reload_clip) == 2 and not started.has(SHOTGUN.model_rack_clip),
+			"a top-up of two played %s" % [started])
+	_expect(sounds.filter(func(s: Array) -> bool: return s[0] == &"shell_in").size() == 2
+			and not sounds.any(func(s: Array) -> bool: return s[0] == &"pump"),
+			"a top-up of two sounded %s" % [sounds])
+
+	# A shot breaking in stops the shell clip with the bones at rest.
+	player.ammo = 1
+	player.start_reload()
+	await _seconds(SHOTGUN.first_shell_time + 0.2)
+	_expect(anim.current_animation == SHOTGUN.model_reload_clip and _bone_offset("Shell") > 0.003,
+			"the second shell is not on its way in (%s)" % anim.current_animation)
+	player.fire()
+	await _frames(1)
+	_expect(not anim.is_playing() and _bone_offset("Shell") < 0.001 and _bone_offset("Pump") < 0.001,
+			"a shot breaking in left '%s' playing, the shell %.3f m out" % [anim.current_animation, _bone_offset("Shell")])
+	await _seconds(SHOTGUN.break_out_time + 0.05)
+	_expect(anim.current_animation == SHOTGUN.model_fire_clip, "the break-out shot played '%s'" % anim.current_animation)
+	await _seconds(0.6)
+
+	anim.animation_started.disconnect(on_clip)
+	player.shell_loaded.disconnect(on_shell)
+	_clear_shots()
+	await _hold(player.weapons[0])
+	await _place(RUNWAY)
+
 ## --- the Shotgun ---
 
 ## Angles in degrees between each pellet of the last shot and the line from
@@ -996,7 +1120,8 @@ func _check_shotgun_model() -> void:
 	if anim != null:
 		for clip_name in [SHOTGUN.model_fire_clip, SHOTGUN.model_reload_clip]:
 			_expect(anim.has_animation(clip_name), "the Shotgun mesh lacks the %s clip" % clip_name)
-	_expect(weapon.holder.find_child("Pump", true, false) != null, "the mounted Shotgun has no Pump: not the pump-action model")
+	var bones := _mounted_skeleton()
+	_expect(bones != null and bones.find_bone("Pump") >= 0, "the mounted Shotgun has no Pump bone: not the pump-action model")
 	var shown := 0
 	for model in weapon.holder.get_children():
 		if (model as Node3D).visible:

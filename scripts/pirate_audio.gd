@@ -1,7 +1,8 @@
 class_name PirateAudio
 extends Node
 ## What the Pirate hears of himself: the shot, reload and action sounds of
-## the Weapon Profile he holds, the dry click and the rack, a landed Melee, his footsteps and landings,
+## the Weapon Profile he holds (a shell-by-shell reload's shell and closing
+## pump among them), the dry click and the rack, a landed Melee, his footsteps and landings,
 ## and the hit he takes. Driven by the Pirate's signals alone, plus his
 ## speed over the floor for the stride, so it never reaches into his state.
 ##
@@ -87,6 +88,8 @@ func _ready() -> void:
 	_pirate.dry_fired.connect(_on_dry_fired)
 	_pirate.reload_started.connect(_on_reload_started)
 	_pirate.reload_cancelled.connect(_stop_reload_sequence)
+	_pirate.shell_loaded.connect(_on_shell_loaded)
+	_pirate.closing_pump_started.connect(_on_closing_pump_started)
 	_pirate.melee_swung.connect(_on_melee_swung)
 	_pirate.hit_landed.connect(_on_hit_landed)
 	_pirate.state_changed.connect(_on_state_changed)
@@ -168,6 +171,17 @@ func _on_reload_started(from_empty: bool) -> void:
 	if profile.racks_after(from_empty):
 		_reload_sequence.tween_interval(swap * (1.0 - mag_in_at))
 		_reload_sequence.tween_callback(_play.bind(_gun, &"rack", rack_stream))
+
+
+## A shell-by-shell reload sounds the Profile's first reload sound as each
+## shell seats, and its action sound on the closing pump.
+func _on_shell_loaded() -> void:
+	var reload: Array[AudioStream] = _pirate.weapon.reload_sounds
+	_play(_gun, &"shell_in", reload[0] if reload.size() > 0 else null)
+
+
+func _on_closing_pump_started() -> void:
+	_play(_gun, &"pump", _pirate.weapon.action_sound)
 
 
 func _stop_reload_sequence() -> void:

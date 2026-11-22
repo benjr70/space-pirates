@@ -36,9 +36,11 @@ extends Node3D
 ## A weapon's mesh (built by the scripts under `tools/blender`) brings its own
 ## skeleton clips: the slide cycles on a
 ## shot, the magazine drops and seats on a reload, and the slide racks to
-## close an empty reload. The Weapon Profile names those clips and times
-## them, so they play on the mesh's AnimationPlayer time-scaled the same way
-## as the holder clips, and a cancel resets the bones.
+## close an empty reload; a shell-by-shell gun plays its reload clip once
+## per shell and its rack over the closing pump, and a reload broken off
+## stops it. The Weapon Profile names those clips and times them, so they
+## play on the mesh's AnimationPlayer time-scaled the same way as the holder
+## clips, and a cancel resets the bones.
 ##
 ## Wall clipping is handled by material flags: every surface is squashed
 ## toward the camera in depth and drawn with its own narrow FOV, so the
@@ -146,6 +148,10 @@ func _ready() -> void:
 	_pirate.descoped.connect(_on_descoped)
 	_pirate.reload_started.connect(_on_reload_started)
 	_pirate.reload_cancelled.connect(_stop_clip)
+	_pirate.shell_reload_started.connect(_on_shell_reload_started)
+	_pirate.shell_loaded.connect(_on_shell_loaded)
+	_pirate.closing_pump_started.connect(_on_closing_pump_started)
+	_pirate.shell_reload_ended.connect(_on_shell_reload_ended)
 	_pirate.melee_swung.connect(_on_melee_swung)
 	_pirate.weapon_changed.connect(_on_weapon_changed)
 
@@ -259,6 +265,28 @@ func _on_reload_started(from_empty: bool) -> void:
 	_play_for(clips, RELOAD_CLIPS[1] if from_empty else RELOAD_CLIPS[0], wanted)
 	_rack_after_reload = profile.racks_after(from_empty)
 	_play_for(model_clips, profile.model_reload_clip, profile.swap_time(from_empty))
+
+
+## A shell-by-shell reload plays the reload clip once per shell, over that
+## shell's time, so the shell seats as the counter rises; a reload from
+## empty ends with the rack clip over the closing pump. Broken off, the clip
+## stops and the bones go back to rest.
+func _on_shell_reload_started(_from_empty: bool) -> void:
+	_play_for(model_clips, profile.model_reload_clip, profile.first_shell_time)
+
+
+func _on_shell_loaded() -> void:
+	if _pirate.ammo < profile.magazine_size:
+		_play_for(model_clips, profile.model_reload_clip, profile.shell_time)
+
+
+func _on_closing_pump_started() -> void:
+	_play_for(model_clips, profile.model_rack_clip, profile.closing_pump_time)
+
+
+func _on_shell_reload_ended(broken: bool) -> void:
+	if broken:
+		_stop_clip()
 
 
 func _on_model_clip_finished(clip: StringName) -> void:
