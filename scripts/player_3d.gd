@@ -63,6 +63,8 @@ signal descoped
 ## finished them.
 signal melee_swung(target: Node3D, killed: bool)
 ## A shot or a swing hurt something that can be hurt: the hit marker's cue.
+## A shot reports each target once, however many of its pellets land, a
+## beat after the first strikes it so the rest of the volley lands first.
 signal hit_landed(target: Node3D, killed: bool)
 
 enum State { WALK, SPRINT, CROUCH, SLIDE, AIR, CLAMBER }
@@ -149,6 +151,7 @@ const TEAM := &"pirate"
 @export var weapons: Array[WeaponProfile] = [
 	preload("res://resources/weapons/pistol.tres"),
 	preload("res://resources/weapons/assault_rifle.tres"),
+	preload("res://resources/weapons/shotgun.tres"),
 ]
 ## Seconds a weapon swap keeps the trigger, the sights and the reload busy.
 @export var swap_time := 0.4
@@ -168,6 +171,9 @@ const FALL_LIMIT := -10.0
 const CAMERA_LERP := 12.0
 ## How far short of a wall a bolt starts when the barrel is through it.
 const MUZZLE_WALL_GAP := 0.05
+## Seconds from a shot's first strike on a target to reporting it: a step
+## and a half, so pellets a step behind still count toward the kill.
+const SHOT_REPORT_DELAY := 1.5 / 60.0
 ## The ship's walls, floors and props: what a crouch or clamber probes.
 const WORLD_LAYER := 1
 ## Bodies that can be hit: the crew and the pirate himself.
@@ -199,6 +205,8 @@ var _stowed_ammo := {}
 var _bloom := 0.0
 var _last_spread := -1.0
 var _rng := RandomNumberGenerator.new()
+## The projectiles of the last shot: one, or a Shotgun's pellets.
+var last_pellets: Array[Projectile3D] = []
 var _gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)
 
 var _capsule: CapsuleShape3D
@@ -710,10 +718,10 @@ func aim_point() -> Vector3:
 	return camera.global_position - camera.global_transform.basis.z * aim_distance
 
 
-## One trigger pull. Returns the shot, or null when the pull did something
-## else or nothing: a clamber ignores it, a sprint is ended by it, a reload,
-## a swing or the interval swallows it, and a dry magazine spends it on the
-## reload.
+## One trigger pull. Returns the shot's first projectile, the whole shot in
+## `last_pellets`, or null when the pull did something else or nothing: a
+## clamber ignores it, a sprint is ended by it, a reload, a swing or the
+## interval swallows it, and a dry magazine spends it on the reload.
 func fire() -> Projectile3D:
 	if state == State.CLAMBER:
 		return null
@@ -731,18 +739,23 @@ func fire() -> Projectile3D:
 	ammo_changed.emit(ammo)
 
 	var origin := _shot_origin()
-	var direction := _scatter((aim_point() - origin).normalized())
-	var shot: Projectile3D = projectile_scene.instantiate()
-	shot.speed = weapon.projectile_speed
-	shot.lifetime = weapon.projectile_lifetime
-	shot.damage = weapon.damage
-	shot.launch(origin, direction, self, TEAM)
-	shot.hit.connect(_on_shot_hit)
-	_shot_parent().add_child(shot)
+	var aim := (aim_point() - origin).normalized()
+	# What this shot has struck so far, so its pellets report each target once.
+	var struck := {}
+	last_pellets.clear()
+	for i in maxi(weapon.pellet_count, 1):
+		var shot: Projectile3D = projectile_scene.instantiate()
+		shot.speed = weapon.projectile_speed
+		shot.lifetime = weapon.projectile_lifetime
+		shot.damage = weapon.damage
+		shot.launch(origin, _scatter(aim), self, TEAM)
+		shot.hit.connect(_on_shot_hit.bind(struck))
+		_shot_parent().add_child(shot)
+		last_pellets.append(shot)
 	_bloom += weapon.bloom_per_shot_degrees
 	fired.emit()
 	CrewNoise.make(get_tree(), global_position, CrewNoise.Kind.GUNSHOT, weapon.loudness, self)
-	return shot
+	return last_pellets[0]
 
 
 ## Where a bolt starts: the tip of the barrel as it is drawn. A barrel poked
@@ -756,22 +769,42 @@ func _shot_origin() -> Vector3:
 	return origin
 
 
-## The bolt struck [param target]: a hit if it could be hurt, and a kill if
-## that finished it.
-func _on_shot_hit(target: Node3D) -> void:
+## A bolt of a shot struck [param target]; [param struck] is what that shot
+## has struck so far. The first strike on a target that can be hurt reports
+## it a beat later, a kill if the shot finished it by then: a Shotgun's
+## pellets land over a physics step or two, and the shot is one hit marker
+## and one kill however many of them hit. A pellet that kills after the
+## report reports the kill; nothing reports a target twice as killed.
+func _on_shot_hit(target: Node3D, struck: Dictionary) -> void:
 	if target == null or not target.has_method("take_damage"):
 		return
-	var killed: bool = target.has_method("is_alive") and not target.is_alive()
+	if not struck.has(target):
+		struck[target] = &"pending"
+		get_tree().create_timer(SHOT_REPORT_DELAY, true, true).timeout.connect(_report_shot_hit.bind(target, struck))
+	elif struck[target] == &"hit" and _is_dead(target):
+		struck[target] = &"killed"
+		hit_landed.emit(target, true)
+
+
+func _report_shot_hit(target: Node3D, struck: Dictionary) -> void:
+	if not is_instance_valid(target):
+		return
+	var killed := _is_dead(target)
+	struck[target] = &"killed" if killed else &"hit"
 	hit_landed.emit(target, killed)
 
 
-## A random yaw and pitch inside the live cone, applied to the aim.
+static func _is_dead(target: Node3D) -> bool:
+	return target.has_method("is_alive") and not target.is_alive()
+
+
+## A random direction inside the live cone around the aim, evenly over the
+## cone's area.
 func _scatter(direction: Vector3) -> Vector3:
-	var cone := deg_to_rad(spread_degrees())
-	var yaw := _rng.randf_range(-cone, cone)
-	var pitch := _rng.randf_range(-cone, cone)
-	return direction.rotated(Vector3.UP, yaw) \
-			.rotated(camera.global_transform.basis.x, pitch).normalized()
+	var up := camera.global_transform.basis.x.cross(direction).normalized()
+	var right := direction.cross(up)
+	var offset := Vector2.from_angle(_rng.randf() * TAU) * sqrt(_rng.randf()) * tan(deg_to_rad(spread_degrees()))
+	return (direction + right * offset.x + up * offset.y).normalized()
 
 
 ## --- Melee ---

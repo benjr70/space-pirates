@@ -95,8 +95,11 @@ func _add_weapon_derived(table: SheetTable) -> void:
 	table.add_derived(&"reach", "Reach (m)", func(w: WeaponProfile) -> float:
 		return w.projectile_speed * w.projectile_lifetime)
 	table.add_derived(&"damage_per_shot", "Damage per shot", func(w: WeaponProfile) -> int:
-		return w.damage)
+		return w.damage * w.pellet_count)
 	table.add_derived(&"shots_to_kill_crew", "Shots to kill crew", _shots_to_kill_crew)
+	# Only a gun with pellets has its own row: for one bolt it is the shots.
+	table.add_derived(&"pellets_to_kill_crew", "Pellets to kill crew", func(w: WeaponProfile) -> Variant:
+		return ceili(float(sandbox.crew_health) / maxi(w.damage, 1)) if w.pellet_count > 1 else null)
 	table.add_derived(&"seconds_to_kill_crew", "Seconds to kill crew (from a full magazine)", func(w: WeaponProfile) -> float:
 		var shots := _shots_to_kill_crew(w)
 		@warning_ignore("integer_division")
@@ -106,8 +109,9 @@ func _add_weapon_derived(table: SheetTable) -> void:
 		return 1.0 / maxf(w.fire_interval, 0.001))
 
 
+## With every pellet landing.
 func _shots_to_kill_crew(w: WeaponProfile) -> int:
-	return ceili(float(sandbox.crew_health) / maxi(w.damage, 1))
+	return ceili(float(sandbox.crew_health) / maxi(w.damage * w.pellet_count, 1))
 
 
 func add_table(table: SheetTable) -> void:

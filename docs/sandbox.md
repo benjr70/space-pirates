@@ -4,61 +4,63 @@ Every Sandbox number, generated from `resources/weapons/`, `resources/sandbox.tr
 
 ## Weapons
 
-| | Pistol | Assault Rifle |
-|---|---|---|
-| **Trigger** | | |
-| Semi Auto | true | false |
-| Fire Interval | 0.12 | 0.09 |
-| **Magazine** | | |
-| Magazine Size | 12 | 30 |
-| Reload Tactical | 1.2 | 1.8 |
-| Reload Empty | 1.6 | 2.3 |
-| **Projectile** | | |
-| Damage | 25 | 25 |
-| Projectile Speed | 80.0 | 100.0 |
-| Projectile Lifetime | 0.5 | 0.5 |
-| **Spread** | | |
-| Spread Base Degrees | 1.0 | 1.2 |
-| Bloom Per Shot Degrees | 0.5 | 0.3 |
-| Bloom Decay Seconds | 0.3 | 0.35 |
-| Spread Crouch | 0.7 | 0.7 |
-| Spread Still | 1.0 | 1.0 |
-| Spread Walking | 1.2 | 1.3 |
-| Spread Slide | 1.5 | 1.6 |
-| Spread Air | 1.5 | 1.8 |
-| **Aim Down Sights** | | |
-| Ads Spread | 0.5 | 0.45 |
-| Ads Zoom | 1.6 | 1.6 |
-| Ads Speed | 0.8 | 0.7 |
-| **Recoil** | | |
-| Recoil Push | 0.05 | 0.035 |
-| Recoil Kick Degrees | 7.0 | 3.0 |
-| Ads Recoil Push | 0.05 | 0.03 |
-| Ads Recoil Kick Degrees | 7.0 | 0.0 |
-| Camera Kick Degrees | 1.2 | 0.5 |
-| Fire Clip | fire | - |
-| **Sound** | | |
-| Shot Sounds | kurt_22_magnum/shot_1.ogg, kurt_22_magnum/shot_2.ogg, kurt_22_magnum/shot_3.ogg | kurt_gunshots/shot_1.ogg, kurt_gunshots/shot_2.ogg, kurt_gunshots/shot_3.ogg, kurt_gunshots/shot_4.ogg |
-| Reload Sounds | oga_reload/clipload1.ogg, oga_reload/clipload2.ogg | oga_reload/clipload1.ogg, oga_reload/clipload2.ogg |
-| Action Sound | - | - |
-| Action Sound Delay | 0.0 | 0.0 |
-| Loudness | 24.0 | 24.0 |
-| **Viewmodel** | | |
-| Model | pistol_model.tscn | assault_rifle_model.tscn |
-| Pose Hip | (0.16, -0.18, -0.3) | (0.13, -0.19, -0.4) |
-| Pose Low | (0.2, -0.26, -0.3) | (0.2, -0.3, -0.38) |
-| Ads Distance | 0.32 | 0.265 |
-| Model Fire Clip | fire | fire |
-| Model Reload Clip | reload | reload |
-| Model Rack Clip | rack | rack |
-| Fire Cycle Time | 0.15 | 0.08 |
-| Rack Time | 0.3 | 0.35 |
-| **Derived** | | |
-| = Reach (m) | 40.0 | 50.0 |
-| = Damage per shot | 25 | 25 |
-| = Shots to kill crew | 4 | 4 |
-| = Seconds to kill crew (from a full magazine) | 0.36 | 0.27 |
-| = Shots per second | 8.3333 | 11.1111 |
+| | Pistol | Assault Rifle | Shotgun |
+|---|---|---|---|
+| **Trigger** | | | |
+| Semi Auto | true | false | true |
+| Fire Interval | 0.12 | 0.09 | 0.8 |
+| **Magazine** | | | |
+| Magazine Size | 12 | 30 | 6 |
+| Reload Tactical | 1.2 | 1.8 | 2.4 |
+| Reload Empty | 1.6 | 2.3 | 2.4 |
+| **Projectile** | | | |
+| Pellet Count | 1 | 1 | 12 |
+| Damage | 25 | 25 | 13 |
+| Projectile Speed | 80.0 | 100.0 | 60.0 |
+| Projectile Lifetime | 0.5 | 0.5 | 0.25 |
+| **Spread** | | | |
+| Spread Base Degrees | 1.0 | 1.2 | 5.0 |
+| Bloom Per Shot Degrees | 0.5 | 0.3 | 0.0 |
+| Bloom Decay Seconds | 0.3 | 0.35 | 0.3 |
+| Spread Crouch | 0.7 | 0.7 | 1.0 |
+| Spread Still | 1.0 | 1.0 | 1.0 |
+| Spread Walking | 1.2 | 1.3 | 1.0 |
+| Spread Slide | 1.5 | 1.6 | 1.0 |
+| Spread Air | 1.5 | 1.8 | 1.3 |
+| **Aim Down Sights** | | | |
+| Ads Spread | 0.5 | 0.45 | 0.8 |
+| Ads Zoom | 1.6 | 1.6 | 1.15 |
+| Ads Speed | 0.8 | 0.7 | 0.85 |
+| **Recoil** | | | |
+| Recoil Push | 0.05 | 0.035 | 0.09 |
+| Recoil Kick Degrees | 7.0 | 3.0 | 11.0 |
+| Ads Recoil Push | 0.05 | 0.03 | 0.07 |
+| Ads Recoil Kick Degrees | 7.0 | 0.0 | 6.0 |
+| Camera Kick Degrees | 1.2 | 0.5 | 3.0 |
+| Fire Clip | fire | - | - |
+| **Sound** | | | |
+| Shot Sounds | kurt_22_magnum/shot_1.ogg, kurt_22_magnum/shot_2.ogg, kurt_22_magnum/shot_3.ogg | kurt_gunshots/shot_1.ogg, kurt_gunshots/shot_2.ogg, kurt_gunshots/shot_3.ogg, kurt_gunshots/shot_4.ogg | firearm_library_shotgun/shot.ogg |
+| Reload Sounds | oga_reload/clipload1.ogg, oga_reload/clipload2.ogg | oga_reload/clipload1.ogg, oga_reload/clipload2.ogg | oga_reload/clipload1.ogg, oga_reload/clipload2.ogg |
+| Action Sound | - | - | - |
+| Action Sound Delay | 0.0 | 0.0 | 0.0 |
+| Loudness | 24.0 | 24.0 | 32.0 |
+| **Viewmodel** | | | |
+| Model | pistol_model.tscn | assault_rifle_model.tscn | shotgun_model.tscn |
+| Pose Hip | (0.16, -0.18, -0.3) | (0.13, -0.19, -0.4) | (0.15, -0.24, -0.34) |
+| Pose Low | (0.2, -0.26, -0.3) | (0.2, -0.3, -0.38) | (0.21, -0.36, -0.32) |
+| Ads Distance | 0.32 | 0.265 | 0.3 |
+| Model Fire Clip | fire | fire | fire |
+| Model Reload Clip | reload | reload | reload |
+| Model Rack Clip | rack | rack | - |
+| Fire Cycle Time | 0.15 | 0.08 | 0.15 |
+| Rack Time | 0.3 | 0.35 | 0.3 |
+| **Derived** | | | |
+| = Reach (m) | 40.0 | 50.0 | 15.0 |
+| = Damage per shot | 25 | 25 | 156 |
+| = Shots to kill crew | 4 | 4 | 1 |
+| = Pellets to kill crew | - | - | 8 |
+| = Seconds to kill crew (from a full magazine) | 0.36 | 0.27 | 0.0 |
+| = Shots per second | 8.3333 | 11.1111 | 1.25 |
 
 ## Health and Melee
 

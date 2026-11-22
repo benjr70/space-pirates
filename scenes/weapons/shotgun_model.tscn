@@ -1,0 +1,28 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="PackedScene" path="res://assets/models/shotgun/shotgun.glb" id="1"]
+
+[sub_resource type="Animation" id="fire"]
+resource_name = "fire"
+length = 0.15
+
+[sub_resource type="Animation" id="reload"]
+resource_name = "reload"
+
+[sub_resource type="AnimationLibrary" id="clips"]
+_data = {
+&"fire": SubResource("fire"),
+&"reload": SubResource("reload")
+}
+
+[node name="ShotgunModel" type="Node3D"]
+
+[node name="Shotgun" parent="." instance=ExtResource("1")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.068, -0.01)
+
+[node name="Skeleton3D" type="Skeleton3D" parent="."]
+
+[node name="AnimationPlayer" type="AnimationPlayer" parent="."]
+libraries = {
+&"": SubResource("clips")
+}

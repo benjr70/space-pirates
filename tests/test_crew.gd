@@ -81,6 +81,8 @@ func _initialize() -> void:
 	await _check_container_and_door()
 	await _check_hatch()
 	_check_panel_spots()
+	await _check_shotgun_one_kill()
+	await _check_shotgun_range()
 	await _check_routines()
 	_check_types()
 	_report()
@@ -977,6 +979,113 @@ func _check_hatch() -> void:
 			and hunter._path.any(func(p: Vector3) -> bool: return p.distance_to(gap) < 0.1),
 			"traces: a Guard hunting the pirate in his pod does not route in through the Hatch: %s" % [hunter._path])
 	hunter.free()
+
+
+## --- the Shotgun against crew ---
+
+## The Pirate, holding [param profile], [param distance] m in front of
+## [param crew], aimed at its chest.
+func _aim_at_crew(crew: Crew3D, distance: float, profile: WeaponProfile) -> void:
+	player.weapon = profile
+	player.ammo = profile.magazine_size
+	player.global_position = crew.global_position + Vector3.FORWARD * distance
+	player.state = player.State.WALK
+	player.rotation.y = PI
+	var eye: Vector3 = player.head.global_position
+	var chest: Vector3 = crew.global_position + Vector3.UP * 0.95
+	player.head.rotation.x = atan2(chest.y - eye.y, Vector2(chest.x - eye.x, chest.z - eye.z).length())
+	# The Viewmodel's swap beat, and the bodies live in physics.
+	for i in 40:
+		await physics_frame
+
+
+## One trigger pull, waited out until every pellet has struck or died and
+## the volley has reported.
+func _shotgun_shot() -> void:
+	player._cooldown = 0.0
+	player.fire()
+	while player.last_pellets.any(func(p) -> bool: return is_instance_valid(p)):
+		await physics_frame
+	for i in 3:
+		await physics_frame
+
+
+## A Shotgun shot that kills one crew member reports one hit and one kill,
+## however many of its 12 pellets land; two crew side by side each report
+## once.
+func _check_shotgun_one_kill() -> void:
+	var pistol: WeaponProfile = player.weapon
+	var shotgun: WeaponProfile = load("res://resources/weapons/shotgun.tres")
+	var hits: Array = []
+	var record := func(target: Node3D, killed: bool) -> void: hits.append([target, killed])
+	player.hit_landed.connect(record)
+	var crew := _crew()
+	await _aim_at_crew(crew, 3.0, shotgun)
+	await _shotgun_shot()
+	_expect(not crew.is_alive(), "a centred Shotgun shot 3 m off left crew on %d" % crew.health.current)
+	_expect(hits == [[crew, true]], "a Shotgun kill reported %s, want one kill" % [hits])
+	crew.free()
+
+	hits.clear()
+	var left := _crew()
+	var right := _crew()
+	# Shoulder to shoulder, the crosshair between them, so the pellets split.
+	left.global_position = CREW_AT + Vector3.LEFT * 0.3
+	right.global_position = CREW_AT + Vector3.RIGHT * 0.3
+	await _aim_at_crew(left, 3.0, shotgun)
+	player.global_position = CREW_AT + Vector3.FORWARD * 3.0
+	await _shotgun_shot()
+	var reported := hits.map(func(h: Array) -> Node3D: return h[0])
+	_expect(reported.size() == 2 and left in reported and right in reported,
+			"a Shotgun shot between two crew reported %s, want each once" % [hits])
+	left.free()
+	right.free()
+	player.hit_landed.disconnect(record)
+	player.head.rotation.x = 0.0
+	player.weapon = pistol
+	player.ammo = pistol.magazine_size
+
+
+## The Shotgun's range band, fired for real at a crew member stood still,
+## as a loose guard on what the picked numbers gave when it was built
+## (100 shots each: one shot killed 100% at 3 to 6 m, 89% at 8 m, 50% at
+## 10 m and 20% at 12 m; two shots 100% to 10 m and 96% at 12 m). The band
+## is tuned in the balance pass; this only catches a gun that stops killing
+## up close or starts killing far off. Crew Health is pinned high so every
+## pellet lands on the body, and a shot counts as a kill when its pellets
+## add up to the Sandbox's crew Health. The scatter is seeded, so the run
+## repeats.
+func _check_shotgun_range() -> void:
+	const SHOTS := 40
+	var pistol: WeaponProfile = player.weapon
+	var shotgun: WeaponProfile = load("res://resources/weapons/shotgun.tres")
+	var crew_health: int = (load(Sandbox.PATH) as Sandbox).crew_health
+	var crew := _crew()
+	crew.health.max_health = 1000000
+	player._rng.seed = 22
+	var rates := {}
+	for distance: float in [3.0, 4.0, 8.0, 12.0]:
+		await _aim_at_crew(crew, distance, shotgun)
+		var damage: Array[int] = []
+		for i in SHOTS:
+			crew.health.current = crew.health.max_health
+			player.ammo = shotgun.magazine_size
+			await _shotgun_shot()
+			damage.append(crew.health.max_health - crew.health.current)
+		var one := damage.filter(func(d: int) -> bool: return d >= crew_health).size()
+		var two := 0
+		for i in damage.size() - 1:
+			two += int(damage[i] + damage[i + 1] >= crew_health)
+		rates[distance] = [float(one) / damage.size(), float(two) / (damage.size() - 1)]
+		print("  Shotgun at %.0f m: one shot kills %.0f%%, two shots %.0f%% (%d shots)" % [distance,
+				rates[distance][0] * 100.0, rates[distance][1] * 100.0, SHOTS])
+	_expect(rates[3.0][0] >= 0.95, "a centred Shotgun shot 3 m off killed only %.0f%% of the time" % (rates[3.0][0] * 100.0))
+	_expect(rates[12.0][0] <= 0.45, "a Shotgun shot 12 m off killed %.0f%% of the time" % (rates[12.0][0] * 100.0))
+	_expect(rates[8.0][1] >= 0.95, "two Shotgun shots 8 m off killed only %.0f%% of the time" % (rates[8.0][1] * 100.0))
+	crew.free()
+	player.head.rotation.x = 0.0
+	player.weapon = pistol
+	player.ammo = pistol.magazine_size
 
 
 ## A crew member killed before it spotted the Pirate died unaware; one

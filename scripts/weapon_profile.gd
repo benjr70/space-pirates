@@ -21,14 +21,20 @@ extends Resource
 @export var reload_empty := 1.6
 
 @export_group("Projectile")
-## Flat damage per hit: no headshots.
+## Projectiles one shot launches, each thrown at random inside the cone and
+## each doing `damage`: 1 for a gun with a single bolt, more for a Shotgun's
+## pellets. However many land, a shot is one hit and at most one kill on
+## each crew member it strikes.
+@export var pellet_count := 1
+## Flat damage per hit, per pellet: no headshots.
 @export var damage := 25
 @export var projectile_speed := 80.0
 ## Seconds a shot flies before it gives up.
 @export var projectile_lifetime := 0.5
 
 @export_group("Spread")
-## Half-angle of the cone shots scatter inside, before bloom and state.
+## Half-angle of the cone shots scatter inside, evenly over its area,
+## before bloom and state.
 @export var spread_base_degrees := 1.0
 ## Each shot widens the cone by this much.
 @export var bloom_per_shot_degrees := 0.5

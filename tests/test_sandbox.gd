@@ -32,8 +32,9 @@ func _check_doc_fresh() -> void:
 	var report := SandboxSheet.from_disk().stale_report()
 	_expect(report == "", "stale check: %s" % report)
 	var doc := FileAccess.get_file_as_string(SandboxSheet.DOC_PATH)
-	for heading in ["## Weapons", "## Health and Melee", "| | Pistol | Assault Rifle |", "| **Trigger** |",
-			"| **Derived** |", "| = Shots to kill crew | 4 | 4 |", "| Pirate Health | 150 |", "| Crew Health | 100 |",
+	for heading in ["## Weapons", "## Health and Melee", "| | Pistol | Assault Rifle | Shotgun |", "| **Trigger** |",
+			"| **Derived** |", "| = Shots to kill crew | 4 | 4 | 1 |", "| Pellet Count | 1 | 1 | 12 |",
+			"| = Damage per shot | 25 | 25 | 156 |", "| = Pellets to kill crew | - | - | 8 |", "| Pirate Health | 150 |", "| Crew Health | 100 |",
 			"| Melee Damage | 75 |", "kills outright", "## Gunnery", "| | Guard | Worker |", "| **Aim** |",
 			"| Aim Error Degrees | 6.0 | 11.0 |", "| Burst Length | 3 | 2 |", "| Pause Between Bursts | 1.1 | 1.1 |",
 			"| Engage Range | 10.6 | 10.6 |", "Crew fire the Pistol"]:
@@ -100,10 +101,11 @@ func _check_stale_on_hand_edit(copies: Dictionary) -> void:
 func _check_edit_save_revert(copies: Dictionary) -> void:
 	var pistol: WeaponProfile = load(copies.weapons[0])
 	var rifle: WeaponProfile = load(copies.weapons[1])
+	var shotgun: WeaponProfile = load(copies.weapons[2])
 	var sandbox: Sandbox = load(copies.sandbox)
 	var guard: Gunnery = load(copies.gunnery[0])
 	var worker: Gunnery = load(copies.gunnery[1])
-	var sheet := SandboxSheet.build([pistol, rifle], sandbox, [guard, worker])
+	var sheet := SandboxSheet.build([pistol, rifle, shotgun], sandbox, [guard, worker])
 	sheet.doc_path = copies.doc
 	var weapons := sheet.table(SandboxSheet.WEAPONS)
 	var health := sheet.table(SandboxSheet.HEALTH)
@@ -113,7 +115,7 @@ func _check_edit_save_revert(copies: Dictionary) -> void:
 		return
 	for key in [&"aim_error_degrees", &"burst_length", &"pause_between_bursts", &"engage_range"]:
 		_expect(gunnery.is_editable(key), "Gunnery's %s is not editable in the sheet" % key)
-	_expect(weapons.columns == PackedStringArray(["Pistol", "Assault Rifle"]), "weapon columns are %s" % weapons.columns)
+	_expect(weapons.columns == PackedStringArray(["Pistol", "Assault Rifle", "Shotgun"]), "weapon columns are %s" % weapons.columns)
 	_expect(sheet.changed_count() == 0, "a fresh sheet has %d changed cells" % sheet.changed_count())
 
 	_expect(weapons.set_value(&"damage", 0, 40), "the Pistol's damage would not take 40")
