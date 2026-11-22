@@ -120,7 +120,8 @@ crew type at spawn from `resources/gunnery/`):
 | engage range, m | 10.6 | 10.6 |
 
 Both are read at the moment of use, so a Sandbox sheet edit reaches crew
-already in the Raid. The shot sound is still `shot_streams` on `crew.gd`.
+already in the Raid. The shot sound and how far it carries are the Pistol's
+(`shot_sounds`, `loudness`), so crew sound like the Pirate's Pistol.
 With the Pistol's 80 m/s, 0.5 s bolt, crew fire is far harder to sidestep
 than the old 23.75 m/s bolt; the balance pass retunes Gunnery.
 
@@ -258,7 +259,7 @@ cowers. Once raised it stays up for the rest of the Raid:
 **Breaking a panel**: the Pirate's shot breaks a panel (screen goes dark); crew
 shots do not. A broken panel raises nothing: a Worker running to it when it
 breaks re-picks the nearest working panel, then a Guard. Breaking one is a
-gunshot like any other, heard 24 m off.
+gunshot like any other, heard as far as the weapon's loudness (24 m).
 
 **On Edge**: a crew member that has lost the Pirate (entered SEARCH), crept
 back from hiding, or heard the Alarm is On Edge for the rest of the Raid: every
@@ -310,7 +311,7 @@ crew member that can hear it. A noise reaches a crew member when both:
 | Sprinting step | STEP | 9 m | the Pirate, once per stride (the step he hears in `PirateAudio`) |
 | Walking step | STEP | 3 m | the Pirate |
 | Crouched or sliding step | — | silent | the Pirate |
-| Gunshot | GUNSHOT | 24 m | the Pirate and crew, every shot |
+| Gunshot | GUNSHOT | the weapon's `loudness` (24 m) | the Pirate and crew, every shot |
 | Door opening or closing | DOOR | 6 m | whoever works it |
 
 A crew member that hears a noise (`Crew3D.hear`):
@@ -351,7 +352,7 @@ and `crew.gd` (`SEARCH_AWARENESS`, `INVESTIGATE_SPEED`, `INVESTIGATE_LINGER`,
 `ship_alarm.gd` (`RED`, `PULSE_*`), `alarm_panel.gd` (`ROLES`, `SIZE`, `HEIGHT`),
 `crew_types.gd` (`GUARD_ROLES`, `WORKER_ROLES`), `HEARD_NOISE`, `HEARD_GUNSHOT`, `HEARD_CAP`) and
 `crew_routine.gd` (`WORK_PROPS`, `JOBS_MIN`/`MAX`, `WORK_TIME`,
-`PATROL_PAUSE`, `AWAY_CHANCE`) and `crew_noise.gd` (`SPRINT_STEP`, `WALK_STEP`, `GUNSHOT`, `DOOR`). They are starting values to be tuned by
+`PATROL_PAUSE`, `AWAY_CHANCE`) and `crew_noise.gd` (`SPRINT_STEP`, `WALK_STEP`, `DOOR`). They are starting values to be tuned by
 playtest. Gun numbers are not here: they are the Pistol's and each crew
 type's Gunnery, edited in the Sandbox sheet (`docs/sandbox.md`).
 

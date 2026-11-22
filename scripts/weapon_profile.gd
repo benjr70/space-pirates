@@ -65,6 +65,20 @@ extends Resource
 ## for a weapon whose recoil is only the numbers above.
 @export var fire_clip: StringName = &"fire"
 
+@export_group("Sound")
+## The takes a shot plays, one at random. Shot sounds live here and nowhere
+## else, so the Pirate and crew holding this weapon sound alike.
+@export var shot_sounds: Array[AudioStream] = []
+## The reload, in order: the first as the magazine comes out, the second as
+## it goes in.
+@export var reload_sounds: Array[AudioStream] = []
+## A sound after each shot, such as a pump, `action_sound_delay` seconds
+## after it; none for a gun whose action is silent.
+@export var action_sound: AudioStream
+@export var action_sound_delay := 0.0
+## Metres at which crew hear the shot.
+@export var loudness := 24.0
+
 @export_group("Viewmodel")
 ## The mesh he holds: a scene under `scenes/weapons` that mounts the model
 ## where the hand goes, with `Muzzle` and `SightTip` markers somewhere inside

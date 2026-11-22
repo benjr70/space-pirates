@@ -205,6 +205,18 @@ static func format(v: Variant) -> String:
 			if v is Resource and v.resource_path != "":
 				return v.resource_path.get_file()
 			return str(v)
+		TYPE_ARRAY:
+			if v.is_empty():
+				return "-"
+			# Takes are often named alike (shot_1, shot_2) in their own
+			# folders, so a list names each with its folder.
+			var parts := PackedStringArray()
+			for item in v:
+				if item is Resource and item.resource_path != "":
+					parts.append(item.resource_path.get_base_dir().get_file().path_join(item.resource_path.get_file()))
+				else:
+					parts.append(format(item))
+			return ", ".join(parts)
 	return str(v)
 
 

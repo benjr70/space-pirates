@@ -1,7 +1,12 @@
-[gd_resource type="Resource" script_class="WeaponProfile" load_steps=3 format=3]
+[gd_resource type="Resource" script_class="WeaponProfile" load_steps=8 format=3]
 
 [ext_resource type="Script" path="res://scripts/weapon_profile.gd" id="1"]
 [ext_resource type="PackedScene" path="res://scenes/weapons/pistol_model.tscn" id="2"]
+[ext_resource type="AudioStream" path="res://assets/audio/kurt_22_magnum/shot_1.ogg" id="s1"]
+[ext_resource type="AudioStream" path="res://assets/audio/kurt_22_magnum/shot_2.ogg" id="s2"]
+[ext_resource type="AudioStream" path="res://assets/audio/kurt_22_magnum/shot_3.ogg" id="s3"]
+[ext_resource type="AudioStream" path="res://assets/audio/oga_reload/clipload1.ogg" id="r1"]
+[ext_resource type="AudioStream" path="res://assets/audio/oga_reload/clipload2.ogg" id="r2"]
 
 [resource]
 script = ExtResource("1")
@@ -25,3 +30,5 @@ ads_spread = 0.5
 ads_zoom = 1.6
 ads_speed = 0.8
 model = ExtResource("2")
+shot_sounds = Array[AudioStream]([ExtResource("s1"), ExtResource("s2"), ExtResource("s3")])
+reload_sounds = Array[AudioStream]([ExtResource("r1"), ExtResource("r2")])

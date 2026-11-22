@@ -37,6 +37,12 @@ Every Sandbox number, generated from `resources/weapons/`, `resources/sandbox.tr
 | Ads Recoil Kick Degrees | 7.0 | 0.0 |
 | Camera Kick Degrees | 1.2 | 0.5 |
 | Fire Clip | fire | - |
+| **Sound** | | |
+| Shot Sounds | kurt_22_magnum/shot_1.ogg, kurt_22_magnum/shot_2.ogg, kurt_22_magnum/shot_3.ogg | kurt_gunshots/shot_1.ogg, kurt_gunshots/shot_2.ogg, kurt_gunshots/shot_3.ogg, kurt_gunshots/shot_4.ogg |
+| Reload Sounds | oga_reload/clipload1.ogg, oga_reload/clipload2.ogg | oga_reload/clipload1.ogg, oga_reload/clipload2.ogg |
+| Action Sound | - | - |
+| Action Sound Delay | 0.0 | 0.0 |
+| Loudness | 24.0 | 24.0 |
 | **Viewmodel** | | |
 | Model | pistol_model.tscn | assault_rifle_model.tscn |
 | Pose Hip | (0.16, -0.18, -0.3) | (0.13, -0.19, -0.4) |

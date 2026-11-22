@@ -67,6 +67,7 @@ func _initialize() -> void:
 	_check_sting()
 	await _check_hearing()
 	_check_doorway()
+	_check_loudness()
 	await _check_worker()
 	_check_on_edge()
 	await _check_share()
@@ -308,7 +309,7 @@ func _check_hearing() -> void:
 	_expect(crew.state == Crew3D.State.INVESTIGATE, "a crew member that heard a step is in state %d, not investigating" % crew.state)
 	_expect(crew.global_position.distance_to(at) < start - 0.8, "a crew member that heard a step did not walk toward it")
 	for i in 20:
-		CrewNoise.make(self, player.global_position, CrewNoise.Kind.GUNSHOT, CrewNoise.GUNSHOT, player)
+		CrewNoise.make(self, player.global_position, CrewNoise.Kind.GUNSHOT, player.weapon.loudness, player)
 	_expect(crew.perception.awareness < 1.0 and crew.state != Crew3D.State.HUNT, "noise alone spotted the pirate")
 	crew.perception.awareness = 0.98
 	CrewNoise.make(self, player.global_position, CrewNoise.Kind.DOOR, CrewNoise.DOOR * 99.0, player)
@@ -327,13 +328,65 @@ func _check_doorway() -> void:
 	crew.set_physics_process(false)
 	var shot := ShipBuilder3D.tile_to_world(Vector2i(103, 4))
 	pair_door.close()
-	CrewNoise.make(self, shot, CrewNoise.Kind.GUNSHOT, CrewNoise.GUNSHOT, player)
+	CrewNoise.make(self, shot, CrewNoise.Kind.GUNSHOT, player.weapon.loudness, player)
 	_expect(crew.perception.awareness == 0.0, "a gunshot carried through a shut door")
 	pair_door.open()
 	crew.perception.awareness = 0.0
-	CrewNoise.make(self, shot, CrewNoise.Kind.GUNSHOT, CrewNoise.GUNSHOT, player)
+	CrewNoise.make(self, shot, CrewNoise.Kind.GUNSHOT, player.weapon.loudness, player)
 	_expect(crew.perception.band() == CrewPerception.Band.SUSPICIOUS, "a gunshot did not carry through an open door")
 	crew.free()
+
+
+## A shot reaches crew as far as the weapon's loudness: the Pistol's 24 m
+## stirs a crew member 20 m off and not one 28 m off, and raising it in the
+## Sandbox sheet stirs the further one too, for the Pirate's shots and the
+## crew's own alike.
+func _check_loudness() -> void:
+	var pistol: WeaponProfile = player.weapon
+	_expect(is_equal_approx(pistol.loudness, 24.0), "the Pistol is %.1f m loud, not 24" % pistol.loudness)
+	var sheet := SandboxSheet.build([pistol], load(Sandbox.PATH))
+	var weapons := sheet.table(SandboxSheet.WEAPONS)
+	_expect(weapons.is_editable(&"loudness"), "loudness is not an editable sheet row")
+	var at := Vector3(200.0, 0.0, 200.0)
+	player.global_position = at
+	player.state = player.State.WALK
+	var near := _crew()
+	var far := _crew()
+	for crew in [near, far]:
+		crew.layout = null
+		crew.target = null
+	near.global_position = at + Vector3.RIGHT * 20.0
+	far.global_position = at + Vector3.RIGHT * 28.0
+	var shots: Array[Projectile3D] = []
+	for loudness in [24.0, 32.0]:
+		weapons.set_value(&"loudness", 0, loudness)
+		near.perception.awareness = 0.0
+		far.perception.awareness = 0.0
+		player._cooldown = 0.0
+		player.ammo = pistol.magazine_size
+		var shot: Projectile3D = player.fire()
+		_expect(shot != null, "the Pirate did not fire at loudness %.0f" % loudness)
+		shots.append(shot)
+		_expect(near.perception.band() == CrewPerception.Band.SUSPICIOUS, "a shot at loudness %.0f missed the crew 20 m off" % loudness)
+		var heard := far.perception.band() == CrewPerception.Band.SUSPICIOUS
+		_expect(heard == (loudness > 28.0), "a shot at loudness %.0f: the crew 28 m off heard it %s" % [loudness, heard])
+	# A crew member's own shot carries as far as the same Pistol's loudness.
+	far.global_position = near.global_position + Vector3.RIGHT * 10.0
+	for loudness in [8.0, 12.0]:
+		weapons.set_value(&"loudness", 0, loudness)
+		far.perception.awareness = 0.0
+		near.target = player
+		near._aim = Vector3.LEFT
+		shots.append(near._fire())
+		var heard := far.perception.band() == CrewPerception.Band.SUSPICIOUS
+		_expect(heard == (loudness > 10.0), "a crew shot at loudness %.0f: the crew 10 m off heard it %s" % [loudness, heard])
+	sheet.revert()
+	_expect(is_equal_approx(pistol.loudness, 24.0), "Revert left the Pistol %.1f m loud" % pistol.loudness)
+	for shot in shots:
+		if shot != null:
+			shot.free()
+	near.free()
+	far.free()
 
 
 ## A generated medium ship left alone for 60 simulated seconds, the Pirate

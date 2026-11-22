@@ -114,14 +114,8 @@ const TORSO_HEIGHT := 1.0
 ## Left empty, it is their crew type's at spawn.
 @export var gunnery: Gunnery
 @export var projectile_scene: PackedScene = preload("res://scenes/projectile_3d.tscn")
-## What their shot sounds like, rung at the muzzle: the same gun as the
-## Pirate's, and distance does the rest.
-@export var shot_streams: Array[AudioStream] = [
-	preload("res://assets/audio/kurt_gunshots/shot_1.ogg"),
-	preload("res://assets/audio/kurt_gunshots/shot_2.ogg"),
-	preload("res://assets/audio/kurt_gunshots/shot_3.ogg"),
-	preload("res://assets/audio/kurt_gunshots/shot_4.ogg"),
-]
+## How loud their shot rings at the muzzle. What it sounds like is the
+## weapon's own shot sounds, and distance does the rest.
 @export var shot_volume_db := -3.0
 
 @export_group("Sandbox")
@@ -1183,9 +1177,9 @@ func _fire() -> Projectile3D:
 	shot.lifetime = weapon.projectile_lifetime
 	shot.launch(origin, direction, self, TEAM)
 	_shot_parent().add_child(shot)
-	if not shot_streams.is_empty():
-		SoundAt.play(_shot_parent(), origin, shot_streams.pick_random(), shot_volume_db, 0.06, "Shot")
-	CrewNoise.make(get_tree(), global_position, CrewNoise.Kind.GUNSHOT, CrewNoise.GUNSHOT, self)
+	if not weapon.shot_sounds.is_empty():
+		SoundAt.play(_shot_parent(), origin, weapon.shot_sounds.pick_random(), shot_volume_db, 0.06, "Shot")
+	CrewNoise.make(get_tree(), global_position, CrewNoise.Kind.GUNSHOT, weapon.loudness, self)
 	return shot
 
 

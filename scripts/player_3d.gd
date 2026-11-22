@@ -741,7 +741,7 @@ func fire() -> Projectile3D:
 	_shot_parent().add_child(shot)
 	_bloom += weapon.bloom_per_shot_degrees
 	fired.emit()
-	CrewNoise.make(get_tree(), global_position, CrewNoise.Kind.GUNSHOT, CrewNoise.GUNSHOT, self)
+	CrewNoise.make(get_tree(), global_position, CrewNoise.Kind.GUNSHOT, weapon.loudness, self)
 	return shot
 
 

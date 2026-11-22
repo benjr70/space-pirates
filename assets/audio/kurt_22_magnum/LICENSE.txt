@@ -1,0 +1,10 @@
+"Gunshots" by kurt, published on OpenGameArt under CC0 (no attribution
+needed): https://opengameart.org/content/gunshots
+
+shot_1..3.ogg  the Pistol's shot: the three single shots in "22 Magnum.wav"
+               (a .22 Magnum handgun, 2.2 s, 96 kHz stereo), one take per
+               shot, mono 44.1 kHz, 0.5-0.6 s each with a 0.12 s fade,
+               peak-normalised to -1.5 dB, cut the way the sound booth's
+               cut.py cuts (branch prototype/new-gun-sounds). Picked by ear
+               in the sound booth over the Free Firearm Sound Library and
+               today's gunshot (new-weapons decision 12).

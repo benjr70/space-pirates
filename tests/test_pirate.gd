@@ -150,6 +150,7 @@ func _run() -> void:
 	_check_hud_health()
 	await _check_hud_dry_click()
 	await _check_audio_events()
+	_check_shot_sounds_only_in_profiles()
 	await _check_audio_reload()
 	await _check_audio_footsteps()
 	await _check_audio_impact_and_respawn()
@@ -1834,8 +1835,27 @@ func _check_audio_events() -> void:
 	await _frames(1)
 	_expect(_sound_kinds() == [&"shot"], "a shot played %s" % [_sound_kinds()])
 	var first_stream: AudioStream = sounds[0][1]
-	_expect(first_stream != null and first_stream.resource_path.contains("kurt_gunshots/shot"), "the shot played %s" % [first_stream])
+	_expect(first_stream in player.weapon.shot_sounds and first_stream.resource_path.contains("kurt_22_magnum/shot"),
+			"the Pistol's shot played %s" % [first_stream])
+	_expect(player.weapon.shot_sounds.size() >= 2, "the Pistol has %d shot takes" % player.weapon.shot_sounds.size())
 	sounds.clear()
+	# The Assault Rifle sounds its own shot, not the Pistol's.
+	await _seconds(0.2)
+	player.switch_weapon(1)
+	await _seconds(player.swap_time + 0.05)
+	_expect(player.weapon == ASSAULT_RIFLE, "the wheel did not reach the Assault Rifle")
+	_expect(_fire_and_drop(), "no Assault Rifle shot for the shot sound")
+	await _frames(1)
+	var rifle_stream: AudioStream = sounds[0][1] if sounds.size() == 1 else null
+	_expect(rifle_stream != null and rifle_stream in ASSAULT_RIFLE.shot_sounds and rifle_stream.resource_path.contains("kurt_gunshots/shot"),
+			"the Assault Rifle's shot played %s" % [sounds])
+	for stream in ASSAULT_RIFLE.shot_sounds:
+		_expect(not stream in player.weapons[0].shot_sounds, "the Pistol and the Assault Rifle share %s" % stream.resource_path)
+	_expect(is_equal_approx(ASSAULT_RIFLE.loudness, 24.0), "the Assault Rifle is %.1f m loud, not 24" % ASSAULT_RIFLE.loudness)
+	player.switch_weapon(1)
+	await _seconds(player.swap_time + 0.05)
+	sounds.clear()
+	await _check_action_sound()
 	await _seconds(0.2)
 	player.ammo = 0
 	await _pull_trigger(30)
@@ -1862,6 +1882,63 @@ func _check_audio_events() -> void:
 	_expect(_sounds_of(&"hit") == 1, "a hit taken played %d hit sounds" % _sounds_of(&"hit"))
 
 
+## A Profile's action sound plays its delay after each shot; neither gun
+## today has one. A test Profile carries it, since no gun does yet.
+func _check_action_sound() -> void:
+	var pistol: WeaponProfile = player.weapon
+	_expect(pistol.action_sound == null and ASSAULT_RIFLE.action_sound == null, "a current gun has an action sound")
+	var pumped: WeaponProfile = pistol.duplicate()
+	var pump: AudioStream = pistol.reload_sounds[0]
+	pumped.action_sound = pump
+	pumped.action_sound_delay = 0.3
+	player.weapon = pumped
+	await _seconds(0.2)
+	sounds.clear()
+	_expect(_fire_and_drop(), "no shot from the test Profile")
+	await _seconds(0.15)
+	_expect(_sound_kinds() == [&"shot"], "0.15 s after a shot with a 0.3 s action the sounds were %s" % [_sound_kinds()])
+	await _seconds(0.25)
+	_expect(_sound_kinds() == [&"shot", &"action"] and sounds[1][1] == pump,
+			"0.4 s after a shot with a 0.3 s action the sounds were %s" % [sounds])
+	player.weapon = pistol
+	sounds.clear()
+	_fire_and_drop()
+	await _seconds(0.5)
+	_expect(_sounds_of(&"action") == 0, "the Pistol played an action sound")
+	sounds.clear()
+
+
+## No shot sound is named anywhere but a Weapon Profile: every take a
+## carried Profile plays is referenced only under `resources/weapons`.
+func _check_shot_sounds_only_in_profiles() -> void:
+	var paths: Array[String] = []
+	for profile in player.weapons:
+		for stream in profile.shot_sounds:
+			paths.append(stream.resource_path)
+	_expect(paths.size() >= 2, "the carried Profiles name %d shot takes" % paths.size())
+	var offenders: Array[String] = []
+	for file in _source_files("res://"):
+		if file.begins_with("res://resources/weapons/"):
+			continue
+		var text := FileAccess.get_file_as_string(file)
+		for path in paths:
+			if text.contains(path.get_base_dir() + "/"):
+				offenders.append("%s names %s" % [file, path])
+	_expect(offenders.is_empty(), "shot sounds named outside a Weapon Profile: %s" % [offenders])
+
+
+func _source_files(dir: String) -> Array[String]:
+	var out: Array[String] = []
+	for sub in DirAccess.get_directories_at(dir):
+		if sub.begins_with(".") or sub in ["assets", "tests", "docs"]:
+			continue
+		out.append_array(_source_files(dir.path_join(sub)))
+	for file in DirAccess.get_files_at(dir):
+		if file.get_extension() in ["gd", "tscn", "tres"]:
+			out.append(dir.path_join(file))
+	return out
+
+
 ## The reload sequence: magazine out at the start, in later, the rack only on
 ## the empty reload and before it ends; a cancel stops what is still to come.
 func _check_audio_reload() -> void:
@@ -1874,6 +1951,8 @@ func _check_audio_reload() -> void:
 	_expect(_sound_kinds() == [&"mag_out"], "the tactical reload opened with %s" % [_sound_kinds()])
 	await _seconds(player.weapon.reload_tactical + 0.1)
 	_expect(_sound_kinds() == [&"mag_out", &"mag_in"], "the tactical reload played %s" % [_sound_kinds()])
+	_expect(sounds.size() == 2 and [sounds[0][1], sounds[1][1]] == Array(player.weapon.reload_sounds),
+			"the reload did not play the Profile's reload sounds in order: %s" % [sounds])
 	_clear_shots()
 
 	player.ammo = 0
@@ -2009,7 +2088,8 @@ func _check_crew_shot_sound() -> void:
 	if ring != null:
 		_expect(ring.global_position.distance_to(crew.global_position + Vector3.UP * Crew3D.MUZZLE_HEIGHT) < 1.0,
 				"the crew shot rings %.1f m from the muzzle" % ring.global_position.distance_to(crew.global_position))
-		_expect(ring.stream != null and ring.stream.resource_path.contains("kurt_gunshots/shot"), "the crew shot plays %s" % [ring.stream])
+		_expect(ring.stream != null and ring.stream in crew.weapon.shot_sounds and ring.stream.resource_path.contains("kurt_22_magnum/shot"),
+				"the crew shot plays %s, not the Pistol's" % [ring.stream])
 	if shot != null:
 		shot.queue_free()
 	await _seconds(1.3)
