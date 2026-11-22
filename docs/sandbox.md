@@ -13,6 +13,11 @@ Every Sandbox number, generated from `resources/weapons/`, `resources/sandbox.tr
 | Magazine Size | 12 | 30 | 6 |
 | Reload Tactical | 1.2 | 1.8 | 2.4 |
 | Reload Empty | 1.6 | 2.3 | 2.4 |
+| Shell Reload | false | false | true |
+| First Shell Time | 0.55 | 0.55 | 0.55 |
+| Shell Time | 0.45 | 0.45 | 0.45 |
+| Closing Pump Time | 0.45 | 0.45 | 0.45 |
+| Break Out Time | 0.25 | 0.25 | 0.25 |
 | **Projectile** | | | |
 | Pellet Count | 1 | 1 | 12 |
 | Damage | 25 | 25 | 13 |
@@ -61,6 +66,7 @@ Every Sandbox number, generated from `resources/weapons/`, `resources/sandbox.tr
 | = Pellets to kill crew | - | - | 8 |
 | = Seconds to kill crew (from a full magazine) | 0.36 | 0.27 | 0.0 |
 | = Shots per second | 8.3333 | 11.1111 | 1.25 |
+| = Seconds from empty to full | 1.6 | 2.3 | 3.25 |
 
 ## Health and Melee
 

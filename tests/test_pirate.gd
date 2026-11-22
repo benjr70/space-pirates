@@ -127,6 +127,7 @@ func _run() -> void:
 	await _check_shotgun_pellets()
 	await _check_shotgun_hit_marker()
 	await _check_shotgun_model()
+	await _check_shell_reload()
 	await _check_ads_states()
 	await _check_ads_ends()
 	await _check_ads_raise()
@@ -1026,16 +1027,149 @@ func _check_shotgun_model() -> void:
 	_at_pose(SHOTGUN.pose_low, "Shotgun lowered in a Sprint")
 	Input.action_release("sprint")
 	Input.action_release("move_up")
+	_clear_shots()
+	await _hold(player.weapons[0])
+	await _place(RUNWAY)
+
+
+## The Shotgun loads one shell at a time: one tap fills it, each shell counts
+## when its time is up, the closing pump runs only from empty and a shot
+## cannot break it, and a shot, a Melee or a swap breaks the reload keeping
+## the shells already in. A shot that breaks in fires by itself after the
+## break-out time. A Sprint does not break it. The Pistol still loses
+## everything on an interrupted reload.
+func _check_shell_reload() -> void:
+	_expect(SHOTGUN.shell_reload and not player.weapons[0].shell_reload and not ASSAULT_RIFLE.shell_reload,
+			"only the Shotgun should load shell by shell")
+	_expect(is_equal_approx(SHOTGUN.first_shell_time, 0.55) and is_equal_approx(SHOTGUN.shell_time, 0.45)
+			and is_equal_approx(SHOTGUN.closing_pump_time, 0.45) and is_equal_approx(SHOTGUN.break_out_time, 0.25),
+			"the Shotgun's shell times are %.2f / %.2f / %.2f / %.2f, not 0.55 / 0.45 / 0.45 / 0.25"
+			% [SHOTGUN.first_shell_time, SHOTGUN.shell_time, SHOTGUN.closing_pump_time, SHOTGUN.break_out_time])
+	_expect(is_equal_approx(SHOTGUN.seconds_empty_to_full(), 3.25),
+			"the Shotgun fills from empty in %.2f s, not 3.25" % SHOTGUN.seconds_empty_to_full())
+	var shells := [0]
+	var pumps := [0]
+	var ended: Array = []
+	var started: Array = []
+	var on_shell := func() -> void: shells[0] += 1
+	var on_pump := func() -> void: pumps[0] += 1
+	var on_end := func(broken: bool) -> void: ended.append(broken)
+	var on_start := func(from_empty: bool) -> void: started.append(from_empty)
+	player.shell_loaded.connect(on_shell)
+	player.closing_pump_started.connect(on_pump)
+	player.shell_reload_ended.connect(on_end)
+	player.shell_reload_started.connect(on_start)
+
+	# Empty to full: a dry pull starts it, six shells, a closing pump, 3.25 s.
 	await _place(RUNWAY)
 	await _hold(SHOTGUN)
 	player.ammo = 0
-	player.fire()
-	_expect(player.is_reloading(), "a dry Shotgun pull did not start a reload")
-	await _check_reload_lasts(SHOTGUN.reload_empty, "Shotgun")
-	_expect(is_equal_approx(SHOTGUN.reload_empty, 2.4) and is_equal_approx(SHOTGUN.reload_tactical, 2.4),
-			"the Shotgun reloads in %.1f / %.1f s, not 2.4" % [SHOTGUN.reload_tactical, SHOTGUN.reload_empty])
+	player.ammo_changed.emit(0)
+	reloads_started.clear()
+	_expect(player.fire() == null, "a dry Shotgun fired")
+	_expect(player.is_reloading(), "a dry Shotgun pull did not start the reload")
+	_expect(started == [true], "the shell reload signalled %s, expected [from_empty=true]" % [started])
+	_expect(reloads_started.is_empty(), "the shell reload sent the magazine reload_started")
+	_expect(hud.ammo_text() == "RELOADING…", "the HUD reads '%s' while loading" % hud.ammo_text())
+	await _seconds(0.5)
+	_expect(player.ammo == 0, "a shell counted before its 0.55 s were up")
+	await _seconds(0.1)
+	_expect(player.ammo == 1 and shells[0] == 1, "after 0.6 s the Shotgun holds %d shells (%d signalled), not 1" % [player.ammo, shells[0]])
+	await _seconds(0.35)
+	_expect(player.ammo == 1, "the second shell counted before its 0.45 s were up")
+	await _seconds(0.1)
+	_expect(player.ammo == 2, "after 1.05 s the Shotgun holds %d shells, not 2" % player.ammo)
+	await _seconds(1.8)
+	_expect(player.ammo == 6 and shells[0] == 6, "after 2.85 s the Shotgun holds %d shells, not 6" % player.ammo)
+	_expect(pumps[0] == 1 and player.is_reloading(), "no closing pump after loading from empty (pumps %d)" % pumps[0])
+	_expect(player.fire() == null, "a shot broke the closing pump")
+	await _seconds(0.3)
+	_expect(player.is_reloading(), "the reload from empty ended under 3.25 s")
+	await _seconds(0.15)
+	_expect(not player.is_reloading(), "the reload from empty ran past 3.25 s")
+	_expect(player.ammo == 6 and ended == [false], "empty to full ended at %d shells, signalled %s" % [player.ammo, ended])
+	_expect(shots_fired == 0, "a shot pressed in the closing pump fired later")
+	_expect(hud.ammo_text() == "6 / ∞", "the HUD reads '%s' after the reload" % hud.ammo_text())
+
+	# A shot after two shells: keeps them, loses the one in hand, fires 0.25 s later.
+	await _place(RUNWAY)
+	await _hold(SHOTGUN)
+	player.ammo = 0
+	player.start_reload()
+	await _seconds(0.2)
+	_expect(player.fire() == null and player.is_reloading(), "a shot broke in with no shell in the gun")
+	await _seconds(1.0)
+	_expect(player.ammo == 2, "%d shells in before the shot, expected 2" % player.ammo)
+	ended.clear()
+	shots_fired = 0
+	_expect(player.fire() == null, "the shot breaking in fired at once")
+	_expect(not player.is_reloading() and ended == [true], "a shot did not break the reload (ended %s)" % [ended])
+	_expect(player.ammo == 2, "breaking in left %d shells, not 2" % player.ammo)
+	_expect(player.fire() == null, "a second press in the break-out fired")
+	await _seconds(0.2)
+	_expect(shots_fired == 0, "the break-out shot fired before 0.25 s")
+	await _seconds(0.1)
+	_expect(shots_fired == 1, "the break-out shot did not fire by 0.3 s (%d shots)" % shots_fired)
+	_expect(player.ammo == 1, "the break-out shot left %d shells, not 1" % player.ammo)
+	await _seconds(0.7)
+	_expect(player.ammo == 1 and not player.is_reloading(), "the lost shell came back: %d shells" % player.ammo)
 	_clear_shots()
+
+	# A Melee and a swap keep the shells already in.
+	await _place(RUNWAY)
+	await _hold(SHOTGUN)
+	player.ammo = 0
+	player.start_reload()
+	await _seconds(1.2)
+	player.melee()
+	_expect(not player.is_reloading(), "the reload survived a Melee")
+	_expect(player.ammo == 2, "a Melee left %d shells, not 2" % player.ammo)
+	await _seconds(player.melee_cycle + 0.1)
+	shots_fired = 0
+	player.ammo = 0
+	player.start_reload()
+	await _seconds(1.2)
+	ended.clear()
+	player.switch_weapon(-1)
+	_expect(not player.is_reloading() and ended == [true], "the reload survived a swap (ended %s)" % [ended])
+	await _seconds(player.swap_time + 0.1)
+	await _hold(SHOTGUN)
+	_expect(player.ammo == 2, "a swap left %d shells, not 2" % player.ammo)
+	_expect(shots_fired == 0, "a Melee or swap fired a shot")
+
+	# From 3: a reload to full with no closing pump; a Sprint does not break it.
+	await _place(RUNWAY)
+	await _hold(SHOTGUN)
+	player.ammo = 3
+	pumps[0] = 0
+	started.clear()
+	player.start_reload()
+	_expect(started == [false], "a reload from 3 signalled %s" % [started])
+	await _sprint_up()
+	_expect(player.is_reloading() and player.ammo == 3, "a Sprint broke the reload (%d shells)" % player.ammo)
+	await _seconds(1.0)
+	_expect(player.ammo == 6, "from 3, %d shells after 1.5 s" % player.ammo)
+	_expect(not player.is_reloading() and pumps[0] == 0, "the reload from 3 pumped or ran on")
+	Input.action_release("sprint")
+	Input.action_release("move_up")
+
+	# An interrupted Pistol reload still gains nothing.
 	await _hold(player.weapons[0])
+	await _place(RUNWAY)
+	_expect(_fire_and_drop(), "no Pistol shot to open the magazine")
+	await _seconds(0.2)
+	player.start_reload()
+	await _seconds(1.0)
+	player.melee()
+	_expect(not player.is_reloading() and player.ammo == player.weapon.magazine_size - 1,
+			"an interrupted Pistol reload left %d rounds" % player.ammo)
+	await _seconds(player.melee_cycle + 0.1)
+
+	player.shell_loaded.disconnect(on_shell)
+	player.closing_pump_started.disconnect(on_pump)
+	player.shell_reload_ended.disconnect(on_end)
+	player.shell_reload_started.disconnect(on_start)
+	_clear_shots()
 	await _place(RUNWAY)
 
 

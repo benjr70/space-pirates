@@ -19,6 +19,17 @@ extends Resource
 @export var reload_tactical := 1.2
 ## Seconds to reload a dry magazine, which also has to be racked.
 @export var reload_empty := 1.6
+## Loads one round at a time in place of swapping a magazine: one tap of
+## reload loads until full or broken off, a shot, a Melee or a swap breaks it
+## keeping the rounds already in, and the two reload times above are unused.
+@export var shell_reload := false
+## Seconds for the first shell, and for each shell after it.
+@export var first_shell_time := 0.55
+@export var shell_time := 0.45
+## Seconds to pump closed after loading from empty; a shot cannot break it.
+@export var closing_pump_time := 0.45
+## Seconds from a shot breaking the shell reload to the gun firing by itself.
+@export var break_out_time := 0.25
 
 @export_group("Projectile")
 ## Projectiles one shot launches, each thrown at random inside the cone and
@@ -106,6 +117,13 @@ extends Resource
 @export var fire_cycle_time := 0.15
 ## The empty reload ends with the rack; this much of it is the rack.
 @export var rack_time := 0.3
+
+
+## Seconds a reload takes from a dry gun to a full one.
+func seconds_empty_to_full() -> float:
+	if shell_reload:
+		return first_shell_time + shell_time * maxi(magazine_size - 1, 0) + closing_pump_time
+	return reload_empty
 
 
 ## Whether a reload from empty ends with the slide racked: the weapon has a

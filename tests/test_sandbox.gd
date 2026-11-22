@@ -128,6 +128,14 @@ func _check_edit_save_revert(copies: Dictionary) -> void:
 			% [weapons.value(&"shots_to_kill_crew", 0), weapons.value(&"shots_to_kill_crew", 1)])
 	_expect(weapons.value(&"reach", 0) == 40.0 and weapons.value(&"shots_per_second", 1) > 11.0,
 			"derived reach or shots per second is wrong")
+	for key in [&"shell_reload", &"first_shell_time", &"shell_time", &"closing_pump_time", &"break_out_time"]:
+		_expect(weapons.is_editable(key), "the shell reload's %s is not editable in the sheet" % key)
+	_expect(is_equal_approx(weapons.value(&"seconds_empty_to_full", 2), 3.25)
+			and is_equal_approx(weapons.value(&"seconds_empty_to_full", 0), 1.6),
+			"empty to full reads %s s for the Shotgun and %s s for the Pistol, want 3.25 and 1.6"
+			% [weapons.value(&"seconds_empty_to_full", 2), weapons.value(&"seconds_empty_to_full", 0)])
+	_expect(weapons.set_value(&"shell_time", 2, 0.5) and is_equal_approx(weapons.value(&"seconds_empty_to_full", 2), 3.5),
+			"empty to full did not follow a 0.5 s shell time: %s" % weapons.value(&"seconds_empty_to_full", 2))
 	_expect(is_equal_approx(weapons.value(&"seconds_to_kill_crew", 1), 0.27),
 			"the Assault Rifle kills crew in %s s, want 0.27 (three intervals of 0.09)" % weapons.value(&"seconds_to_kill_crew", 1))
 

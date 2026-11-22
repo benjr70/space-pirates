@@ -104,9 +104,11 @@ func _add_weapon_derived(table: SheetTable) -> void:
 		var shots := _shots_to_kill_crew(w)
 		@warning_ignore("integer_division")
 		var reloads := (shots - 1) / maxi(w.magazine_size, 1)
-		return (shots - 1 - reloads) * w.fire_interval + reloads * w.reload_empty)
+		return (shots - 1 - reloads) * w.fire_interval + reloads * w.seconds_empty_to_full())
 	table.add_derived(&"shots_per_second", "Shots per second", func(w: WeaponProfile) -> float:
 		return 1.0 / maxf(w.fire_interval, 0.001))
+	table.add_derived(&"seconds_empty_to_full", "Seconds from empty to full", func(w: WeaponProfile) -> float:
+		return w.seconds_empty_to_full())
 
 
 ## With every pellet landing.

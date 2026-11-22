@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: resolved
 Blocked by: 22
 
 # Shell-by-shell reload
@@ -24,11 +24,13 @@ The Shotgun uses it. The magazine guns are unchanged, including losing everythin
 
 ## Acceptance criteria
 
-- [ ] Empty to full takes 3.25 s and ends at 6 shells.
-- [ ] A shot pressed after two shells are in leaves two shells loaded, less the one fired, and fires 0.25 s after the press.
-- [ ] A Melee and a swap mid-reload both keep the shells already in.
-- [ ] From 3 shells, a reload to full ends without a closing pump.
-- [ ] An interrupted Pistol reload still gains nothing.
-- [ ] `tests/run_all.sh` passes.
+- [x] Empty to full takes 3.25 s and ends at 6 shells.
+- [x] A shot pressed after two shells are in leaves two shells loaded, less the one fired, and fires 0.25 s after the press.
+- [x] A Melee and a swap mid-reload both keep the shells already in.
+- [x] From 3 shells, a reload to full ends without a closing pump.
+- [x] An interrupted Pistol reload still gains nothing.
+- [x] `tests/run_all.sh` passes.
 
 ## Comments
+
+Built 2026-11-22. `WeaponProfile` gains `shell_reload`, `first_shell_time`, `shell_time`, `closing_pump_time`, `break_out_time` (Magazine group) and `seconds_empty_to_full()`; the Shotgun sets them to on, 0.55, 0.45, 0.45, 0.25. The Pirate runs it inside `start_reload`/`cancel_reload`/`is_reloading`. New signals for ticket 24: `shell_reload_started(from_empty)`, `shell_loaded` (after `ammo_changed`), `closing_pump_started`, `shell_reload_ended(broken)`; `reloading_changed` fires as before. The shell reload sends neither `reload_started` nor `reload_cancelled`, so for now it is silent and the Viewmodel plays no clip: the magazine sounds and clip, timed to a 2.4 s magazine reload, would be wrong against a reload of 0.55 s to 3.25 s. A shot breaking in is queued and fires through `fire()` once the break-out is up (and the fire interval has run out); a Melee or swap drops a queued shot, and a reload cannot start while one waits. The sheet shows the five fields and a derived "Seconds from empty to full"; "Seconds to kill crew" now uses it for reloads. Checks: `_check_shell_reload` in `tests/test_pirate.gd`, sheet rows in `tests/test_sandbox.gd`.

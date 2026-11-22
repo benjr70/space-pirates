@@ -26,6 +26,12 @@ extends CharacterBody3D
 ## reload runs on through every move. Spread is a cone that blooms per shot
 ## and widens or tightens with what he is doing.
 ##
+## A Profile with `shell_reload` loads one shell at a time instead: one tap
+## loads until full, each shell counting when its time is up, with a closing
+## pump when loading began from empty. A Melee or a swap breaks it keeping the
+## shells already in; so does a shot with a shell in the gun, which then
+## fires by itself after the break-out time. A shot cannot break the pump.
+##
 ## Aim Down Sights is a flag beside the state, valid in WALK, CROUCH and AIR:
 ## hold aim for the Profile's zoom, slowdown and tighter cone. A sprint,
 ## slide, clamber, reload or melee lowers it and a jump keeps it. While aim
@@ -46,8 +52,18 @@ signal fired
 ## A trigger pull on an empty magazine: the one click before the reload.
 signal dry_fired
 signal reloading_changed(reloading: bool)
+## A magazine reload begins, and is dropped with nothing gained.
 signal reload_started(from_empty: bool)
 signal reload_cancelled
+## A shell-by-shell reload begins.
+signal shell_reload_started(from_empty: bool)
+## A shell is seated: the magazine has just risen by one.
+signal shell_loaded
+## The last shell of a reload from empty is in and the closing pump begins.
+signal closing_pump_started
+## The shell reload is over: full, or [param broken] off by a shot, a Melee
+## or a swap with the shell in hand lost.
+signal shell_reload_ended(broken: bool)
 ## He has a different weapon in hand: a turn of the wheel, or a Profile set
 ## from outside.
 signal weapon_changed(profile: WeaponProfile)
@@ -171,6 +187,9 @@ const FALL_LIMIT := -10.0
 const CAMERA_LERP := 12.0
 ## How far short of a wall a bolt starts when the barrel is through it.
 const MUZZLE_WALL_GAP := 0.05
+## Seconds a shell-reload or break-out timer may sit above zero and still
+## count as up, so 0.55 s is 33 physics steps and not 34.
+const TIMER_SLOP := 0.0001
 ## Seconds from a shot's first strike on a target to reporting it: a step
 ## and a half, so pellets a step behind still count toward the kill.
 const SHOT_REPORT_DELAY := 1.5 / 60.0
@@ -198,6 +217,13 @@ var ammo := 0
 var _cooldown := 0.0
 var _reload_timer := 0.0
 var _reload_from_empty := false
+## What a shell-by-shell reload is doing, and the seconds left on it.
+enum Shell { NONE, LOADING, PUMPING }
+var _shell := Shell.NONE
+var _shell_left := 0.0
+## A shot that broke the shell reload, waiting out the break-out to fire.
+var _break_out_queued := false
+var _break_out_left := 0.0
 var _swap_left := 0.0
 ## Rounds left in the magazine of each weapon he is not holding.
 var _stowed_ammo := {}
@@ -633,21 +659,74 @@ func _tick_gunnery_timers(delta: float) -> void:
 			ammo = weapon.magazine_size
 			ammo_changed.emit(ammo)
 			reloading_changed.emit(false)
+	if _shell != Shell.NONE:
+		_tick_shell_reload(delta)
+	if _break_out_queued:
+		_tick_break_out(delta)
+
+
+## A shell counts when its time is up; the next one's time starts from there,
+## so float slop never stretches the reload.
+func _tick_shell_reload(delta: float) -> void:
+	_shell_left -= delta
+	if _shell_left > TIMER_SLOP:
+		return
+	if _shell == Shell.PUMPING:
+		_end_shell_reload(false)
+		return
+	ammo += 1
+	ammo_changed.emit(ammo)
+	shell_loaded.emit()
+	if ammo < weapon.magazine_size:
+		_shell_left += weapon.shell_time
+	elif _reload_from_empty and weapon.closing_pump_time > 0.0:
+		_shell = Shell.PUMPING
+		_shell_left += weapon.closing_pump_time
+		closing_pump_started.emit()
+	else:
+		_end_shell_reload(false)
+
+
+## The press that broke the reload fires once the break-out is up and the
+## gun's own interval has run out; a clamber holds it, a sprint gives way.
+func _tick_break_out(delta: float) -> void:
+	_break_out_left -= delta
+	if _break_out_left > TIMER_SLOP or _cooldown > 0.0 or state == State.CLAMBER:
+		return
+	_break_out_queued = false
+	if state == State.SPRINT:
+		_end_sprint_latched()
+	fire()
+
+
+func _end_shell_reload(broken: bool) -> void:
+	_shell = Shell.NONE
+	_shell_left = 0.0
+	reloading_changed.emit(false)
+	shell_reload_ended.emit(broken)
 
 
 func is_reloading() -> bool:
-	return _reload_timer > 0.0
+	return _reload_timer > 0.0 or _shell != Shell.NONE
 
 
 ## Begins a magazine swap unless one is running, the magazine is full, or the
 ## weapon is busy with a clamber or a swing. A dry magazine takes the longer,
-## racked reload.
+## racked reload. A shell-by-shell Profile starts loading its first shell
+## instead; a shot waiting out its break-out refuses the reload.
 func start_reload() -> void:
-	if is_reloading() or ammo == weapon.magazine_size or state == State.CLAMBER or is_meleeing() or is_swapping():
+	if is_reloading() or ammo == weapon.magazine_size or state == State.CLAMBER or is_meleeing() or is_swapping() \
+			or _break_out_queued:
 		return
 	_reload_from_empty = ammo == 0
-	_reload_timer = weapon.reload_empty if _reload_from_empty else weapon.reload_tactical
 	_lower_sights()
+	if weapon.shell_reload:
+		_shell = Shell.LOADING
+		_shell_left = weapon.first_shell_time
+		reloading_changed.emit(true)
+		shell_reload_started.emit(_reload_from_empty)
+		return
+	_reload_timer = weapon.reload_empty if _reload_from_empty else weapon.reload_tactical
 	reloading_changed.emit(true)
 	reload_started.emit(_reload_from_empty)
 
@@ -675,9 +754,14 @@ func switch_weapon(step: int) -> void:
 	ammo_changed.emit(ammo)
 
 
-## Drops a running reload with nothing gained: the hook a melee and a weapon
-## swap use.
+## Drops a running reload: the hook a melee and a weapon swap use. A
+## magazine reload gains nothing; a shell reload keeps the shells already in
+## and loses the one in hand. A shot waiting out its break-out is dropped too.
 func cancel_reload() -> void:
+	_break_out_queued = false
+	if _shell != Shell.NONE:
+		_end_shell_reload(true)
+		return
 	if not is_reloading():
 		return
 	_reload_timer = 0.0
@@ -721,14 +805,24 @@ func aim_point() -> Vector3:
 ## One trigger pull. Returns the shot's first projectile, the whole shot in
 ## `last_pellets`, or null when the pull did something else or nothing: a
 ## clamber ignores it, a sprint is ended by it, a reload, a swing or the
-## interval swallows it, and a dry magazine spends it on the reload.
+## interval swallows it, and a dry magazine spends it on the reload. Mid
+## shell reload with a shell in, it breaks the reload and is queued to fire
+## after the break-out.
 func fire() -> Projectile3D:
 	if state == State.CLAMBER:
 		return null
 	if state == State.SPRINT:
 		_end_sprint_latched()
 		return null
-	if _cooldown > 0.0 or projectile_scene == null or is_reloading() or is_meleeing() or is_swapping():
+	if _shell == Shell.LOADING and ammo > 0 and not is_meleeing() and not is_swapping():
+		# Breaks in: the shells in stay, the one in hand is lost, and this
+		# press fires by itself once the break-out is up.
+		_end_shell_reload(true)
+		_break_out_queued = true
+		_break_out_left = weapon.break_out_time
+		return null
+	if _cooldown > 0.0 or projectile_scene == null or is_reloading() or is_meleeing() or is_swapping() \
+			or _break_out_queued:
 		return null
 	if ammo <= 0:
 		dry_fired.emit()
@@ -957,6 +1051,10 @@ func respawn() -> void:
 	_stowed_ammo.clear()
 	_swap_left = 0.0
 	_reload_timer = 0.0
+	_shell = Shell.NONE
+	_shell_left = 0.0
+	_break_out_queued = false
+	_break_out_left = 0.0
 	_cooldown = 0.0
 	_bloom = 0.0
 	_sprint_latched = false
