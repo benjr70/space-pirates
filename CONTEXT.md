@@ -324,28 +324,50 @@ the ship's Lanes and Breakers are built to reward it. The weapon is busy for
 the swing's cycle: no shot or reload until it ends. A Melee drops a running
 reload with nothing gained, and it is refused only during a Clamber.
 
-## Sidearm
+## Pistol
 
-The Pirate's pistol: semi-automatic, one shot per trigger press, firing a
-projectile like every other weapon in the game. Nothing in Space Pirates is
+The Pirate's handgun: semi-automatic, one shot per trigger press, firing a
+projectile like every other weapon in the game. Crew carry it too: a Guard's
+Pistol is the Pirate's Pistol, handled with a Guard's Gunnery. Nothing in Space Pirates is
 hitscan, so every weapon is a variation on the same shot. A dry pull, the
 trigger on an empty magazine, clicks once and starts the reload; the HUD's
-crosshair opens with the Sidearm's spread, and a landed hit flashes a marker
+crosshair opens with the Pistol's spread, and a landed hit flashes a marker
 with a tick, red when it killed.
 
-## Carbine
+## Assault Rifle
 
 The Pirate's long gun: fully automatic, firing for as long as the trigger is
-held, with a bigger magazine and a longer reload than the Sidearm. It is a
+held, with a bigger magazine and a longer reload than the Pistol. It is a
 second Weapon Profile and nothing else.
+
+## Shotgun
+
+The Pirate's doorway gun: pump-action, firing a spread of pellets that kills
+in one shot up close and falls away fast with distance. It loads one shell at
+a time, and a reload broken off keeps the shells already in. It is the loudest
+weapon he carries, and the one a Slide does not spoil.
+
+## Marksman Rifle
+
+The Pirate's precision gun: semi-automatic, one deliberate shot per press,
+killing with a single shot to the head. It is poor fired from the hip and
+exact in Aim Down Sights held still, so it asks for the commitment a Descope
+punishes. Its shot is the fastest and reaches the furthest.
+
+## Headshot
+
+A shot that lands on a crew member's head rather than the body. Each weapon
+says how much more a Headshot hurts; for some it is no more at all. Only crew
+have a head to hit: nothing that strikes the Pirate is a Headshot.
 
 ## Weapon Wheel
 
 How the Pirate changes what he holds: the mouse wheel turns through the
-weapons he carries, either way round. A weapon keeps the rounds it had when it
-was put away. The swap takes a beat in which he cannot shoot, aim or reload,
-and it drops a running reload with nothing gained. A Clamber or a Melee
-refuses it.
+weapons he carries, either way round, and a number key picks one outright. A
+weapon keeps the rounds it had when it was put away. The swap takes a beat in
+which he cannot shoot, aim or reload, and it drops a running reload with
+nothing gained, save the shells a Shotgun had already taken. A Clamber or a
+Melee refuses it.
 
 ## Aim Down Sights
 
@@ -366,8 +388,23 @@ fight.
 ## Weapon Profile
 
 One weapon's whole behaviour as data: how it fires, how many shots it holds,
-how long it reloads, what its shot is and how tight it groups. A new weapon is
-a new Profile, never new code; the Sidearm is the first and the Carbine the
-second. Modifiers for later
+how long it reloads, what its shot is, how tight it groups and how far off
+crew hear it. A new weapon is
+a new Profile, never new code; the Pistol is the first and the Assault Rifle
+the second. Modifiers for later
 weapon types are variations on a Profile's shot, which is why nothing is
 hitscan.
+
+## Sandbox
+
+Every weapon in the game taken together, and how their numbers sit against
+each other: every Weapon Profile, each crew type's Gunnery, and the Health of
+the Pirate and the crew. Balancing is done to the Sandbox, never to one weapon
+alone. How crew see, move and take cover is behaviour, not Sandbox.
+
+## Gunnery
+
+How well a wielder handles a weapon, apart from what the weapon is: the aim
+error it adds to the weapon's own cone, how long a burst it fires, how long it
+pauses between bursts and how far off it opens fire. Each crew type has its
+own Gunnery. The Pirate has none: the player's hands are his.
