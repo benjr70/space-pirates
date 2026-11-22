@@ -147,6 +147,7 @@ func _run() -> void:
 	await _check_pistol_clips()
 	await _check_hud_crosshair()
 	await _check_hud_ammo()
+	_check_hud_health()
 	await _check_hud_dry_click()
 	await _check_audio_events()
 	await _check_audio_reload()
@@ -1060,7 +1061,7 @@ func _check_descope_recovery() -> void:
 	_expect(not player.is_reloading() and player.ads, "the sights did not rise as the reload ended")
 	_clear_shots()
 
-	await _dummy(4, 6.0)
+	await _dummy(100, 6.0)
 	ads_seen.clear()
 	await _swing()
 	_expect(not player.ads, "the melee kept the sights up")
@@ -1122,24 +1123,24 @@ func _flat_gap() -> float:
 ## reaches 1.2 m straight ahead and no further.
 func _check_melee_cone() -> void:
 	await _place(RUNWAY)
-	await _dummy(4, 1.5)
+	await _dummy(100, 1.5)
 	await _swing()
 	_expect(swings.size() == 1 and swings[0][0] == dummy, "a dummy 1.5 m ahead was not the melee target")
-	_expect(dummy.health.current == 1, "a front hit on 4 HP left %d, not 1" % dummy.health.current)
+	_expect(dummy.health.current == 25, "a front hit on 100 HP left %d, not 25" % dummy.health.current)
 	await _cycle()
 
 	await _place(RUNWAY)
-	await _dummy(4, 3.0)
+	await _dummy(100, 3.0)
 	await _swing()
 	_expect(swings.size() == 1 and swings[0][0] == null, "a dummy 3 m ahead was hit by a melee")
-	_expect(dummy.health.current == 4, "a dummy 3 m ahead took melee damage")
+	_expect(dummy.health.current == 100, "a dummy 3 m ahead took melee damage")
 	await _cycle()
 
 	await _place(RUNWAY)
-	await _dummy(4, 1.5, 20.0)
+	await _dummy(100, 1.5, 20.0)
 	await _swing()
 	_expect(swings.size() == 1 and swings[0][0] == null, "a dummy 20 deg off the axis was hit by a melee")
-	_expect(dummy.health.current == 4, "a dummy 20 deg off the axis took melee damage")
+	_expect(dummy.health.current == 100, "a dummy 20 deg off the axis took melee damage")
 	await _cycle()
 
 	# A body just outside the cone but close enough for the crosshair ray to
@@ -1147,12 +1148,12 @@ func _check_melee_cone() -> void:
 	# ray leaves the eyes at 1.6 m, up in the capsule's top cap, so the body
 	# has to be near.)
 	await _place(RUNWAY)
-	await _dummy(4, 0.75, 17.0)
+	await _dummy(100, 0.75, 17.0)
 	_expect(player.melee_target() == null, "a dummy 17 deg off the axis was inside the cone")
 	var before := player.global_position
 	await _swing()
 	_expect(swings.size() == 1 and swings[0][0] == dummy, "the whiff ray did not sweep a dummy 0.75 m ahead")
-	_expect(dummy.health.current == 1, "a swept dummy took %d damage, not 3" % (4 - dummy.health.current))
+	_expect(dummy.health.current == 25, "a swept dummy took %d damage, not 75" % (100 - dummy.health.current))
 	_expect(player.global_position.distance_to(before) < 0.02, "a whiff lunged")
 	await _cycle()
 
@@ -1172,7 +1173,7 @@ func _check_melee_cone() -> void:
 ## facing to it, and ignores movement input for 0.2 s after.
 func _check_melee_lunge() -> void:
 	await _place(RUNWAY)
-	await _dummy(9, 1.9, 10.0)
+	await _dummy(225, 1.9, 10.0)
 	var start := player.global_position
 	await _swing()
 	var gap := _flat_gap()
@@ -1183,7 +1184,7 @@ func _check_melee_lunge() -> void:
 	var facing := -player.global_transform.basis.z
 	_expect(rad_to_deg(Vector2(facing.x, facing.z).angle_to(Vector2(to.x, to.z).normalized())) < 2.0,
 			"the lunge did not snap his facing to the target")
-	_expect(dummy.health.current == 6, "the lunge landed %d damage, not 3" % (9 - dummy.health.current))
+	_expect(dummy.health.current == 150, "the lunge landed %d damage, not 75" % (225 - dummy.health.current))
 	# Movement input is ignored for a beat after the lunge lands.
 	var landed := player.global_position
 	Input.action_press("move_left")
@@ -1198,11 +1199,11 @@ func _check_melee_lunge() -> void:
 
 
 ## From inside the 120 deg cone behind the target's facing a melee kills
-## outright; from the front it does its 3.
+## outright; from the front it does its 75.
 func _check_melee_back_hit() -> void:
 	await _place(RUNWAY)
 	# Facing away from him: he is squarely behind.
-	await _dummy(4, 1.5, 0.0, Vector3.FORWARD)
+	await _dummy(100, 1.5, 0.0, Vector3.FORWARD)
 	await _swing()
 	_expect(not dummy.is_alive(), "a back hit left the dummy on %d HP" % dummy.health.current)
 	_expect(swings.size() == 1 and swings[0][1] == true, "the back-hit kill was not reported as one")
@@ -1210,22 +1211,22 @@ func _check_melee_back_hit() -> void:
 
 	# Facing him: front.
 	await _place(RUNWAY)
-	await _dummy(4, 1.5, 0.0, Vector3.BACK)
+	await _dummy(100, 1.5, 0.0, Vector3.BACK)
 	await _swing()
-	_expect(dummy.health.current == 1, "a front hit on 4 HP left %d, not 1" % dummy.health.current)
+	_expect(dummy.health.current == 25, "a front hit on 100 HP left %d, not 25" % dummy.health.current)
 	_expect(swings.size() == 1 and swings[0][1] == false, "a front hit was reported as a kill")
 	await _cycle()
 
 	# Facing sideways: 90 deg from behind, outside the 60 deg half-cone.
 	await _place(RUNWAY)
-	await _dummy(4, 1.5, 0.0, Vector3.RIGHT)
+	await _dummy(100, 1.5, 0.0, Vector3.RIGHT)
 	await _swing()
-	_expect(dummy.health.current == 1, "a side hit on 4 HP left %d, not 1" % dummy.health.current)
+	_expect(dummy.health.current == 25, "a side hit on 100 HP left %d, not 25" % dummy.health.current)
 	await _cycle()
 
 	# Facing 50 deg off away: inside the back cone.
 	await _place(RUNWAY)
-	await _dummy(4, 1.5, 0.0, Vector3.FORWARD.rotated(Vector3.UP, deg_to_rad(50.0)))
+	await _dummy(100, 1.5, 0.0, Vector3.FORWARD.rotated(Vector3.UP, deg_to_rad(50.0)))
 	await _swing()
 	_expect(not dummy.is_alive(), "a hit 50 deg inside the back cone left the dummy on %d HP" % dummy.health.current)
 	await _cycle()
@@ -1235,7 +1236,7 @@ func _check_melee_back_hit() -> void:
 ## fresh one at the full duration.
 func _check_melee_cancels_reload() -> void:
 	await _place(RUNWAY)
-	await _dummy(4, 6.0)
+	await _dummy(100, 6.0)
 	_expect(_fire_and_drop(), "no shot to open the magazine")
 	await _seconds(0.2)
 	player.start_reload()
@@ -1259,7 +1260,7 @@ func _check_melee_cancels_reload() -> void:
 ## drops the sights; ignored in CLAMBER.
 func _check_melee_states() -> void:
 	await _place(RUNWAY)
-	await _dummy(4, 6.0)
+	await _dummy(100, 6.0)
 	await _sprint_up()
 	await _swing()
 	_expect(player.state == player.State.WALK, "melee out of SPRINT gave %s" % player.State.keys()[player.state])
@@ -1599,7 +1600,7 @@ func _check_clips_play() -> void:
 	_expect(clips.current_animation == "reload_empty", "an empty reload played %s" % clips.current_animation)
 	await _seconds(0.3)
 	# A melee mid-reload cancels it and plays its own clip.
-	await _dummy(4, 6.0)
+	await _dummy(100, 6.0)
 	await _swing()
 	_expect(clips.current_animation == "melee" and clips.is_playing(), "a melee mid-reload played %s" % clips.current_animation)
 	await _cycle()
@@ -1770,6 +1771,26 @@ func _check_hud_ammo() -> void:
 	hud.set_ammo(player.ammo)
 
 
+## One bar where the pips were: the Pirate's full Health fills it, six
+## segments of 25, and any hit, however small, shortens the fill.
+func _check_hud_health() -> void:
+	hud.set_max_health(player.health.max_health)
+	hud.set_health(player.health.max_health)
+	_expect(hud.health_segments() == 6, "the Health bar has %d segments, not 6" % hud.health_segments())
+	var full := hud.health_fill_width()
+	_expect(full > 0.0 and is_equal_approx(full, hud.health_bar_width()),
+			"150 Health fills %.1f px of a %.1f px bar" % [full, hud.health_bar_width()])
+	hud.set_health(player.health.max_health - 13)
+	var hit := hud.health_fill_width()
+	_expect(hit < full and is_equal_approx(hit, full * 137.0 / 150.0),
+			"13 damage left the fill at %.1f px of %.1f" % [hit, full])
+	hud.set_health(player.health.max_health - 14)
+	_expect(hud.health_fill_width() < hit, "one more point of damage did not move the fill")
+	hud.set_health(0)
+	_expect(is_zero_approx(hud.health_fill_width()), "no Health still fills %.1f px" % hud.health_fill_width())
+	hud.set_health(player.health.max_health)
+
+
 ## A dry pull clicks once, however long it is held, and the reload it starts
 ## swallows further pulls without another click.
 func _check_hud_dry_click() -> void:
@@ -1825,12 +1846,12 @@ func _check_audio_events() -> void:
 	sounds.clear()
 
 	await _place(RUNWAY)
-	await _dummy(4, 6.0)
+	await _dummy(100, 6.0)
 	await _swing()
 	_expect(_sounds_of(&"melee") == 0, "a whiff into air played the melee landing")
 	await _cycle()
 	await _place(RUNWAY)
-	await _dummy(9, 1.5)
+	await _dummy(225, 1.5)
 	await _swing()
 	_expect(_sounds_of(&"melee") == 1, "a landed melee played %d landing sounds" % _sounds_of(&"melee"))
 	await _cycle()
@@ -2006,7 +2027,7 @@ func _check_bolt_reach() -> void:
 	await _clear_dummy()
 	await _place(RUNWAY)
 	_clear_shots()
-	await _dummy(30, 7.0)
+	await _dummy(750, 7.0)
 	var hits := 0
 	for i in 10:
 		var shot: Projectile3D = player.fire()
@@ -2015,7 +2036,7 @@ func _check_bolt_reach() -> void:
 		# Aim straight, no spread: the Profile's cone is 1 deg, well inside
 		# the dummy at 14 m; if a shot misses, that is the tunnelling.
 		await _seconds(player.weapon.fire_interval)
-	hits = 30 - dummy.health.current
+	hits = (750 - dummy.health.current) / player.weapon.damage
 	_expect(hits == 10, "10 bolts at a dummy 7 m off landed %d hits" % hits)
 	_clear_shots()
 	await _clear_dummy()
@@ -2049,7 +2070,7 @@ func _check_hit_markers() -> void:
 	_clear_shots()
 	await _seconds(0.2)
 
-	await _dummy(5, 6.0)
+	await _dummy(125, 6.0)
 	sounds.clear()
 	# Aimed at the chest: at eye height the crosshair sits on the capsule's
 	# top cap, where the 1 deg cone can skim over.
@@ -2065,7 +2086,7 @@ func _check_hit_markers() -> void:
 	_expect(is_zero_approx(hud.hitmarker_alpha()), "the hit marker did not fade (alpha %.2f)" % hud.hitmarker_alpha())
 	_clear_shots()
 
-	# Four more rounds kill the 5 HP dummy: the last one is a kill marker.
+	# Four more rounds kill the 125 HP dummy: the last one is a kill marker.
 	hits_landed.clear()
 	sounds.clear()
 	for i in 4:
@@ -2081,7 +2102,7 @@ func _check_hit_markers() -> void:
 
 	# A landed melee is a hit too.
 	await _place(RUNWAY)
-	await _dummy(9, 1.5)
+	await _dummy(225, 1.5)
 	sounds.clear()
 	await _swing()
 	_expect(hits_landed == [[dummy, false]], "a landed melee reported %s" % [hits_landed])

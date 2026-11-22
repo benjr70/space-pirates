@@ -1,6 +1,6 @@
 class_name Hud
 extends CanvasLayer
-## First-person HUD: ship name, crosshair, health pips, ammo counter,
+## First-person HUD: ship name, crosshair, Health bar, ammo counter,
 ## interact prompt and a damage vignette. Built in code so it stays one file.
 ##
 ## The crosshair's four lines open and close with the Pirate's live spread,
@@ -13,8 +13,14 @@ extends CanvasLayer
 ## Something wants to make the empty click: a dry pull, once each.
 signal dry_click
 
-const PIP_COLOR := Color(0.45, 0.9, 0.55)
-const PIP_EMPTY := Color(0.2, 0.24, 0.28, 0.7)
+const HEALTH_COLOR := Color(0.45, 0.9, 0.55)
+const HEALTH_EMPTY := Color(0.2, 0.24, 0.28, 0.7)
+const HEALTH_DIVIDER := Color(0.05, 0.07, 0.09, 0.9)
+## The Health bar: one bar split into segments of this much Health by
+## dividers, filling continuously so any hit shows.
+const HEALTH_SEGMENT := 25
+const HEALTH_BAR_SIZE := Vector2(180, 10)
+const HEALTH_DIVIDER_WIDTH := 2.0
 const CROSSHAIR_COLOR := Color(0.9, 0.95, 1.0, 0.9)
 const HITMARKER_COLOR := Color(1.0, 1.0, 1.0)
 const HITMARKER_KILL_COLOR := Color(1.0, 0.25, 0.2)
@@ -35,8 +41,10 @@ const CROSSHAIR_GAP_PER_DEGREE := 6.0
 ## One line each way from the centre; `_lines` runs in this order.
 const CROSSHAIR_DIRECTIONS: Array[Vector2] = [Vector2.LEFT, Vector2.RIGHT, Vector2.UP, Vector2.DOWN]
 
-var _pips: Array[ColorRect] = []
-var _pip_row: HBoxContainer
+var _health_bar: Control
+var _health_fill: ColorRect
+var _health_dividers: Array[ColorRect] = []
+var _max_health := 1
 var _ammo_label: Label
 var _prompt_label: Label
 var _name_label: Label
@@ -109,11 +117,23 @@ func _ready() -> void:
 		_hitmarker.add_child(arm)
 	_layout_crosshair()
 
-	_pip_row = HBoxContainer.new()
-	_pip_row.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
-	_pip_row.position = Vector2(24, -40)
-	_pip_row.add_theme_constant_override("separation", 6)
-	root.add_child(_pip_row)
+	_health_bar = Control.new()
+	_health_bar.name = "HealthBar"
+	_health_bar.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	_health_bar.position = Vector2(24, -40)
+	_health_bar.size = HEALTH_BAR_SIZE
+	_health_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(_health_bar)
+	var back := ColorRect.new()
+	back.color = HEALTH_EMPTY
+	back.size = HEALTH_BAR_SIZE
+	back.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_health_bar.add_child(back)
+	_health_fill = ColorRect.new()
+	_health_fill.color = HEALTH_COLOR
+	_health_fill.size = HEALTH_BAR_SIZE
+	_health_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_health_bar.add_child(_health_fill)
 
 	_ammo_label = Label.new()
 	_ammo_label.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
@@ -137,7 +157,7 @@ func _ready() -> void:
 	_prompt_label.text = ""
 	root.add_child(_prompt_label)
 
-	# Gold carried this Raid, above the health pips: what dying would cost.
+	# Gold carried this Raid, above the Health bar: what dying would cost.
 	_loot_label = Label.new()
 	_loot_label.name = "Loot"
 	_loot_label.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
@@ -192,21 +212,39 @@ func ship_name_text() -> String:
 	return _name_label.text
 
 
+## The bar's full length is this much Health, with a divider every
+## `HEALTH_SEGMENT` of it.
 func set_max_health(value: int) -> void:
-	for pip in _pips:
-		pip.queue_free()
-	_pips.clear()
-	for i in value:
-		var pip := ColorRect.new()
-		pip.custom_minimum_size = Vector2(22, 10)
-		pip.color = PIP_COLOR
-		_pip_row.add_child(pip)
-		_pips.append(pip)
+	_max_health = maxi(value, 1)
+	for divider in _health_dividers:
+		divider.queue_free()
+	_health_dividers.clear()
+	for i in range(1, health_segments()):
+		var divider := ColorRect.new()
+		divider.color = HEALTH_DIVIDER
+		divider.size = Vector2(HEALTH_DIVIDER_WIDTH, HEALTH_BAR_SIZE.y)
+		divider.position.x = HEALTH_BAR_SIZE.x * i * HEALTH_SEGMENT / _max_health - HEALTH_DIVIDER_WIDTH / 2.0
+		divider.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_health_bar.add_child(divider)
+		_health_dividers.append(divider)
 
 
 func set_health(value: int) -> void:
-	for i in _pips.size():
-		_pips[i].color = PIP_COLOR if i < value else PIP_EMPTY
+	_health_fill.size.x = HEALTH_BAR_SIZE.x * clampi(value, 0, _max_health) / _max_health
+
+
+## Segments of `HEALTH_SEGMENT` the bar is split into.
+func health_segments() -> int:
+	return ceili(float(_max_health) / HEALTH_SEGMENT)
+
+
+## Pixels of the bar filled right now, and its full length.
+func health_fill_width() -> float:
+	return _health_fill.size.x
+
+
+func health_bar_width() -> float:
+	return HEALTH_BAR_SIZE.x
 
 
 func set_ammo(in_mag: int) -> void:

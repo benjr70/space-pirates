@@ -62,6 +62,7 @@ func _initialize() -> void:
 	_check_decay()
 	await _check_investigate()
 	_check_shot()
+	_check_health_and_damage()
 	_check_died_unaware()
 	_check_sting()
 	await _check_hearing()
@@ -193,6 +194,39 @@ func _check_shot() -> void:
 			"shot from behind: crew did not hunt toward the shooter")
 	_expect(crew.perception.awareness == 1.0 and markers.stings == before + 1, "shot from behind did not tip the crew into spotted")
 	crew.free()
+
+
+## Health and damage at the times-25 scale: a crew member takes four Pistol
+## or Assault Rifle hits, the Pirate six crew shots, and three or five do not.
+func _check_health_and_damage() -> void:
+	for path in ["res://resources/weapons/pistol.tres", "res://resources/weapons/assault_rifle.tres"]:
+		var profile: WeaponProfile = load(path)
+		var crew := _crew()
+		_expect(crew.health.max_health == 100, "crew Health is %d, not 100" % crew.health.max_health)
+		_expect(profile.damage == 25, "%s does %d damage, not 25" % [path.get_file(), profile.damage])
+		for i in 3:
+			crew.take_damage(profile.damage, player)
+		_expect(crew.is_alive(), "three %s hits killed a crew member" % path.get_file())
+		crew.take_damage(profile.damage, player)
+		_expect(not crew.is_alive(), "four %s hits left a crew member on %d" % [path.get_file(), crew.health.current])
+		crew.free()
+	var shot: Projectile3D = load("res://scenes/projectile_3d.tscn").instantiate()
+	var crew_damage := shot.damage
+	shot.free()
+	_expect(crew_damage == 25, "a crew shot does %d damage, not 25" % crew_damage)
+	# A second Pirate to kill, so the one the other checks use stays up.
+	var pirate: CharacterBody3D = load("res://scenes/player_3d.tscn").instantiate()
+	pirate.auto_respawn = false
+	pirate.position = CREW_AT + Vector3(0.0, 0.0, 30.0)
+	world.add_child(pirate)
+	pirate.set_physics_process(false)
+	_expect(pirate.health.max_health == 150, "Pirate Health is %d, not 150" % pirate.health.max_health)
+	for i in 5:
+		pirate.take_damage(crew_damage)
+	_expect(pirate.is_alive(), "five crew shots killed the Pirate")
+	pirate.take_damage(crew_damage)
+	_expect(not pirate.is_alive(), "six crew shots left the Pirate on %d" % pirate.health.current)
+	pirate.free()
 
 
 func _check_sting() -> void:
@@ -608,6 +642,7 @@ func _check_aim() -> void:
 ## Two Guards fighting the Pirate for 10 s never start a burst on the same
 ## frame, or within the stagger of each other.
 func _check_stagger() -> void:
+	var pirate_health: int = player.health.max_health
 	player.health.max_health = 100000
 	player.health.reset()
 	var a := _crew()
@@ -634,7 +669,7 @@ func _check_stagger() -> void:
 	_expect(closest >= CrewCombat.BURST_STAGGER_FRAMES, "stagger: two bursts started %d frames apart" % closest)
 	a.free()
 	b.free()
-	player.health.max_health = 5
+	player.health.max_health = pirate_health
 	player.health.reset()
 	for shot in get_first_node_in_group(&"projectiles").get_children():
 		shot.free()

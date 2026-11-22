@@ -18,7 +18,7 @@ signal hit(target: Node3D)
 
 ## Metres per second (was 760 px/s over 32 px tiles).
 @export var speed := 23.75
-@export var damage := 1
+@export var damage := 25
 ## Seconds before it gives up, so strays never pile up off in the dark.
 @export var lifetime := 1.6
 

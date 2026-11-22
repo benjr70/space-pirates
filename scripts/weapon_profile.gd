@@ -22,7 +22,7 @@ extends Resource
 
 @export_group("Projectile")
 ## Flat damage per hit: no headshots.
-@export var damage := 1
+@export var damage := 25
 @export var projectile_speed := 80.0
 ## Seconds a shot flies before it gives up.
 @export var projectile_lifetime := 0.5

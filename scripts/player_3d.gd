@@ -121,7 +121,7 @@ const TEAM := &"pirate"
 @export var melee_lunge_time: float = 0.15
 ## Movement input ignored after the lunge lands.
 @export var melee_input_lock: float = 0.2
-@export var melee_damage: int = 3
+@export var melee_damage: int = 75
 ## A strike from inside this cone behind the target's facing kills outright.
 @export var melee_back_cone_degrees: float = 120.0
 ## Seconds before the next swing, shot or reload.
@@ -807,7 +807,7 @@ func _land_lunge(target: Node3D) -> void:
 	_strike(target)
 
 
-## The blow: 3 from the front, a kill from inside the cone behind the target.
+## The blow: 75 from the front, a kill from inside the cone behind the target.
 func _strike(target: Node3D) -> void:
 	if not is_instance_valid(target):
 		melee_swung.emit(null, false)

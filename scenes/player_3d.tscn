@@ -45,7 +45,7 @@ libraries = {
 
 [node name="Health" type="Node" parent="."]
 script = ExtResource("2")
-max_health = 6
+max_health = 150
 
 [node name="Audio" type="Node" parent="."]
 script = ExtResource("6")
