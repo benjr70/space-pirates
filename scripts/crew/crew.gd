@@ -124,6 +124,10 @@ const TORSO_HEIGHT := 1.0
 ]
 @export var shot_volume_db := -3.0
 
+@export_group("Sandbox")
+## Health at spawn, shared with the Pirate and the Sandbox sheet.
+@export var sandbox: Sandbox = preload("res://resources/sandbox.tres")
+
 @export_group("Look")
 ## The bodies crew wear: the first for Workers, the second for Guards.
 @export var rigs: Array[PackedScene] = [
@@ -221,6 +225,7 @@ var _anim: AnimationPlayer
 
 func _ready() -> void:
 	health.died.connect(_on_died)
+	apply_sandbox()
 	if target == null:
 		target = get_tree().get_first_node_in_group(&"player")
 	_rng.randomize()
@@ -292,6 +297,13 @@ func is_worker() -> bool:
 
 func get_team() -> StringName:
 	return TEAM
+
+
+## Takes Health from the Sandbox, full: at spawn, and when the Sandbox sheet
+## changes it mid-Raid on anyone still standing.
+func apply_sandbox() -> void:
+	health.max_health = sandbox.crew_health
+	health.reset()
 
 
 ## Turn to face [param direction] on the floor plane, at spawn: crew at a

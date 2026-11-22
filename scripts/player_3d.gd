@@ -121,11 +121,15 @@ const TEAM := &"pirate"
 @export var melee_lunge_time: float = 0.15
 ## Movement input ignored after the lunge lands.
 @export var melee_input_lock: float = 0.2
-@export var melee_damage: int = 75
 ## A strike from inside this cone behind the target's facing kills outright.
 @export var melee_back_cone_degrees: float = 120.0
 ## Seconds before the next swing, shot or reload.
 @export var melee_cycle: float = 0.55
+
+@export_group("Sandbox")
+## Health at spawn and Melee damage, shared with the crew and the Sandbox
+## sheet. Melee reads it live; Health is taken at spawn ([method apply_sandbox]).
+@export var sandbox: Sandbox = preload("res://resources/sandbox.tres")
 
 @export_group("Look")
 ## Radians of turn per pixel of mouse travel.
@@ -220,6 +224,7 @@ var _lunge_tween: Tween
 
 func _ready() -> void:
 	health.died.connect(_on_died)
+	apply_sandbox()
 	ammo = weapon.magazine_size
 	# Each pirate gets his own capsule so a crouch never resizes the scene's.
 	_capsule = collider.shape.duplicate()
@@ -232,6 +237,13 @@ func _ready() -> void:
 
 func get_team() -> StringName:
 	return TEAM
+
+
+## Takes Health from the Sandbox, full: at spawn, and when the Sandbox sheet
+## changes it mid-Raid.
+func apply_sandbox() -> void:
+	health.max_health = sandbox.pirate_health
+	health.reset()
 
 
 ## Low enough that crew take longer to spot him: crouched, or sliding.
@@ -807,12 +819,13 @@ func _land_lunge(target: Node3D) -> void:
 	_strike(target)
 
 
-## The blow: 75 from the front, a kill from inside the cone behind the target.
+## The blow: the Sandbox's Melee damage from the front, a kill from inside
+## the cone behind the target.
 func _strike(target: Node3D) -> void:
 	if not is_instance_valid(target):
 		melee_swung.emit(null, false)
 		return
-	var amount := melee_damage
+	var amount := sandbox.melee_damage
 	if _is_behind(target):
 		var target_health := target.get_node_or_null("Health") as Health
 		if target_health != null:

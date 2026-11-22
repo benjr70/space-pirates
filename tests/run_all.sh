@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # One command for every headless check: the generator sweep with its
 # distributions and self-test, the 2D layout suite, the 3D suite with the
-# built sample, the pirate's movement course and the crew's Awareness. Each suite prints its own per-Class results; this
+# built sample, the pirate's movement course, the crew's Awareness, and the Sandbox
+# sheet with its stale check on docs/sandbox.md. Each suite prints its own per-Class results; this
 # prints one line per suite at the end and fails if any suite failed.
 #
 #   tests/run_all.sh            # full sweep
@@ -34,6 +35,7 @@ run "2D layouts" tests/test_layouts.gd
 run "3D ship and built sample" tests/test_ship_3d.gd
 run "pirate movement and gunplay" tests/test_pirate.gd
 run "crew awareness" tests/test_crew.gd
+run "sandbox sheet and docs/sandbox.md" tests/test_sandbox.gd
 echo "=== summary"
 printf '%s\n' "${summary[@]}"
 exit $status

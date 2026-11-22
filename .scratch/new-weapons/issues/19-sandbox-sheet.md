@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: resolved
 Blocked by: 18
 
 # The Sandbox sheet: in-Raid sheet, Sandbox resource and docs/sandbox.md
@@ -21,11 +21,21 @@ Gunnery rows arrive with the crew ticket, and each later ticket adds the rows fo
 
 ## Acceptance criteria
 
-- [ ] F1 opens and closes the sheet in a Raid; the Raid is paused while it is open.
-- [ ] Changing Pistol damage in the sheet changes the next shot without a restart.
-- [ ] Save rewrites the weapon and Sandbox resources and `docs/sandbox.md`; Revert undoes unsaved changes.
-- [ ] Editing a `.tres` by hand without regenerating makes the stale check fail.
-- [ ] The sheet is absent from an exported build.
-- [ ] `tests/run_all.sh` passes.
+- [x] F1 opens and closes the sheet in a Raid; the Raid is paused while it is open.
+- [x] Changing Pistol damage in the sheet changes the next shot without a restart.
+- [x] Save rewrites the weapon and Sandbox resources and `docs/sandbox.md`; Revert undoes unsaved changes.
+- [x] Editing a `.tres` by hand without regenerating makes the stale check fail.
+- [x] The sheet is absent from an exported build.
+- [x] `tests/run_all.sh` passes.
 
 ## Comments
+
+Build note (2026-11-22): built on `new-weapons`.
+
+- `Sandbox` resource (`scripts/sandbox/sandbox.gd`, `resources/sandbox.tres`): `pirate_health` 150, `crew_health` 100, `melee_damage` 75. The Pirate and crew take Health from it in `_ready` via `apply_sandbox()`; the `max_health` overrides are gone from `player_3d.tscn` and `crew_3d.tscn`. The Pirate's `melee_damage` export is gone; Melee reads `sandbox.melee_damage` live.
+- `SheetTable` (`scripts/sandbox/sheet_table.gd`): generic table, a Resource per column, rows from the script's exported properties grouped by `@export_group`; numbers and switches editable, everything else read-only; `add_derived()` rows under "Derived"; disk values loaded apart from the cache; `set_value`, `is_changed`, `revert`, `save`, `to_markdown`.
+- `SandboxSheet` (`scripts/sandbox/sandbox_sheet.gd`): the Weapons table (with derived reach, damage per shot, shots and seconds to kill crew, shots per second) and the Health and Melee table, with the Melee from-behind note. One generator for `docs/sandbox.md`: Save, `scripts/sandbox/write_sandbox_doc.gd` (headless) and `stale_report()` all call `to_markdown()`. Gunnery (ticket 20) is `add_table(SheetTable.from_resources(...))` in `build()`.
+- `SandboxSheetView` (`scripts/sandbox/sandbox_sheet_view.gd`): F1 in a Raid, attached by `main_3d.gd` only when `OS.is_debug_build()`. Esc closes the sheet while it is open, opens the pause menu otherwise; F1 does nothing over the pause menu or after the Raid ends. A Health edit is pushed onto the Pirate (refilled) and the living crew.
+- `tests/test_sandbox.gd`, added to `tests/run_all.sh`: stale check on the committed `docs/sandbox.md`; a hand edit to a scratch `.tres` makes it fail; edit, changed-cell marking, Save (resources and Markdown) and Revert on scratch copies under `user://`; read-only rows; in a Raid: Health from the Sandbox, F1/Esc/pause, a Pistol damage cell edit reaching the next shot, the disk value shown, Revert; `attach(host, false)` adds nothing.
+
+Verified headless: `bash tests/run_all.sh` all PASS (sandbox 71 checks). Not verified: the sheet's look on screen (never seen), the Save button against the real `res://` files in a running game (the same `save()` is tested on scratch copies), and an actual exported release build (the gate is `OS.is_debug_build()`; the scripts still ship, the sheet is never created). A first real Save will rewrite the weapon `.tres` files in Godot's own format, dropping lines that equal the script defaults.

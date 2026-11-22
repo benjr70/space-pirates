@@ -75,6 +75,8 @@ func _ready() -> void:
 	_wire_raid_end()
 	if ship.has_node("BoardingPod"):
 		_wire_extraction(ship.get_node("BoardingPod"))
+	# F1: the Sandbox sheet, in debug builds only.
+	SandboxSheetView.attach(self)
 
 
 ## The hand-authored ship, or a generated target when `--seed=N` (and
