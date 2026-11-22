@@ -29,6 +29,8 @@ signal played(kind: StringName, stream: AudioStream)
 ## ear); a kill drops its pitch.
 @export var hitmark_stream: AudioStream = preload("res://assets/audio/hitmark/hitmark.ogg")
 @export var hitmark_volume_db := -4.0
+## A Headshot's tick: the hit tick until its own sound is picked.
+@export var headshot_stream: AudioStream = preload("res://assets/audio/hitmark/hitmark.ogg")
 
 @export_group("Melee")
 @export var melee_streams: Array[AudioStream] = [
@@ -197,8 +199,11 @@ func _on_melee_swung(target: Node3D, _killed: bool) -> void:
 
 ## A landing: back on the floor after being off it, not a respawn's reset
 ## to WALK, and not the start of a clamber.
-func _on_hit_landed(_target: Node3D, killed: bool) -> void:
-	_play(_hitmark, &"hitmark", hitmark_stream)
+func _on_hit_landed(_target: Node3D, killed: bool, headshot: bool) -> void:
+	if headshot:
+		_play(_hitmark, &"headshot", headshot_stream)
+	else:
+		_play(_hitmark, &"hitmark", hitmark_stream)
 	if killed:
 		_hitmark.pitch_scale *= 0.8
 

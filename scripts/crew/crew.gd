@@ -181,6 +181,9 @@ var state := State.PATROL
 
 @onready var model: Node3D = $Model
 @onready var health: Health = $Health
+## Its head, riding the rig's head bone: a bolt that strikes it is a
+## Headshot. Null only for a rig without a head bone.
+var head_zone: HeadZone
 
 var _path: Array[Vector3] = []
 var _aim := Vector3.FORWARD
@@ -286,6 +289,11 @@ func _dress() -> void:
 		var fit := RIG_HEIGHT / height
 		rig.scale = Vector3.ONE * fit
 		rig.position.y = -lo.y * fit
+	var skeletons := rig.find_children("*", "Skeleton3D", true, false)
+	if not skeletons.is_empty():
+		head_zone = HeadZone.attach(skeletons[0], self)
+	if head_zone == null:
+		push_warning("%s: the rig has no %s bone, so no head zone" % [name, HeadZone.BONE])
 
 
 ## Workers wear the first rig, Guards the second. A rig list of one serves
@@ -1173,6 +1181,7 @@ func _fire() -> Projectile3D:
 	var origin := global_position + Vector3.UP * MUZZLE_HEIGHT + direction * MUZZLE_FORWARD
 	var shot: Projectile3D = projectile_scene.instantiate()
 	shot.damage = weapon.damage
+	shot.headshot_multiplier = weapon.headshot_multiplier
 	shot.speed = weapon.projectile_speed
 	shot.lifetime = weapon.projectile_lifetime
 	shot.launch(origin, direction, self, TEAM)
@@ -1326,6 +1335,8 @@ func _on_died(_from: Node) -> void:
 	velocity = Vector3.ZERO
 	set_collision_layer_value(2, false)
 	$CollisionShape3D.set_deferred("disabled", true)
+	if head_zone != null:
+		head_zone.disable()
 	if not _play_any(["CharacterArmature|Death", "Death", "Die"]):
 		# No death clip: tip the model over so a corpse still reads as one.
 		create_tween().tween_property(model, "rotation:x", -PI / 2.0, 0.4)

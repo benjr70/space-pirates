@@ -81,7 +81,10 @@ signal melee_swung(target: Node3D, killed: bool)
 ## A shot or a swing hurt something that can be hurt: the hit marker's cue.
 ## A shot reports each target once, however many of its pellets land, a
 ## beat after the first strikes it so the rest of the volley lands first.
-signal hit_landed(target: Node3D, killed: bool)
+## [param headshot] when a bolt of a gun with a headshot multiplier above 1
+## struck its head zone: a Shotgun pellet on the head is a body hit to the
+## eye, and a swing is never a Headshot.
+signal hit_landed(target: Node3D, killed: bool, headshot: bool)
 
 enum State { WALK, SPRINT, CROUCH, SLIDE, AIR, CLAMBER }
 
@@ -563,14 +566,17 @@ func _world_ray(from: Vector3, to: Vector3) -> Dictionary:
 
 
 ## The first thing on [param mask] along the crosshair, out to [param reach].
-func _view_ray(reach: float, mask: int) -> Dictionary:
+func _view_ray(reach: float, mask: int, areas := false) -> Dictionary:
 	var from := camera.global_position
-	return _ray(from, from - camera.global_transform.basis.z * reach, mask)
+	return _ray(from, from - camera.global_transform.basis.z * reach, mask, areas)
 
 
-func _ray(from: Vector3, to: Vector3, mask: int) -> Dictionary:
+## With [param areas], it looks for areas on [param mask] and not bodies.
+func _ray(from: Vector3, to: Vector3, mask: int, areas := false) -> Dictionary:
 	var params := PhysicsRayQueryParameters3D.create(from, to, mask)
 	params.exclude = [get_rid()]
+	params.collide_with_areas = areas
+	params.collide_with_bodies = not areas
 	return get_world_3d().direct_space_state.intersect_ray(params)
 
 
@@ -793,10 +799,15 @@ func _report_spread() -> void:
 		spread_changed.emit(spread)
 
 
-## The world point under the crosshair: whatever the camera ray hits, or a spot
-## far along the view axis when it hits nothing.
+## The world point under the crosshair: whatever the camera ray hits, a crew
+## member's head zone included, or a spot far along the view axis when it
+## hits nothing. A head above a body capsule is aimed at like the body.
 func aim_point() -> Vector3:
 	var hit := _view_ray(aim_distance, WORLD_LAYER | BODY_LAYER)
+	var head := _view_ray(aim_distance, HeadZone.LAYER, true)
+	var eye := camera.global_position
+	if not head.is_empty() and (hit.is_empty() or eye.distance_to(head.position) < eye.distance_to(hit.position)):
+		return head.position
 	if not hit.is_empty():
 		return hit.position
 	return camera.global_position - camera.global_transform.basis.z * aim_distance
@@ -842,8 +853,9 @@ func fire() -> Projectile3D:
 		shot.speed = weapon.projectile_speed
 		shot.lifetime = weapon.projectile_lifetime
 		shot.damage = weapon.damage
+		shot.headshot_multiplier = weapon.headshot_multiplier
 		shot.launch(origin, _scatter(aim), self, TEAM)
-		shot.hit.connect(_on_shot_hit.bind(struck))
+		shot.hit.connect(_on_shot_hit.bind(struck, weapon.headshot_multiplier > 1.0))
 		_shot_parent().add_child(shot)
 		last_pellets.append(shot)
 	_bloom += weapon.bloom_per_shot_degrees
@@ -863,29 +875,36 @@ func _shot_origin() -> Vector3:
 	return origin
 
 
-## A bolt of a shot struck [param target]; [param struck] is what that shot
-## has struck so far. The first strike on a target that can be hurt reports
-## it a beat later, a kill if the shot finished it by then: a Shotgun's
-## pellets land over a physics step or two, and the shot is one hit marker
-## and one kill however many of them hit. A pellet that kills after the
-## report reports the kill; nothing reports a target twice as killed.
-func _on_shot_hit(target: Node3D, struck: Dictionary) -> void:
+## A bolt of a shot struck [param target], on its head when [param on_head];
+## [param struck] is what that shot has struck so far, and [param bonus]
+## whether the gun's head hits count as Headshots. The first strike on a
+## target that can be hurt reports it a beat later, a kill if the shot
+## finished it by then and a Headshot if any bolt reaching it by then was
+## one: a Shotgun's pellets land over a physics step or two, and the shot is
+## one hit marker and one kill however many of them hit, on head or body. A
+## pellet that kills after the report reports the kill; nothing reports a
+## target twice as killed.
+func _on_shot_hit(target: Node3D, on_head: bool, struck: Dictionary, bonus: bool) -> void:
 	if target == null or not target.has_method("take_damage"):
 		return
 	if not struck.has(target):
-		struck[target] = &"pending"
+		struck[target] = {state = &"pending", headshot = false}
 		get_tree().create_timer(SHOT_REPORT_DELAY, true, true).timeout.connect(_report_shot_hit.bind(target, struck))
-	elif struck[target] == &"hit" and _is_dead(target):
-		struck[target] = &"killed"
-		hit_landed.emit(target, true)
+	var report: Dictionary = struck[target]
+	if report.state == &"pending":
+		report.headshot = report.headshot or (on_head and bonus)
+	elif report.state == &"hit" and _is_dead(target):
+		report.state = &"killed"
+		hit_landed.emit(target, true, report.headshot)
 
 
 func _report_shot_hit(target: Node3D, struck: Dictionary) -> void:
 	if not is_instance_valid(target):
 		return
+	var report: Dictionary = struck[target]
 	var killed := _is_dead(target)
-	struck[target] = &"killed" if killed else &"hit"
-	hit_landed.emit(target, killed)
+	report.state = &"killed" if killed else &"hit"
+	hit_landed.emit(target, killed, report.headshot)
 
 
 static func _is_dead(target: Node3D) -> bool:
@@ -959,7 +978,7 @@ func _strike(target: Node3D) -> void:
 			amount = maxi(target_health.current, amount)
 	target.take_damage(amount, self)
 	var killed: bool = target.has_method("is_alive") and not target.is_alive()
-	hit_landed.emit(target, killed)
+	hit_landed.emit(target, killed, false)
 	melee_swung.emit(target, killed)
 
 

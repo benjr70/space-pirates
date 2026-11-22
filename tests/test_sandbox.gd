@@ -34,7 +34,8 @@ func _check_doc_fresh() -> void:
 	var doc := FileAccess.get_file_as_string(SandboxSheet.DOC_PATH)
 	for heading in ["## Weapons", "## Health and Melee", "| | Pistol | Assault Rifle | Shotgun |", "| **Trigger** |",
 			"| **Derived** |", "| = Shots to kill crew | 4 | 4 | 1 |", "| Pellet Count | 1 | 1 | 12 |",
-			"| = Damage per shot | 25 | 25 | 156 |", "| = Pellets to kill crew | - | - | 8 |", "| Pirate Health | 150 |", "| Crew Health | 100 |",
+			"| = Damage per shot | 25 | 25 | 156 |", "| Headshot Multiplier | 1.5 | 1.0 | 1.0 |",
+			"| = Shots to kill crew by Headshot | 3 | 4 | 1 |", "| = Pellets to kill crew | - | - | 8 |", "| Pirate Health | 150 |", "| Crew Health | 100 |",
 			"| Melee Damage | 75 |", "kills outright", "## Gunnery", "| | Guard | Worker |", "| **Aim** |",
 			"| Aim Error Degrees | 6.0 | 11.0 |", "| Burst Length | 3 | 2 |", "| Pause Between Bursts | 1.1 | 1.1 |",
 			"| Engage Range | 10.6 | 10.6 |", "Crew fire the Pistol"]:

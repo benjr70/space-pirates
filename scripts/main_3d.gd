@@ -108,7 +108,7 @@ func _wire_hud() -> void:
 		hud.flash_damage())
 	player.health.died.connect(func(_from: Node) -> void: hud.set_health(0))
 	player.died.connect(func() -> void: hud.show_prompt(""))
-	player.hit_landed.connect(func(target: Node3D, killed: bool) -> void:
+	player.hit_landed.connect(func(target: Node3D, killed: bool, _headshot: bool) -> void:
 		if killed:
 			var unaware: bool = target.get("died_unaware") == true
 			ledger.record_kill(unaware)

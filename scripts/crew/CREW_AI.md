@@ -10,6 +10,7 @@ being built toward is spec #52 (tickets #53–#63).
 | File | What it owns |
 |---|---|
 | `crew.gd` (`Crew3D`) | The body: movement, health, animation, door handling, gunnery, cover search, and the state machine that ties them together. |
+| `head_zone.gd` (`HeadZone`) | The head: a 0.16 m ball on physics layer 4, riding the rig's `Head` bone through a `BoneAttachment3D`, so a bolt that strikes it is a Headshot. The capsule stays the body. |
 | `crew_perception.gd` (`CrewPerception`) | Awareness: the sight cone, how fast Awareness fills and drains, and its bands. Pure arithmetic, tested without physics. |
 | `crew_types.gd` (`CrewTypes`) | Guard or Worker, from the Post Room's Role. |
 | `gunnery.gd` (`Gunnery`) | How a crew type handles its weapon: aim error, burst length, pause between bursts, engage range. One `.tres` per type under `resources/gunnery/`, edited in the Sandbox sheet. |
@@ -24,7 +25,7 @@ being built toward is spec #52 (tickets #53–#63).
 Scene: `scenes/crew_3d.tscn`. Tests: `tests/test_crew.gd` (Awareness, the walk
 to look, being shot, the sting, hearing, Workers fleeing and cornered, crew
 types, On Edge, Guards sharing his position, aim tightening, staggered bursts,
-flanking, bodies and other traces, routes into the pod, the Alarm and its panels, and 60 simulated seconds of routines
+flanking, bodies and other traces, routes into the pod, the Alarm and its panels, Headshots, and 60 simulated seconds of routines
 on a generated medium ship ending in the Alarm), plus the crew fight in
 `tests/test_ship_3d.gd`.
 

@@ -37,8 +37,12 @@ extends Resource
 ## pellets. However many land, a shot is one hit and at most one kill on
 ## each crew member it strikes.
 @export var pellet_count := 1
-## Flat damage per hit, per pellet: no headshots.
+## Damage per hit, per pellet, on the body.
 @export var damage := 25
+## A Headshot does `damage` times this, rounded: 1 for no bonus. Only a gun
+## above 1 shows the Headshot hit marker, so a pellet on the head reads as a
+## body hit.
+@export var headshot_multiplier := 1.0
 @export var projectile_speed := 80.0
 ## Seconds a shot flies before it gives up.
 @export var projectile_lifetime := 0.5
@@ -121,6 +125,18 @@ extends Resource
 @export var fire_cycle_time := 0.15
 ## The empty reload ends with the rack; this much of it is the rack.
 @export var rack_time := 0.3
+
+
+## What one bolt of [param damage] does on a head zone with
+## [param multiplier]: the one rounding the Pirate's shots, crew shots and
+## the Sandbox sheet share.
+static func head_damage(damage: int, multiplier: float) -> int:
+	return roundi(damage * multiplier)
+
+
+## What one hit does on the head.
+func headshot_damage() -> int:
+	return head_damage(damage, headshot_multiplier)
 
 
 ## Seconds a reload takes from a dry gun to a full one.

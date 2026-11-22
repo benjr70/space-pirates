@@ -213,7 +213,7 @@ func _build_course() -> void:
 	player.ads_changed.connect(func(on: bool) -> void: ads_seen.append(on))
 	player.descoped.connect(func() -> void: descopes += 1)
 	player.melee_swung.connect(func(target: Node3D, killed: bool) -> void: swings.append([target, killed]))
-	player.hit_landed.connect(func(target: Node3D, killed: bool) -> void: hits_landed.append([target, killed]))
+	player.hit_landed.connect(func(target: Node3D, killed: bool, _headshot: bool) -> void: hits_landed.append([target, killed]))
 
 
 func _block_x(i: int) -> float:
@@ -2568,7 +2568,7 @@ func _check_bolt_reach() -> void:
 	_clear_shots()
 
 
-## A landed shot or melee says so: `hit_landed(target, killed)`, the HUD
+## A landed shot or melee says so: `hit_landed(target, killed, headshot)`, the HUD
 ## flashes its marker (red on a kill) and fades it, and the hit tick plays
 ## once per hit. A bolt into the ship says nothing.
 func _check_hit_markers() -> void:

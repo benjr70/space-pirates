@@ -24,6 +24,8 @@ const HEALTH_DIVIDER_WIDTH := 2.0
 const CROSSHAIR_COLOR := Color(0.9, 0.95, 1.0, 0.9)
 const HITMARKER_COLOR := Color(1.0, 1.0, 1.0)
 const HITMARKER_KILL_COLOR := Color(1.0, 0.25, 0.2)
+## A Headshot that did not kill.
+const HITMARKER_HEADSHOT_COLOR := Color(1.0, 0.8, 0.25)
 const HITMARKER_FADE := 0.25
 ## The X's arms: how far from the centre they start and how long they are.
 const HITMARKER_GAP := 6.0
@@ -355,11 +357,13 @@ func toast_texts() -> Array[String]:
 	return out
 
 
-## A hit landed: the X shows and fades, red when it killed.
-func flash_hitmarker(_target: Node3D = null, killed: bool = false) -> void:
+## A hit landed: the X shows and fades, white for a body hit, gold for a
+## Headshot, red for any kill.
+func flash_hitmarker(_target: Node3D = null, killed: bool = false, headshot: bool = false) -> void:
 	_hitmarker_kill = killed
+	var color := HITMARKER_KILL_COLOR if killed else HITMARKER_HEADSHOT_COLOR if headshot else HITMARKER_COLOR
 	for arm in _hitmarker.get_children():
-		(arm as ColorRect).color = HITMARKER_KILL_COLOR if killed else HITMARKER_COLOR
+		(arm as ColorRect).color = color
 	if _hitmarker_tween != null and _hitmarker_tween.is_valid():
 		_hitmarker_tween.kill()
 	_hitmarker.modulate.a = 1.0
@@ -370,6 +374,11 @@ func flash_hitmarker(_target: Node3D = null, killed: bool = false) -> void:
 
 func hitmarker_alpha() -> float:
 	return _hitmarker.modulate.a
+
+
+## The colour the X last flashed in.
+func hitmarker_color() -> Color:
+	return (_hitmarker.get_child(0) as ColorRect).color
 
 
 func hitmarker_is_kill() -> bool:

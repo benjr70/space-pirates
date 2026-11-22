@@ -125,7 +125,7 @@ static func _check_raid(expect: Callable, root: Node) -> void:
 	expect.call(not screen.is_showing(), "raid: death screen up before dying")
 	var before := Vector2i(Profile.xp, Profile.gold)
 	var victim: Node3D = root.get_tree().get_nodes_in_group(&"crew")[0]
-	player.hit_landed.emit(victim, true)
+	player.hit_landed.emit(victim, true, false)
 	main.ledger.carry(50)
 	player.take_damage(player.health.max_health)
 	expect.call(Profile.xp == before.x + RaidLedger.KILL_XP and Profile.gold == before.y,

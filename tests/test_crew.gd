@@ -83,6 +83,9 @@ func _initialize() -> void:
 	_check_panel_spots()
 	await _check_shotgun_one_kill()
 	await _check_shotgun_range()
+	await _check_headshots()
+	await _check_head_follows_pose()
+	await _check_pirate_has_no_head()
 	await _check_routines()
 	_check_types()
 	_report()
@@ -984,15 +987,15 @@ func _check_hatch() -> void:
 ## --- the Shotgun against crew ---
 
 ## The Pirate, holding [param profile], [param distance] m in front of
-## [param crew], aimed at its chest.
-func _aim_at_crew(crew: Crew3D, distance: float, profile: WeaponProfile) -> void:
+## [param crew], aimed at its chest, or at [param at] when given.
+func _aim_at_crew(crew: Crew3D, distance: float, profile: WeaponProfile, at := Vector3.INF) -> void:
 	player.weapon = profile
 	player.ammo = profile.magazine_size
 	player.global_position = crew.global_position + Vector3.FORWARD * distance
 	player.state = player.State.WALK
 	player.rotation.y = PI
 	var eye: Vector3 = player.head.global_position
-	var chest: Vector3 = crew.global_position + Vector3.UP * 0.95
+	var chest: Vector3 = crew.global_position + Vector3.UP * 0.95 if at == Vector3.INF else at
 	player.head.rotation.x = atan2(chest.y - eye.y, Vector2(chest.x - eye.x, chest.z - eye.z).length())
 	# The Viewmodel's swap beat, and the bodies live in physics.
 	for i in 40:
@@ -1017,7 +1020,7 @@ func _check_shotgun_one_kill() -> void:
 	var pistol: WeaponProfile = player.weapon
 	var shotgun: WeaponProfile = load("res://resources/weapons/shotgun.tres")
 	var hits: Array = []
-	var record := func(target: Node3D, killed: bool) -> void: hits.append([target, killed])
+	var record := func(target: Node3D, killed: bool, _headshot: bool) -> void: hits.append([target, killed])
 	player.hit_landed.connect(record)
 	var crew := _crew()
 	await _aim_at_crew(crew, 3.0, shotgun)
@@ -1086,6 +1089,213 @@ func _check_shotgun_range() -> void:
 	player.head.rotation.x = 0.0
 	player.weapon = pistol
 	player.ammo = pistol.magazine_size
+
+
+## --- Headshots ---
+
+## A Roll a beat in, the head down at about crouch height: a stand-in for a
+## crouch, which the crew rigs have no clip for.
+const LOW_ROLL_SECONDS := 0.2
+
+
+func _type_name(crew: Crew3D) -> String:
+	return "Worker" if crew.is_worker() else "Guard"
+
+
+## One Pistol or Assault Rifle shot at [param at] on [param crew] from
+## [param distance] m, waited out until it has reported.
+func _single_shot(crew: Crew3D, profile: WeaponProfile, at: Vector3, distance := 3.0) -> void:
+	await _aim_at_crew(crew, distance, profile, at)
+	player._bloom = 0.0
+	player._cooldown = 0.0
+	player.fire()
+	while player.last_pellets.any(func(p) -> bool: return is_instance_valid(p)):
+		await physics_frame
+	for i in 3:
+		await physics_frame
+
+
+## A Pistol shot on a crew member's head does 38 and flashes the marker
+## gold with the Headshot tick, on the body 25 and white; three Headshots
+## kill and the kill is red. The Assault Rifle does 25 on either and its
+## head hit reads as a body hit. A Shotgun shot whose pellets split between
+## head and body does plain damage per pellet and reports once.
+func _check_headshots() -> void:
+	var pistol: WeaponProfile = load("res://resources/weapons/pistol.tres")
+	var rifle: WeaponProfile = load("res://resources/weapons/assault_rifle.tres")
+	var shotgun: WeaponProfile = load("res://resources/weapons/shotgun.tres")
+	_expect(is_equal_approx(pistol.headshot_multiplier, 1.5) and is_equal_approx(rifle.headshot_multiplier, 1.0)
+			and is_equal_approx(shotgun.headshot_multiplier, 1.0) and is_equal_approx(WeaponProfile.new().headshot_multiplier, 1.0),
+			"headshot multipliers are %s, %s, %s, want 1.5, 1, 1 and 1 by default"
+			% [pistol.headshot_multiplier, rifle.headshot_multiplier, shotgun.headshot_multiplier])
+	var hud: Node = load("res://scenes/ui/hud.tscn").instantiate()
+	root.add_child(hud)
+	await process_frame
+	hud.watch(player)
+	var sounds: Array[StringName] = []
+	var audio: Node = player.get_node("Audio")
+	var listen := func(kind: StringName, _stream: AudioStream) -> void: sounds.append(kind)
+	audio.played.connect(listen)
+	var hits: Array = []
+	var record := func(target: Node3D, killed: bool, headshot: bool) -> void: hits.append([target, killed, headshot])
+	player.hit_landed.connect(record)
+	const GOLD := Color(1.0, 0.8, 0.25)
+
+	for type in [CrewTypes.Type.GUARD, CrewTypes.Type.WORKER]:
+		var crew := _crew(type)
+		await physics_frame
+		var head: Vector3 = crew.head_zone.global_position
+		_expect(head.y > 1.6 and head.y < 2.0, "the %s's head zone sits at %.2f m" % [_type_name(crew), head.y])
+		var chest := crew.global_position + Vector3.UP * 0.95
+		hits.clear()
+		sounds.clear()
+		await _single_shot(crew, pistol, head)
+		_expect(crew.health.current == 62, "a Pistol Headshot on a %s left %d, want 62 (38 damage)" % [_type_name(crew), crew.health.current])
+		_expect(hits == [[crew, false, true]], "a Pistol Headshot reported %s" % [hits])
+		_expect(hud.hitmarker_color().is_equal_approx(GOLD), "a Headshot flashed %s, want gold" % hud.hitmarker_color())
+		_expect(sounds.count(&"headshot") == 1 and sounds.count(&"hitmark") == 0, "a Headshot played %s" % [sounds])
+		hits.clear()
+		sounds.clear()
+		await _single_shot(crew, pistol, chest)
+		_expect(crew.health.current == 37, "a Pistol body hit on a %s left %d, want 37 (25 damage)" % [_type_name(crew), crew.health.current])
+		_expect(hits == [[crew, false, false]], "a Pistol body hit reported %s" % [hits])
+		_expect(hud.hitmarker_color().is_equal_approx(Color.WHITE), "a body hit flashed %s, want white" % hud.hitmarker_color())
+		_expect(sounds.count(&"hitmark") == 1 and sounds.count(&"headshot") == 0, "a body hit played %s" % [sounds])
+		crew.free()
+
+	# Three Pistol Headshots kill; the last is a red kill marker.
+	var target := _crew()
+	await physics_frame
+	hits.clear()
+	for i in 3:
+		await _single_shot(target, pistol, target.head_zone.global_position)
+	_expect(not target.is_alive(), "three Pistol Headshots left a crew member on %d" % target.health.current)
+	_expect(hits.size() == 3 and hits[2][1] == true and hits[2][2] == true, "three Headshots reported %s" % [hits])
+	_expect(hud.hitmarker_is_kill() and hud.hitmarker_color().is_equal_approx(Color(1.0, 0.25, 0.2)),
+			"a killing Headshot flashed %s, want red" % hud.hitmarker_color())
+	target.free()
+
+	# The Assault Rifle: 25 on either, and a head hit is a body hit to the eye.
+	var rifle_target := _crew()
+	await physics_frame
+	hits.clear()
+	await _single_shot(rifle_target, rifle, rifle_target.head_zone.global_position)
+	_expect(rifle_target.health.current == 75, "an Assault Rifle head hit left %d, want 75" % rifle_target.health.current)
+	_expect(hits == [[rifle_target, false, false]], "an Assault Rifle head hit reported %s, want a plain hit" % [hits])
+	_expect(hud.hitmarker_color().is_equal_approx(Color.WHITE), "an Assault Rifle head hit flashed %s, want white" % hud.hitmarker_color())
+	await _single_shot(rifle_target, rifle, rifle_target.global_position + Vector3.UP * 0.95)
+	_expect(rifle_target.health.current == 50, "an Assault Rifle body hit left %d, want 50" % rifle_target.health.current)
+	rifle_target.free()
+
+	# The Shotgun aimed at the neck from 3 m: some pellets on the head, some
+	# on the body, plain damage for each, one report.
+	var split := _crew()
+	await physics_frame
+	split.health.max_health = 1000
+	var mixed := false
+	player._rng.seed = 5
+	for attempt in 6:
+		split.health.current = 1000
+		hits.clear()
+		var neck: Vector3 = split.head_zone.global_position + Vector3.DOWN * 0.2
+		await _aim_at_crew(split, 3.0, shotgun, neck)
+		player._cooldown = 0.0
+		player.fire()
+		var on_head := [0, 0]
+		for pellet in player.last_pellets:
+			pellet.hit.connect(func(body: Node3D, head: bool) -> void:
+				if body == split:
+					on_head[int(head)] += 1)
+		while player.last_pellets.any(func(p) -> bool: return is_instance_valid(p)):
+			await physics_frame
+		for i in 3:
+			await physics_frame
+		if on_head[0] > 0 and on_head[1] > 0:
+			mixed = true
+			_expect(1000 - split.health.current == shotgun.damage * (on_head[0] + on_head[1]),
+					"Shotgun pellets did %d for %d body and %d head pellets, want %d each"
+					% [1000 - split.health.current, on_head[0], on_head[1], shotgun.damage])
+			_expect(hits == [[split, false, false]], "a Shotgun shot split between head and body reported %s" % [hits])
+			break
+	_expect(mixed, "no Shotgun shot at the neck split its pellets between head and body")
+	# A split shot that kills reports one kill.
+	split.health.max_health = 100
+	split.health.current = 100
+	hits.clear()
+	await _aim_at_crew(split, 2.0, shotgun, split.head_zone.global_position + Vector3.DOWN * 0.2)
+	await _shotgun_shot()
+	_expect(not split.is_alive() and hits == [[split, true, false]], "a split Shotgun kill reported %s" % [hits])
+	split.free()
+
+	player.hit_landed.disconnect(record)
+	audio.played.disconnect(listen)
+	hud.free()
+	player.head.rotation.x = 0.0
+	player.weapon = pistol
+	player.ammo = pistol.magazine_size
+
+
+## The head zone rides the head bone: when a clip carries the head low,
+## the zone goes with it, and a Pistol shot at the head where it now is
+## is a Headshot. Crew have no crouch clip, so the Roll stands in for one.
+func _check_head_follows_pose() -> void:
+	var pistol: WeaponProfile = load("res://resources/weapons/pistol.tres")
+	for type in [CrewTypes.Type.GUARD, CrewTypes.Type.WORKER]:
+		var crew := _crew(type)
+		await physics_frame
+		var standing: Vector3 = crew.head_zone.global_position
+		var anim := crew._anim
+		anim.play(&"CharacterArmature|Roll")
+		anim.seek(LOW_ROLL_SECONDS, true)
+		anim.pause()
+		for i in 3:
+			await physics_frame
+		var low: Vector3 = crew.head_zone.global_position
+		var skeleton: Skeleton3D = crew.find_children("*", "Skeleton3D", true, false)[0]
+		var bone: Vector3 = (skeleton.global_transform * skeleton.get_bone_global_pose(skeleton.find_bone(&"Head"))).origin
+		_expect(standing.y - low.y > 0.4, "the %s's head zone went from %.2f to %.2f m in the Roll, want at least 0.4 lower"
+				% [_type_name(crew), standing.y, low.y])
+		_expect(low.distance_to(bone) < 0.3, "the %s's head zone is %.2f m off its head bone" % [_type_name(crew), low.distance_to(bone)])
+		var hits: Array = []
+		var record := func(target: Node3D, killed: bool, headshot: bool) -> void: hits.append([target, killed, headshot])
+		player.hit_landed.connect(record)
+		await _single_shot(crew, pistol, low)
+		_expect(hits == [[crew, false, true]], "a Pistol shot at the %s's lowered head reported %s, want a Headshot"
+				% [_type_name(crew), hits])
+		player.hit_landed.disconnect(record)
+		crew.free()
+	player.head.rotation.x = 0.0
+
+
+## Nothing that strikes the Pirate is a Headshot: a crew shot at his head
+## height does the Pistol's plain 25, though the bolt carries 1.5.
+func _check_pirate_has_no_head() -> void:
+	var crew := _crew()
+	var shot := crew._fire()
+	_expect(shot != null and is_equal_approx(shot.headshot_multiplier, 1.5),
+			"a crew shot carries headshot multiplier %s, want the Pistol's 1.5" % (shot.headshot_multiplier if shot else -1.0))
+	if shot != null:
+		shot.free()
+	var pirate: CharacterBody3D = load("res://scenes/player_3d.tscn").instantiate()
+	pirate.auto_respawn = false
+	pirate.position = CREW_AT + Vector3(0.0, 0.0, 30.0)
+	world.add_child(pirate)
+	pirate.set_physics_process(false)
+	var high: Vector3 = pirate.head.global_position
+	var bolt: Projectile3D = load("res://scenes/projectile_3d.tscn").instantiate()
+	bolt.damage = crew.weapon.damage
+	bolt.headshot_multiplier = crew.weapon.headshot_multiplier
+	bolt.speed = 80.0
+	bolt.launch(high + Vector3.FORWARD * 3.0, Vector3.BACK, crew, Crew3D.TEAM)
+	var struck: Array = []
+	bolt.hit.connect(func(body: Node3D, head: bool) -> void: struck.append([body, head]))
+	get_first_node_in_group(&"projectiles").add_child(bolt)
+	while is_instance_valid(bolt):
+		await physics_frame
+	_expect(struck == [[pirate, false]], "a crew shot at the Pirate's head struck %s" % [struck])
+	_expect(pirate.health.current == 125, "a crew shot at the Pirate's head left him on %d, want 125" % pirate.health.current)
+	pirate.free()
+	crew.free()
 
 
 ## A crew member killed before it spotted the Pirate died unaware; one

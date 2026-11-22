@@ -97,6 +97,9 @@ func _add_weapon_derived(table: SheetTable) -> void:
 	table.add_derived(&"damage_per_shot", "Damage per shot", func(w: WeaponProfile) -> int:
 		return w.damage * w.pellet_count)
 	table.add_derived(&"shots_to_kill_crew", "Shots to kill crew", _shots_to_kill_crew)
+	# Every bolt on the head: for the Shotgun, every pellet.
+	table.add_derived(&"shots_to_kill_crew_headshot", "Shots to kill crew by Headshot", func(w: WeaponProfile) -> int:
+		return ceili(float(sandbox.crew_health) / maxi(w.headshot_damage() * w.pellet_count, 1)))
 	# Only a gun with pellets has its own row: for one bolt it is the shots.
 	table.add_derived(&"pellets_to_kill_crew", "Pellets to kill crew", func(w: WeaponProfile) -> Variant:
 		return ceili(float(sandbox.crew_health) / maxi(w.damage, 1)) if w.pellet_count > 1 else null)

@@ -21,6 +21,7 @@ Every Sandbox number, generated from `resources/weapons/`, `resources/sandbox.tr
 | **Projectile** | | | |
 | Pellet Count | 1 | 1 | 12 |
 | Damage | 25 | 25 | 13 |
+| Headshot Multiplier | 1.5 | 1.0 | 1.0 |
 | Projectile Speed | 80.0 | 100.0 | 60.0 |
 | Projectile Lifetime | 0.5 | 0.5 | 0.25 |
 | **Spread** | | | |
@@ -63,6 +64,7 @@ Every Sandbox number, generated from `resources/weapons/`, `resources/sandbox.tr
 | = Reach (m) | 40.0 | 50.0 | 15.0 |
 | = Damage per shot | 25 | 25 | 156 |
 | = Shots to kill crew | 4 | 4 | 1 |
+| = Shots to kill crew by Headshot | 3 | 4 | 1 |
 | = Pellets to kill crew | - | - | 8 |
 | = Seconds to kill crew (from a full magazine) | 0.36 | 0.27 | 0.0 |
 | = Shots per second | 8.3333 | 11.1111 | 1.25 |
