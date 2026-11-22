@@ -28,6 +28,7 @@ spread_walking = 1.2
 spread_slide = 1.5
 spread_air = 1.5
 ads_spread = 0.5
+ads_moving_spread = 0.6
 ads_zoom = 1.6
 ads_speed = 0.8
 model = ExtResource("2")

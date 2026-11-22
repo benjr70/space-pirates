@@ -31,6 +31,7 @@ spread_walking = 1.0
 spread_slide = 1.0
 spread_air = 1.3
 ads_spread = 0.8
+ads_moving_spread = 0.8
 ads_zoom = 1.15
 ads_speed = 0.85
 recoil_push = 0.09

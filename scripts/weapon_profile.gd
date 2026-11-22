@@ -63,8 +63,16 @@ extends Resource
 @export var spread_air := 1.5
 
 @export_group("Aim Down Sights")
-## Multiplier on the cone while aimed.
+## Multiplier on the cone while aimed and still or crouched; a crouch
+## multiplies it further, as at the hip.
 @export var ads_spread := 0.5
+## Multiplier on the cone while aimed and walking, in place of `ads_spread`
+## times `spread_walking`: so an aimed long gun can be pinpoint held still
+## and still loose on the move.
+@export var ads_moving_spread := 0.6
+## Degrees the aim drifts while aimed, in a slow figure of eight laid over
+## wherever he looks: 0 holds dead still.
+@export var ads_sway_degrees := 0.0
 ## Magnification while aimed.
 @export var ads_zoom := 1.3
 ## Multiplier on walking speed while aimed.

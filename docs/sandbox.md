@@ -35,6 +35,8 @@ Every Sandbox number, generated from `resources/weapons/`, `resources/sandbox.tr
 | Spread Air | 1.5 | 1.8 | 1.3 |
 | **Aim Down Sights** | | | |
 | Ads Spread | 0.5 | 0.45 | 0.8 |
+| Ads Moving Spread | 0.6 | 0.585 | 0.8 |
+| Ads Sway Degrees | 0.0 | 0.0 | 0.0 |
 | Ads Zoom | 1.6 | 1.6 | 1.15 |
 | Ads Speed | 0.8 | 0.7 | 0.85 |
 | **Recoil** | | | |

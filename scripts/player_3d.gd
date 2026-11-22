@@ -253,6 +253,10 @@ var _ads_raise_left := 0.0
 ## Seconds of Descope still keeping held aim down.
 var _descope_left := 0.0
 var _hip_fov := 75.0
+## Seconds the current aimed sway has run, and the view offset it last laid
+## on, which the next frame takes back.
+var _sway_time := 0.0
+var _sway_offset := Vector2.ZERO
 var _melee_cycle_left := 0.0
 ## Seconds the lunge still owns his movement.
 var _melee_lock_left := 0.0
@@ -321,10 +325,7 @@ func can_interact() -> bool:
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		var motion := event as InputEventMouseMotion
-		rotate_y(-motion.relative.x * mouse_sensitivity)
-		head.rotate_x(-motion.relative.y * mouse_sensitivity)
-		var limit := deg_to_rad(pitch_limit_degrees)
-		head.rotation.x = clampf(head.rotation.x, -limit, limit)
+		look(motion.relative)
 	elif event.is_action_pressed("ui_cancel"):
 		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	elif event is InputEventMouseButton and event.is_pressed() \
@@ -338,6 +339,17 @@ func _unhandled_input(event: InputEvent) -> void:
 		switch_weapon(-1)
 
 
+## Turns the view by a mouse movement of [param relative] pixels. Aimed, the
+## turn is divided by the held weapon's zoom from the moment the sights are
+## up, so a hand movement covers the same distance on screen.
+func look(relative: Vector2) -> void:
+	var sensitivity := mouse_sensitivity / (weapon.ads_zoom if ads else 1.0)
+	rotate_y(-relative.x * sensitivity)
+	head.rotate_x(-relative.y * sensitivity)
+	var limit := deg_to_rad(pitch_limit_degrees)
+	head.rotation.x = clampf(head.rotation.x, -limit, limit)
+
+
 func _physics_process(delta: float) -> void:
 	if global_position.y < FALL_LIMIT:
 		respawn()
@@ -347,6 +359,7 @@ func _physics_process(delta: float) -> void:
 	if state == State.CLAMBER:
 		# The tween owns the body; nothing else is read until it lets go.
 		_lower_sights()
+		_sway_aim(delta)
 		_animate_camera(delta)
 		_report_spread()
 		return
@@ -376,6 +389,7 @@ func _physics_process(delta: float) -> void:
 			return
 
 	_update_ads(delta)
+	_sway_aim(delta)
 	_move(delta, direction)
 
 	if Input.is_action_just_pressed("melee"):
@@ -640,6 +654,21 @@ func _finish_clamber(crouched: bool) -> void:
 	move_and_slide()
 
 
+## Aimed sway: a slow figure of eight laid over wherever he looks, applied
+## as the change since last frame so it never fights the mouse, and taken
+## back whole the frame the sights drop.
+func _sway_aim(delta: float) -> void:
+	var offset := Vector2.ZERO
+	if ads and weapon.ads_sway_degrees > 0.0:
+		_sway_time += delta
+		offset = Vector2(sin(_sway_time * 1.3), sin(_sway_time * 2.6) * 0.5) * deg_to_rad(weapon.ads_sway_degrees)
+	else:
+		_sway_time = 0.0
+	rotate_y(offset.x - _sway_offset.x)
+	head.rotate_x(offset.y - _sway_offset.y)
+	_sway_offset = offset
+
+
 func _animate_camera(delta: float) -> void:
 	var zoom := weapon.ads_zoom if ads else 1.0
 	var fov := rad_to_deg(2.0 * atan(tan(deg_to_rad(_hip_fov) / 2.0) / zoom))
@@ -786,7 +815,14 @@ func spread_degrees() -> float:
 		State.AIR:
 			multiplier = weapon.spread_air
 		_:
-			multiplier = weapon.spread_walking if flat_speed() > 0.5 else weapon.spread_still
+			if flat_speed() <= 0.5:
+				multiplier = weapon.spread_still
+			elif ads:
+				# Aimed and walking has a multiplier of its own, in place of
+				# the aimed one times the walking one.
+				return (weapon.spread_base_degrees + _bloom) * weapon.ads_moving_spread
+			else:
+				multiplier = weapon.spread_walking
 	if ads:
 		multiplier *= weapon.ads_spread
 	return (weapon.spread_base_degrees + _bloom) * multiplier
@@ -950,6 +986,8 @@ func melee() -> void:
 	to.y = 0.0
 	var direction := _flat(to)
 	rotation.y = atan2(-direction.x, -direction.z)
+	# The lunge sets the yaw outright, so no sway is left on it to take back.
+	_sway_offset.x = 0.0
 	var stop := global_position + direction * maxf(to.length() - melee_lunge_stop, 0.0)
 	velocity.x = 0.0
 	velocity.z = 0.0
@@ -1083,6 +1121,7 @@ func respawn() -> void:
 	_melee_cycle_left = 0.0
 	_melee_lock_left = 0.0
 	_lower_sights()
+	_sway_aim(0.0)
 	# Silence first: the state reset below must not sound like a landing.
 	audio.reset()
 	_set_state(State.WALK)

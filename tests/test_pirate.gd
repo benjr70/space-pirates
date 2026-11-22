@@ -23,6 +23,9 @@ const PLAYER_SCENE: PackedScene = preload("res://scenes/player_3d.tscn")
 const HEAVY_PISTOL: WeaponProfile = preload("res://tests/weapons/heavy_pistol.tres")
 const ASSAULT_RIFLE: WeaponProfile = preload("res://resources/weapons/assault_rifle.tres")
 const SHOTGUN: WeaponProfile = preload("res://resources/weapons/shotgun.tres")
+## Pinpoint aimed and still, looser aimed and walking, with sway: the shape
+## of an aimed long gun without being one.
+const STEADY_RIFLE: WeaponProfile = preload("res://tests/weapons/steady_rifle.tres")
 const FRAME := 1.0 / 60.0
 ## Course blocks, one per height, spaced along X with their near face at Z -2.5.
 const BLOCK_HEIGHTS := [0.3, 0.5, 0.7, 0.9, 1.1, 1.3, 1.5, 1.7, 1.9, 2.1]
@@ -133,6 +136,10 @@ func _run() -> void:
 	await _check_ads_ends()
 	await _check_ads_raise()
 	await _check_ads_numbers()
+	await _check_cones_unchanged()
+	await _check_aimed_moving_spread()
+	await _check_aimed_sway()
+	await _check_mouse_slowed_by_zoom()
 	await _check_descope_recovery()
 	await _check_melee_cone()
 	await _check_melee_lunge()
@@ -1457,6 +1464,150 @@ func _check_ads_numbers() -> void:
 	await _aim(false)
 	await _seconds(0.5)
 	_expect(absf(player.camera.fov - hip_fov) < 0.5, "FOV did not return to %.1f after ADS: %.1f" % [hip_fov, player.camera.fov])
+
+
+## The cone a Profile gives in each stance, hip and aimed, at zero bloom:
+## still, walking, crouched and in the air, and a Slide from the hip.
+func _stance_cones(profile: WeaponProfile) -> Dictionary:
+	var held: WeaponProfile = player.weapon
+	player.weapon = profile
+	var cones := {}
+	for aimed in [false, true]:
+		var tag := "aimed " if aimed else "hip "
+		await _place(RUNWAY)
+		if aimed:
+			await _aim(true)
+		await _frames(2)
+		cones[tag + "still"] = player.spread_degrees()
+		Input.action_press("move_up")
+		await _seconds(0.4)
+		cones[tag + "walking"] = player.spread_degrees() if player.flat_speed() > 0.5 else -1.0
+		Input.action_release("move_up")
+		await _seconds(0.4)
+		Input.action_press("crouch")
+		await _frames(3)
+		cones[tag + "crouched"] = player.spread_degrees() if player.state == player.State.CROUCH else -1.0
+		Input.action_release("crouch")
+		await _frames(3)
+		Input.action_press("jump")
+		await _frames(3)
+		Input.action_release("jump")
+		cones[tag + "air"] = player.spread_degrees() if player.state == player.State.AIR else -1.0
+		await _seconds(1.0)
+		cones[tag + "still sights up"] = player.ads == aimed
+		if aimed:
+			await _aim(false)
+	await _place(RUNWAY)
+	await _sprint_up()
+	Input.action_press("crouch")
+	await _frames(2)
+	cones["hip slide"] = player.spread_degrees() if player.state == player.State.SLIDE else -1.0
+	Input.action_release("crouch")
+	Input.action_release("sprint")
+	Input.action_release("move_up")
+	player.weapon = held
+	await _place(RUNWAY)
+	return cones
+
+
+## The aimed-and-moving spread leaves the Pistol and Assault Rifle exactly
+## as they were in every stance: aimed walking is still their aimed
+## multiplier times their walking one, and an aimed crouch still takes the
+## crouch multiplier.
+func _check_cones_unchanged() -> void:
+	var expected := {
+		"Pistol": [player.weapon, {
+			"hip still": 1.0, "hip walking": 1.2, "hip crouched": 0.7, "hip air": 1.5, "hip slide": 1.5,
+			"aimed still": 0.5, "aimed walking": 0.6, "aimed crouched": 0.35, "aimed air": 0.75}],
+		"Assault Rifle": [ASSAULT_RIFLE, {
+			"hip still": 1.2, "hip walking": 1.56, "hip crouched": 0.84, "hip air": 2.16, "hip slide": 1.92,
+			"aimed still": 0.54, "aimed walking": 0.702, "aimed crouched": 0.378, "aimed air": 0.972}],
+	}
+	for gun: String in expected:
+		var cones: Dictionary = await _stance_cones(expected[gun][0])
+		_expect(cones["aimed still sights up"] and cones["hip still sights up"], "%s: the sights were not where the stance check wanted them" % gun)
+		var wanted: Dictionary = expected[gun][1]
+		for stance: String in wanted:
+			_expect(is_equal_approx(cones[stance], wanted[stance]),
+					"%s %s cone is %.3f deg, was %.3f" % [gun, stance, cones[stance], wanted[stance]])
+
+
+## A Profile with a tiny aimed multiplier and a larger aimed-and-moving one
+## is pinpoint aimed and still or crouched, and a 1.2 degree cone aimed and
+## walking, out of a 3 degree hip cone.
+func _check_aimed_moving_spread() -> void:
+	var cones: Dictionary = await _stance_cones(STEADY_RIFLE)
+	_expect(is_equal_approx(cones["hip still"], 3.0), "the steady rifle's hip cone is %.3f deg, not 3" % cones["hip still"])
+	_expect(cones["aimed still"] > 0.0 and cones["aimed still"] < 0.05, "aimed and still is %.3f deg, not pinpoint" % cones["aimed still"])
+	_expect(cones["aimed crouched"] > 0.0 and cones["aimed crouched"] < 0.05, "aimed and crouched is %.3f deg, not pinpoint" % cones["aimed crouched"])
+	_expect(is_equal_approx(cones["aimed walking"], 1.2), "aimed and walking is %.3f deg, not 1.2" % cones["aimed walking"])
+
+
+## Aimed sway: a gun with sway drifts the view in a figure of eight while
+## aimed, inside its sway, and hands the view back exactly where it was
+## when the sights drop. A gun without sway holds dead still.
+func _check_aimed_sway() -> void:
+	await _place(RUNWAY)
+	player.head.rotation.x = 0.0
+	await _aim(true)
+	var yaw: float = player.rotation.y
+	await _seconds(1.0)
+	_expect(is_equal_approx(player.rotation.y, yaw) and is_equal_approx(player.head.rotation.x, 0.0),
+			"the Pistol, with no sway, drifted the aim")
+	await _aim(false)
+
+	var held: WeaponProfile = player.weapon
+	player.weapon = STEADY_RIFLE
+	await _place(RUNWAY)
+	player.head.rotation.x = 0.0
+	await _frames(2)
+	yaw = player.rotation.y
+	var sway := deg_to_rad(STEADY_RIFLE.ads_sway_degrees)
+	await _aim(true)
+	var yaws: Array[float] = []
+	var pitches: Array[float] = []
+	for i in 300:
+		await physics_frame
+		yaws.append(player.rotation.y - yaw)
+		pitches.append(player.head.rotation.x)
+	var yaw_span: float = yaws.max() - yaws.min()
+	var pitch_span: float = pitches.max() - pitches.min()
+	_expect(yaw_span > sway and yaw_span <= 2.0 * sway + 0.0001,
+			"aimed sway swung the yaw %.3f deg, expected up to %.2f either side" % [rad_to_deg(yaw_span), STEADY_RIFLE.ads_sway_degrees])
+	_expect(pitch_span > sway * 0.5 and pitch_span <= sway + 0.0001,
+			"aimed sway swung the pitch %.3f deg, expected up to half the yaw's" % rad_to_deg(pitch_span))
+	await _aim(false)
+	_expect(absf(player.rotation.y - yaw) < 0.00001 and absf(player.head.rotation.x) < 0.00001,
+			"dropping the sights left the aim %.4f deg yaw, %.4f deg pitch off" % [rad_to_deg(player.rotation.y - yaw), rad_to_deg(player.head.rotation.x)])
+	await _seconds(0.5)
+	_expect(absf(player.rotation.y - yaw) < 0.00001 and absf(player.head.rotation.x) < 0.00001,
+			"the aim kept drifting with the sights down")
+	player.weapon = held
+	await _place(RUNWAY)
+
+
+## Aimed, the mouse turns the view less by the held gun's zoom, so a hand
+## movement covers the same distance on screen.
+func _check_mouse_slowed_by_zoom() -> void:
+	await _place(RUNWAY)
+	player.head.rotation.x = 0.0
+	var yaw: float = player.rotation.y
+	player.look(Vector2(100.0, 40.0))
+	var hip_yaw: float = yaw - player.rotation.y
+	var hip_pitch: float = -player.head.rotation.x
+	await _aim(true)
+	_expect(player.ads and is_equal_approx(player.weapon.ads_zoom, 1.6), "no 1.6 zoom aim to turn under")
+	yaw = player.rotation.y
+	var pitch: float = player.head.rotation.x
+	player.look(Vector2(100.0, 40.0))
+	var aimed_yaw: float = yaw - player.rotation.y
+	var aimed_pitch: float = pitch - player.head.rotation.x
+	_expect(hip_yaw > 0.0 and is_equal_approx(hip_yaw / aimed_yaw, 1.6),
+			"aimed, the mouse turned %.4f rad against %.4f at the hip, not 1.6 times less" % [aimed_yaw, hip_yaw])
+	_expect(hip_pitch > 0.0 and is_equal_approx(hip_pitch / aimed_pitch, 1.6),
+			"aimed, the mouse pitched %.4f rad against %.4f at the hip, not 1.6 times less" % [aimed_pitch, hip_pitch])
+	await _aim(false)
+	player.head.rotation.x = 0.0
 
 
 ## Sights that survive a fight: a hit drops them and they come back on

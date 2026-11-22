@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="WeaponProfile" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/weapon_profile.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+spread_base_degrees = 3.0
+spread_crouch = 1.0
+spread_still = 1.0
+spread_walking = 1.0
+ads_spread = 0.01
+ads_moving_spread = 0.4
+ads_zoom = 3.0
+ads_sway_degrees = 0.25
