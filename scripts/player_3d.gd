@@ -2,7 +2,8 @@ extends CharacterBody3D
 ## The pirate, in first person. WASD to move, mouse to look, left click to
 ## shoot, right click to aim. Shift sprints, Ctrl or C crouches, Space jumps
 ## and clambers, R reloads, V or the mouse's side button melees, E works
-## doors, and the mouse wheel turns through the weapons he carries.
+## doors, the mouse wheel turns through the weapons he carries and keys 1 to
+## 4 pick one.
 ##
 ## Movement is a six-state machine in the feel of Halo Infinite:
 ##   WALK     default on the floor
@@ -166,11 +167,13 @@ const TEAM := &"pirate"
 		weapon = value
 		if is_node_ready():
 			weapon_changed.emit(weapon)
-## What he carries, in the order the mouse wheel turns through them.
+## What he carries, in the order the mouse wheel turns through them and
+## the number keys pick them.
 @export var weapons: Array[WeaponProfile] = [
 	preload("res://resources/weapons/pistol.tres"),
 	preload("res://resources/weapons/assault_rifle.tres"),
 	preload("res://resources/weapons/shotgun.tres"),
+	preload("res://resources/weapons/marksman_rifle.tres"),
 ]
 ## Seconds a weapon swap keeps the trigger, the sights and the reload busy.
 @export var swap_time := 0.4
@@ -337,6 +340,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		switch_weapon(1)
 	elif event.is_action_pressed("weapon_prev"):
 		switch_weapon(-1)
+	else:
+		for i in weapons.size():
+			if event.is_action_pressed(StringName("weapon_%d" % (i + 1))):
+				select_weapon(i)
+				break
 
 
 ## Turns the view by a mouse movement of [param relative] pixels. Aimed, the
@@ -787,6 +795,15 @@ func switch_weapon(step: int) -> void:
 	ammo = _stowed_ammo.get(next, next.magazine_size)
 	weapon = next
 	ammo_changed.emit(ammo)
+
+
+## The weapon at [param index] in the order he carries them, straight from
+## a number key: the same swap as the wheel, with its time and refusals.
+## The weapon already in hand stays put.
+func select_weapon(index: int) -> void:
+	if index < 0 or index >= weapons.size():
+		return
+	switch_weapon(index - weapons.find(weapon))
 
 
 ## Drops a running reload: the hook a melee and a weapon swap use. A

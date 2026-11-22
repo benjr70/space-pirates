@@ -10,3 +10,16 @@ shotgun_pump.ogg  the Shotgun's pump ("shotguncock.wav"), the whole file
                   only the last 0.09 s). Plays 0.2 s after each Shotgun shot
                   and on the closing pump. Picked by ear in the sound booth
                   (new-weapons decision 12).
+
+rifle_magazine_out.ogg  the Marksman Rifle's magazine ("gunreload1.wav"), cut
+rifle_magazine_in.ogg   by the sound booth's cut.py (branch
+                        prototype/new-gun-sounds, where it is
+                        audition_picks/marksman_rifle_magazine.ogg: mono
+                        44.1 kHz, 1.5 s, peak-normalised to -1.5 dB), then
+                        split in two at its 0.4 s gap of silence: _out is
+                        0-0.58 s (the release click, 0.05 s fade out), _in
+                        is 0.60-1.5 s (the magazine going in and the slap
+                        home, 0.01 s fade in). One take for the whole swap,
+                        split so the second half sounds as the magazine
+                        seats. Picked by ear in the sound booth (new-weapons
+                        decision 12).

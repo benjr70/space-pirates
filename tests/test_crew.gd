@@ -84,6 +84,7 @@ func _initialize() -> void:
 	await _check_shotgun_one_kill()
 	await _check_shotgun_range()
 	await _check_headshots()
+	await _check_marksman_rifle_kills()
 	await _check_head_follows_pose()
 	await _check_pirate_has_no_head()
 	await _check_routines()
@@ -1230,6 +1231,44 @@ func _check_headshots() -> void:
 	player.hit_landed.disconnect(record)
 	audio.played.disconnect(listen)
 	hud.free()
+	player.head.rotation.x = 0.0
+	player.weapon = pistol
+	player.ammo = pistol.magazine_size
+
+
+## The Marksman Rifle does 50 on the body and 100 on the head: one Headshot
+## kills a crew member of 100 Health, two body shots kill, one does not.
+func _check_marksman_rifle_kills() -> void:
+	var marksman: WeaponProfile = load("res://resources/weapons/marksman_rifle.tres")
+	var pistol: WeaponProfile = load("res://resources/weapons/pistol.tres")
+	_expect(marksman != null and marksman.damage == 50 and marksman.headshot_damage() == 100,
+			"the Marksman Rifle does %s body and %s head, want 50 and 100"
+			% ([marksman.damage, marksman.headshot_damage()] if marksman else ["none", "none"]))
+	if marksman == null:
+		return
+	var hits: Array = []
+	var record := func(target: Node3D, killed: bool, headshot: bool) -> void: hits.append([target, killed, headshot])
+	player.hit_landed.connect(record)
+	for type in [CrewTypes.Type.GUARD, CrewTypes.Type.WORKER]:
+		var crew := _crew(type)
+		await physics_frame
+		await _single_shot(crew, marksman, crew.head_zone.global_position)
+		_expect(not crew.is_alive() and hits == [[crew, true, true]],
+				"one Marksman Rifle Headshot on a %s left %d Health and reported %s" % [_type_name(crew), crew.health.current, hits])
+		crew.free()
+		hits.clear()
+		crew = _crew(type)
+		await physics_frame
+		var chest := crew.global_position + Vector3.UP * 0.95
+		await _single_shot(crew, marksman, chest)
+		_expect(crew.is_alive() and crew.health.current == 50,
+				"one Marksman Rifle body shot on a %s left %d, want 50" % [_type_name(crew), crew.health.current])
+		await _single_shot(crew, marksman, chest)
+		_expect(not crew.is_alive(), "two Marksman Rifle body shots left a %s on %d" % [_type_name(crew), crew.health.current])
+		_expect(hits == [[crew, false, false], [crew, true, false]], "two body shots reported %s" % [hits])
+		crew.free()
+		hits.clear()
+	player.hit_landed.disconnect(record)
 	player.head.rotation.x = 0.0
 	player.weapon = pistol
 	player.ammo = pistol.magazine_size

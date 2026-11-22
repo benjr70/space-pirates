@@ -1,0 +1,51 @@
+[gd_resource type="Resource" script_class="WeaponProfile" load_steps=6 format=3]
+
+[ext_resource type="Script" path="res://scripts/weapon_profile.gd" id="1"]
+[ext_resource type="PackedScene" path="res://scenes/weapons/marksman_rifle_model.tscn" id="2"]
+[ext_resource type="AudioStream" path="res://assets/audio/firearm_library_marksman/shot.ogg" id="s1"]
+[ext_resource type="AudioStream" path="res://assets/audio/oga_gun_reload_sounds/rifle_magazine_out.ogg" id="r1"]
+[ext_resource type="AudioStream" path="res://assets/audio/oga_gun_reload_sounds/rifle_magazine_in.ogg" id="r2"]
+
+[resource]
+script = ExtResource("1")
+semi_auto = true
+fire_interval = 0.4
+magazine_size = 8
+reload_tactical = 2.0
+reload_empty = 2.4
+pellet_count = 1
+damage = 50
+headshot_multiplier = 2.0
+projectile_speed = 200.0
+projectile_lifetime = 0.4
+spread_base_degrees = 3.0
+bloom_per_shot_degrees = 1.0
+bloom_decay_seconds = 0.5
+spread_crouch = 0.8
+spread_still = 1.0
+spread_walking = 1.5
+spread_slide = 2.0
+spread_air = 2.0
+ads_spread = 0.0166667
+ads_moving_spread = 0.4
+ads_sway_degrees = 0.25
+ads_zoom = 3.0
+ads_speed = 0.6
+recoil_push = 0.05
+recoil_kick_degrees = 5.0
+ads_recoil_push = 0.05
+ads_recoil_kick_degrees = 0.0
+camera_kick_degrees = 1.6
+fire_clip = &""
+shot_sounds = Array[AudioStream]([ExtResource("s1")])
+reload_sounds = Array[AudioStream]([ExtResource("r1"), ExtResource("r2")])
+loudness = 24.0
+model = ExtResource("2")
+pose_hip = Vector3(0.15, -0.2, -0.36)
+pose_low = Vector3(0.21, -0.32, -0.36)
+ads_distance = 0.36
+model_fire_clip = &"fire"
+model_reload_clip = &"reload"
+model_rack_clip = &"rack"
+fire_cycle_time = 0.15
+rack_time = 0.3
