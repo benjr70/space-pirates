@@ -34,12 +34,15 @@ func _check_doc_fresh() -> void:
 	var doc := FileAccess.get_file_as_string(SandboxSheet.DOC_PATH)
 	for heading in ["## Weapons", "## Health and Melee", "| | Pistol | Assault Rifle |", "| **Trigger** |",
 			"| **Derived** |", "| = Shots to kill crew | 4 | 4 |", "| Pirate Health | 150 |", "| Crew Health | 100 |",
-			"| Melee Damage | 75 |", "kills outright"]:
+			"| Melee Damage | 75 |", "kills outright", "## Gunnery", "| | Guard | Worker |", "| **Aim** |",
+			"| Aim Error Degrees | 6.0 | 11.0 |", "| Burst Length | 3 | 2 |", "| Pause Between Bursts | 1.1 | 1.1 |",
+			"| Engage Range | 10.6 | 10.6 |", "Crew fire the Pistol"]:
 		_expect(doc.contains(heading), "docs/sandbox.md lacks \"%s\"" % heading)
 
 
-## Fresh copies of the weapons and the Sandbox under SCRATCH, with their own
-## Markdown view. Returns {weapons: PackedStringArray, sandbox: String, doc: String}.
+## Fresh copies of the weapons, the Sandbox and the Gunnery under SCRATCH,
+## with their own Markdown view. Returns {weapons: PackedStringArray,
+## sandbox: String, gunnery: PackedStringArray, doc: String}.
 func _scratch_copies() -> Dictionary:
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(SCRATCH))
 	var weapons := PackedStringArray()
@@ -49,15 +52,20 @@ func _scratch_copies() -> Dictionary:
 		weapons.append(copy)
 	var sandbox := SCRATCH + "sandbox.tres"
 	DirAccess.copy_absolute(ProjectSettings.globalize_path(Sandbox.PATH), ProjectSettings.globalize_path(sandbox))
-	var sheet := SandboxSheet.from_disk(weapons, sandbox)
+	var gunnery := PackedStringArray()
+	for path in Gunnery.PATHS:
+		var copy := SCRATCH + "gunnery_" + path.get_file()
+		DirAccess.copy_absolute(ProjectSettings.globalize_path(path), ProjectSettings.globalize_path(copy))
+		gunnery.append(copy)
+	var sheet := SandboxSheet.from_disk(weapons, sandbox, gunnery)
 	sheet.doc_path = SCRATCH + "sandbox.md"
 	sheet.write_doc()
-	return {"weapons": weapons, "sandbox": sandbox, "doc": sheet.doc_path}
+	return {"weapons": weapons, "sandbox": sandbox, "gunnery": gunnery, "doc": sheet.doc_path}
 
 
 ## Changing a number in a `.tres` by hand, without regenerating, fails it.
 func _check_stale_on_hand_edit(copies: Dictionary) -> void:
-	var report := SandboxSheet.from_disk(copies.weapons, copies.sandbox).stale_report(copies.doc)
+	var report := SandboxSheet.from_disk(copies.weapons, copies.sandbox, copies.gunnery).stale_report(copies.doc)
 	_expect(report == "", "stale check fails on a freshly written view: %s" % report)
 	var pistol: String = copies.weapons[0]
 	_expect(pistol.get_file() == "pistol.tres", "the first carried weapon is %s, not the Pistol" % pistol.get_file())
@@ -68,13 +76,21 @@ func _check_stale_on_hand_edit(copies: Dictionary) -> void:
 	var file := FileAccess.open(pistol, FileAccess.WRITE)
 	file.store_string(edited)
 	file.close()
-	report = SandboxSheet.from_disk(copies.weapons, copies.sandbox).stale_report(copies.doc)
+	report = SandboxSheet.from_disk(copies.weapons, copies.sandbox, copies.gunnery).stale_report(copies.doc)
 	_expect(report.contains("stale"), "stale check passed after the Pistol's damage was edited by hand")
+	SandboxSheet.from_disk(copies.weapons, copies.sandbox, copies.gunnery).write_doc(copies.doc)
+	var worker_path: String = copies.gunnery[1]
+	var worker_text := FileAccess.get_file_as_string(worker_path).replace("burst_length = 2", "burst_length = 5")
+	file = FileAccess.open(worker_path, FileAccess.WRITE)
+	file.store_string(worker_text)
+	file.close()
+	report = SandboxSheet.from_disk(copies.weapons, copies.sandbox, copies.gunnery).stale_report(copies.doc)
+	_expect(report.contains("stale"), "stale check passed after the Worker's Gunnery was edited by hand")
 	var sandbox_text := FileAccess.get_file_as_string(copies.sandbox).replace("crew_health = 100", "crew_health = 90")
 	file = FileAccess.open(copies.sandbox, FileAccess.WRITE)
 	file.store_string(sandbox_text)
 	file.close()
-	var fresh := SandboxSheet.from_disk(copies.weapons, copies.sandbox)
+	var fresh := SandboxSheet.from_disk(copies.weapons, copies.sandbox, copies.gunnery)
 	fresh.write_doc(copies.doc)
 	_expect(fresh.stale_report(copies.doc) == "", "stale check still fails after regenerating")
 
@@ -85,10 +101,18 @@ func _check_edit_save_revert(copies: Dictionary) -> void:
 	var pistol: WeaponProfile = load(copies.weapons[0])
 	var rifle: WeaponProfile = load(copies.weapons[1])
 	var sandbox: Sandbox = load(copies.sandbox)
-	var sheet := SandboxSheet.build([pistol, rifle], sandbox)
+	var guard: Gunnery = load(copies.gunnery[0])
+	var worker: Gunnery = load(copies.gunnery[1])
+	var sheet := SandboxSheet.build([pistol, rifle], sandbox, [guard, worker])
 	sheet.doc_path = copies.doc
 	var weapons := sheet.table(SandboxSheet.WEAPONS)
 	var health := sheet.table(SandboxSheet.HEALTH)
+	var gunnery := sheet.table(SandboxSheet.GUNNERY)
+	_expect(gunnery != null and gunnery.columns == PackedStringArray(["Guard", "Worker"]), "the sheet has no Guard and Worker Gunnery table")
+	if gunnery == null:
+		return
+	for key in [&"aim_error_degrees", &"burst_length", &"pause_between_bursts", &"engage_range"]:
+		_expect(gunnery.is_editable(key), "Gunnery's %s is not editable in the sheet" % key)
 	_expect(weapons.columns == PackedStringArray(["Pistol", "Assault Rifle"]), "weapon columns are %s" % weapons.columns)
 	_expect(sheet.changed_count() == 0, "a fresh sheet has %d changed cells" % sheet.changed_count())
 
@@ -111,9 +135,12 @@ func _check_edit_save_revert(copies: Dictionary) -> void:
 	weapons.set_value(&"damage", 0, 40)
 	weapons.set_value(&"semi_auto", 1, true)
 	health.set_value(&"crew_health", 0, 120)
+	gunnery.set_value(&"burst_length", 1, 4)
+	gunnery.set_value(&"engage_range", 0, 12.5)
+	_expect(worker.burst_length == 4 and guard.engage_range == 12.5, "the sheet did not change the live Gunnery")
 	_expect(weapons.value(&"shots_to_kill_crew", 0) == 3 and weapons.value(&"shots_to_kill_crew", 1) == 5,
 			"shots to kill crew did not follow crew Health 120")
-	_expect(sheet.changed_count() == 3, "three edits mark %d cells" % sheet.changed_count())
+	_expect(sheet.changed_count() == 5, "five edits mark %d cells" % sheet.changed_count())
 	var err := sheet.save()
 	_expect(err == OK, "Save failed: %s" % error_string(err))
 	_expect(sheet.changed_count() == 0, "after Save %d cells still differ from disk" % sheet.changed_count())
@@ -125,7 +152,11 @@ func _check_edit_save_revert(copies: Dictionary) -> void:
 	_expect(saved_rifle.model != null and saved_rifle.model.resource_path == "res://scenes/weapons/assault_rifle_model.tscn",
 			"Save lost the Assault Rifle's model")
 	_expect(saved_sandbox.crew_health == 120, "Save wrote crew Health as %d" % saved_sandbox.crew_health)
-	_expect(SandboxSheet.from_disk(copies.weapons, copies.sandbox).stale_report(copies.doc) == "",
+	var saved_guard: Gunnery = ResourceLoader.load(copies.gunnery[0], "", ResourceLoader.CACHE_MODE_IGNORE)
+	var saved_worker: Gunnery = ResourceLoader.load(copies.gunnery[1], "", ResourceLoader.CACHE_MODE_IGNORE)
+	_expect(saved_worker.burst_length == 4 and is_equal_approx(saved_guard.engage_range, 12.5),
+			"Save wrote the Worker's burst as %d and the Guard's engage range as %s" % [saved_worker.burst_length, saved_guard.engage_range])
+	_expect(SandboxSheet.from_disk(copies.weapons, copies.sandbox, copies.gunnery).stale_report(copies.doc) == "",
 			"Save left the Markdown view stale")
 	_expect(FileAccess.get_file_as_string(copies.doc).contains("| Damage | 40 | 25 |"), "the saved view lacks the Pistol at 40")
 
@@ -204,11 +235,28 @@ func _check_in_raid() -> void:
 	_key(KEY_F1)
 	var shot: Projectile3D = player.fire()
 	_expect(shot != null and shot.damage == 40, "the next shot after the edit does %s damage, not 40" % (shot.damage if shot else "no"))
+	# Crew fire the same Pistol, so the edit reaches their shots too.
+	var gunman: Crew3D = crew[0]
+	_expect(gunman.weapon == pistol, "crew do not hold the Pirate's own Pistol")
+	var crew_shot := gunman._fire()
+	_expect(crew_shot != null and crew_shot.damage == 40, "a crew shot after the edit does %s damage, not 40"
+			% (crew_shot.damage if crew_shot else "no"))
+	# A Gunnery edit reaches the crew of that type.
+	_key(KEY_F1)
+	var guard_gunnery: Gunnery = load(Gunnery.GUARD_PATH)
+	(view.cell(SandboxSheet.GUNNERY, &"aim_error_degrees", 0) as SpinBox).value = 3.0
+	for body: Crew3D in crew:
+		if not body.is_worker():
+			_expect(body.gunnery == guard_gunnery and is_equal_approx(body.base_cone_degrees(), 4.0),
+					"a Guard's cone is %.1f after aim error 3 on a 1 degree Pistol" % body.base_cone_degrees())
+	_expect(view.disk_shown(SandboxSheet.GUNNERY, &"aim_error_degrees", 0) == "6.0", "the Gunnery cell does not show the disk value 6.0")
+	_key(KEY_F1)
 	# Pirate Health applies live too.
 	_key(KEY_F1)
 	(view.cell(SandboxSheet.HEALTH, &"pirate_health", 0) as SpinBox).value = 175
 	_expect(player.health.max_health == 175 and player.health.current == 175, "a Pirate Health edit did not reach the Pirate")
 	view.revert_button().pressed.emit()
+	_expect(is_equal_approx(guard_gunnery.aim_error_degrees, 6.0), "Revert left the Guard's aim error on %s" % guard_gunnery.aim_error_degrees)
 	_expect(pistol.damage == 25 and sandbox.pirate_health == 150 and player.health.max_health == 150,
 			"Revert left damage %d, Pirate Health %d" % [pistol.damage, sandbox.pirate_health])
 	_expect((view.cell(SandboxSheet.WEAPONS, &"damage", 0) as SpinBox).value == 25.0

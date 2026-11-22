@@ -1,6 +1,6 @@
 # Sandbox
 
-Every Sandbox number, generated from `resources/weapons/` and `resources/sandbox.tres`. Do not edit by hand: change numbers in the in-Raid sheet (F1, debug builds) and Save, or edit the resources and run `flatpak run org.godotengine.Godot --headless --path . --script res://scripts/sandbox/write_sandbox_doc.gd`. Rows marked `=` are derived.
+Every Sandbox number, generated from `resources/weapons/`, `resources/sandbox.tres` and `resources/gunnery/`. Do not edit by hand: change numbers in the in-Raid sheet (F1, debug builds) and Save, or edit the resources and run `flatpak run org.godotengine.Godot --headless --path . --script res://scripts/sandbox/write_sandbox_doc.gd`. Rows marked `=` are derived.
 
 ## Weapons
 
@@ -65,3 +65,17 @@ Every Sandbox number, generated from `resources/weapons/` and `resources/sandbox
 | Melee Damage | 75 |
 
 Melee from behind (inside the 120.0 degree cone behind the target's facing) kills outright, whatever the damage.
+
+## Gunnery
+
+| | Guard | Worker |
+|---|---|---|
+| **Aim** | | |
+| Aim Error Degrees | 6.0 | 11.0 |
+| **Bursts** | | |
+| Burst Length | 3 | 2 |
+| Pause Between Bursts | 1.1 | 1.1 |
+| **Range** | | |
+| Engage Range | 10.6 | 10.6 |
+
+Crew fire the Pistol: its damage, bolt and time between shots. Aim error adds to the Pistol's base cone. Each crew member draws its own rhythm at spawn: a Guard's burst a round either way, and 0.75-1.35x on time between shots and pause.

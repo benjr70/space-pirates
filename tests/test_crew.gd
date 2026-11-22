@@ -71,6 +71,7 @@ func _initialize() -> void:
 	_check_on_edge()
 	await _check_share()
 	_check_aim()
+	_check_gunnery()
 	await _check_stagger()
 	_check_flank()
 	await _check_bodies()
@@ -210,9 +211,8 @@ func _check_health_and_damage() -> void:
 		crew.take_damage(profile.damage, player)
 		_expect(not crew.is_alive(), "four %s hits left a crew member on %d" % [path.get_file(), crew.health.current])
 		crew.free()
-	var shot: Projectile3D = load("res://scenes/projectile_3d.tscn").instantiate()
-	var crew_damage := shot.damage
-	shot.free()
+	# Crew fire the Pistol, so a crew shot does its damage.
+	var crew_damage: int = (load("res://resources/weapons/pistol.tres") as WeaponProfile).damage
 	_expect(crew_damage == 25, "a crew shot does %d damage, not 25" % crew_damage)
 	# A second Pirate to kill, so the one the other checks use stays up.
 	var pirate: CharacterBody3D = load("res://scenes/player_3d.tscn").instantiate()
@@ -421,7 +421,7 @@ func _check_routines() -> void:
 ## A shot leaves the magazine: a bolt at 2.5 m lands and is gone before it
 ## could be counted.
 func _has_fired(crew: Crew3D) -> bool:
-	return crew._shots_left < crew.burst_size or crew._reload_timer > 0.0
+	return crew._shots_left < crew.burst_length or crew._reload_timer > 0.0
 
 
 ## A Worker that spots the Pirate 8 m off runs for the Guard behind it and
@@ -628,15 +628,76 @@ func _check_aim() -> void:
 	var guard := _crew()
 	guard.state = Crew3D.State.FIGHT
 	_place(5.0)
-	var opening := CrewCombat.spread(guard.spread_degrees, guard._exposed_for)
+	var opening := CrewCombat.spread(guard.base_cone_degrees(), guard._exposed_for)
 	for i in 185:
 		guard._update_perception(STEP)
-	var tight := CrewCombat.spread(guard.spread_degrees, guard._exposed_for)
+	var tight := CrewCombat.spread(guard.base_cone_degrees(), guard._exposed_for)
 	_expect(tight <= opening / 2.0, "aim: after 3 s exposed the spread is %.1f°, opening %.1f°" % [tight, opening])
 	player.global_position = CREW_AT + Vector3.FORWARD * 40.0
 	guard._update_perception(STEP)
 	_expect(guard._exposed_for == 0.0, "aim: losing sight did not reset the tightening")
 	guard.free()
+
+
+## Crew fire the Pistol, handled with their type's Gunnery: a shot carries
+## the Pistol's damage, speed and lifetime, live; the cone is the Pistol's
+## base plus the Gunnery's aim error; burst, pause and engage range are the
+## Gunnery's, give or take spawn jitter.
+func _check_gunnery() -> void:
+	var pistol: WeaponProfile = load("res://resources/weapons/pistol.tres")
+	var guard_gunnery: Gunnery = load("res://resources/gunnery/guard.tres")
+	var worker_gunnery: Gunnery = load("res://resources/gunnery/worker.tres")
+	_expect(guard_gunnery != null and worker_gunnery != null, "gunnery: the Guard or Worker Gunnery resource is missing")
+	if guard_gunnery == null or worker_gunnery == null:
+		return
+	_expect(is_equal_approx(guard_gunnery.aim_error_degrees, 6.0) and guard_gunnery.burst_length == 3
+			and is_equal_approx(guard_gunnery.pause_between_bursts, 1.1) and is_equal_approx(guard_gunnery.engage_range, 10.6),
+			"gunnery: the Guard's is not 6 degrees, 3 rounds, 1.1 s, 10.6 m")
+	_expect(is_equal_approx(worker_gunnery.aim_error_degrees, 11.0) and worker_gunnery.burst_length == 2
+			and is_equal_approx(worker_gunnery.pause_between_bursts, 1.1) and is_equal_approx(worker_gunnery.engage_range, 10.6),
+			"gunnery: the Worker's is not 11 degrees, 2 rounds, 1.1 s, 10.6 m")
+
+	var guard := _crew()
+	var worker := _crew(CrewTypes.Type.WORKER)
+	_expect(guard.weapon == pistol and worker.weapon == pistol, "gunnery: crew do not hold the Pirate's Pistol")
+	_expect(guard.gunnery == guard_gunnery and worker.gunnery == worker_gunnery, "gunnery: crew do not hold their type's Gunnery")
+	_expect(is_equal_approx(guard.base_cone_degrees(), 7.0), "gunnery: a Guard's cone is %.1f degrees, want 1 + 6" % guard.base_cone_degrees())
+	_expect(is_equal_approx(worker.base_cone_degrees(), 12.0), "gunnery: a Worker's cone is %.1f degrees, want 1 + 11" % worker.base_cone_degrees())
+	_expect(worker.burst_length == 2, "gunnery: a Worker fires %d-round bursts, want 2" % worker.burst_length)
+	_expect(absi(guard.burst_length - 3) <= 1, "gunnery: a Guard fires %d-round bursts, want 3 give or take 1" % guard.burst_length)
+	_expect(guard.engage_range() == guard_gunnery.engage_range, "gunnery: a Guard's engage range is not its Gunnery's")
+
+	_place(5.0)
+	guard.face_direction(Vector3.FORWARD)
+	guard._aim = Vector3.FORWARD
+	var shot := guard._fire()
+	_expect(shot != null and shot.damage == 25 and is_equal_approx(shot.speed, 80.0) and is_equal_approx(shot.lifetime, 0.5),
+			"gunnery: a crew shot is not the Pistol's 25 damage at 80 m/s for 0.5 s")
+	_expect(guard._shot_timer > pistol.fire_interval * CrewCombat.JITTER.x - 0.001
+			and guard._shot_timer < pistol.fire_interval * CrewCombat.JITTER.y + 0.001,
+			"gunnery: %.3f s to the next shot is not the Pistol's %.2f s, jittered" % [guard._shot_timer, pistol.fire_interval])
+	pistol.damage = 40
+	pistol.projectile_speed = 60.0
+	var edited := guard._fire()
+	_expect(edited != null and edited.damage == 40 and is_equal_approx(edited.speed, 60.0),
+			"gunnery: a crew shot after editing the Pistol did not follow it")
+	pistol.damage = 25
+	pistol.projectile_speed = 80.0
+	while guard._shots_left > 0:
+		guard._fire()
+	var pause := guard_gunnery.pause_between_bursts
+	_expect(guard._reload_timer > pause * CrewCombat.JITTER.x - 0.001 and guard._reload_timer < pause * CrewCombat.JITTER.y + 0.001,
+			"gunnery: a spent burst pauses %.2f s, not the Gunnery's %.1f s, jittered" % [guard._reload_timer, pause])
+	guard_gunnery.engage_range = 4.0
+	_expect(guard.engage_range() == 4.0, "gunnery: dialling the Guard Gunnery's engage range did not reach the Guard")
+	guard_gunnery.engage_range = 10.6
+	guard_gunnery.aim_error_degrees = 2.0
+	_expect(is_equal_approx(guard.base_cone_degrees(), 3.0), "gunnery: dialling the Guard's aim error did not reach its cone")
+	guard_gunnery.aim_error_degrees = 6.0
+	guard.free()
+	worker.free()
+	for bolt in get_first_node_in_group(&"projectiles").get_children():
+		bolt.free()
 
 
 ## Two Guards fighting the Pirate for 10 s never start a burst on the same

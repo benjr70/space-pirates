@@ -1,19 +1,21 @@
 class_name SandboxSheet
 extends RefCounted
 ## Every Sandbox number as tables: the Weapon Profiles side by side with
-## their derived rows, and the [Sandbox] resource's Health and Melee. One
+## their derived rows, the [Sandbox] resource's Health and Melee, and each
+## crew type's [Gunnery]. One
 ## generator for both views of it: the in-Raid sheet ([SandboxSheetView])
 ## edits these tables live and Saves them, and `docs/sandbox.md` is
 ## [method to_markdown] of them, written on Save and by
 ## `scripts/sandbox/write_sandbox_doc.gd`, and checked against the
 ## resources on disk by [method stale_report] in the test suite.
 ##
-## A later table (Gunnery) is [method add_table] in [method build]; later
-## derived rows go in [method _add_weapon_derived].
+## A later table is [method add_table] in [method build]; later derived
+## rows go in [method _add_weapon_derived].
 
 const DOC_PATH := "res://docs/sandbox.md"
 const WEAPONS := "Weapons"
 const HEALTH := "Health and Melee"
+const GUNNERY := "Gunnery"
 const REGENERATE := "flatpak run org.godotengine.Godot --headless --path . --script res://scripts/sandbox/write_sandbox_doc.gd"
 
 var tables: Array[SheetTable] = []
@@ -23,7 +25,9 @@ var doc_path := DOC_PATH
 
 
 ## The sheet over these live Resources: the ones the Raid is playing with.
-static func build(weapons: Array, sandbox_resource: Sandbox) -> SandboxSheet:
+## [param gunneries] are one [Gunnery] per crew type, in [constant
+## Gunnery.NAMES] order; none, and the sheet has no Gunnery table.
+static func build(weapons: Array, sandbox_resource: Sandbox, gunneries: Array = []) -> SandboxSheet:
 	var sheet := SandboxSheet.new()
 	sheet.sandbox = sandbox_resource
 	var names := PackedStringArray()
@@ -36,24 +40,35 @@ static func build(weapons: Array, sandbox_resource: Sandbox) -> SandboxSheet:
 	health.add_note("Melee from behind (inside the %s degree cone behind the target's facing) kills outright, whatever the damage."
 			% SheetTable.format(_player_default(&"melee_back_cone_degrees")))
 	sheet.add_table(health)
+	if not gunneries.is_empty():
+		var gunnery := SheetTable.from_resources(GUNNERY, Gunnery.NAMES.slice(0, gunneries.size()), gunneries)
+		gunnery.add_note("Crew fire the Pistol: its damage, bolt and time between shots. Aim error adds to the Pistol's base cone. "
+				+ "Each crew member draws its own rhythm at spawn: a Guard's burst a round either way, and %s-%sx on time between shots and pause."
+				% [SheetTable.format(CrewCombat.JITTER.x), SheetTable.format(CrewCombat.JITTER.y)])
+		sheet.add_table(gunnery)
 	return sheet
 
 
 ## The sheet over what is on disk, loaded apart from anything the game has
 ## cached: what the stale check compares `docs/sandbox.md` against.
 static func from_disk(weapon_paths: PackedStringArray = carried_weapon_paths(),
-		sandbox_path: String = Sandbox.PATH) -> SandboxSheet:
+		sandbox_path: String = Sandbox.PATH, gunnery_paths: PackedStringArray = Gunnery.PATHS) -> SandboxSheet:
 	var weapons := []
 	for path in weapon_paths:
 		weapons.append(ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE))
+	var gunneries := []
+	for path in gunnery_paths:
+		gunneries.append(ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE))
 	var sandbox_resource: Sandbox = ResourceLoader.load(sandbox_path, "", ResourceLoader.CACHE_MODE_IGNORE)
-	var sheet := build(weapons, sandbox_resource)
+	var sheet := build(weapons, sandbox_resource, gunneries)
 	# Loaded apart from the cache, so give each column back its file.
 	for table in sheet.tables:
 		if table.title == WEAPONS:
 			table.paths = weapon_paths
 		elif table.title == HEALTH:
 			table.paths = PackedStringArray([sandbox_path])
+		elif table.title == GUNNERY:
+			table.paths = gunnery_paths
 		table.reload_disk()
 	return sheet
 
@@ -142,7 +157,7 @@ func write_doc(path: String = doc_path) -> Error:
 
 func to_markdown() -> String:
 	var parts := PackedStringArray()
-	parts.append("# Sandbox\n\nEvery Sandbox number, generated from `resources/weapons/` and `resources/sandbox.tres`. "
+	parts.append("# Sandbox\n\nEvery Sandbox number, generated from `resources/weapons/`, `resources/sandbox.tres` and `resources/gunnery/`. "
 			+ "Do not edit by hand: change numbers in the in-Raid sheet (F1, debug builds) and Save, or edit the "
 			+ "resources and run `%s`. Rows marked `=` are derived.\n" % REGENERATE)
 	for t in tables:

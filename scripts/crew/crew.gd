@@ -75,9 +75,6 @@ const SWEEP_PAUSE := 1.5
 ## Seconds a hiding Worker stays put with nothing in sight before it
 ## creeps back to its routine.
 const COWER_CALM := 15.0
-## A Worker's pistol: wider spread and shorter bursts than a Guard's rifle.
-const WORKER_SPREAD := 12.0
-const WORKER_BURST := 2
 ## How fast the body turns to face where it is looking, radians a second.
 const TURN_RATE := 6.0
 
@@ -89,8 +86,10 @@ const WORLD_LAYER := 1
 const EYE_HEIGHT := 1.5
 ## Cover only counts if it hides someone crouched this high.
 const COVER_HEIGHT := 0.9
-## Shots leave here and are aimed at the target's torso.
+## Shots leave here, this far ahead of the body, and are aimed at the
+## target's torso. Where the gun sits on the body, not a gun number.
 const MUZZLE_HEIGHT := 1.3
+const MUZZLE_FORWARD := 0.625
 const TORSO_HEIGHT := 1.0
 
 @export_group("Movement")
@@ -106,13 +105,14 @@ const TORSO_HEIGHT := 1.0
 @export var lose_target_after := 3.0
 
 @export_group("Gunnery")
-@export var engage_range := 10.6
-@export var burst_size := 3
-@export var burst_gap := 0.14
-@export var reload_time := 1.1
-## Crew are worse shots than the player.
-@export var spread_degrees := 7.0
-@export var muzzle_offset := 0.625
+## What they fire: the Pirate's own Pistol, the same live Resource, so a
+## Sandbox sheet edit reaches crew shots too. Crew read its damage, bolt and
+## time between shots, and ignore its magazine, reloads, bloom, Aim Down
+## Sights, recoil and Viewmodel: they fire a burst and pause.
+@export var weapon: WeaponProfile = preload("res://resources/weapons/pistol.tres")
+## How they handle it ([Gunnery]): aim error, burst, pause, engage range.
+## Left empty, it is their crew type's at spawn.
+@export var gunnery: Gunnery
 @export var projectile_scene: PackedScene = preload("res://scenes/projectile_3d.tscn")
 ## What their shot sounds like, rung at the muzzle: the same gun as the
 ## Pirate's, and distance does the rest.
@@ -193,6 +193,17 @@ var _aim := Vector3.FORWARD
 var _shots_left := 0
 var _shot_timer := 0.0
 var _reload_timer := 0.0
+## This crew member's own rhythm, drawn at spawn over its Gunnery and
+## weapon's base values: a Guard's burst a round longer or shorter, and
+## multipliers on time between shots and the pause between bursts.
+var _burst_offset := 0
+var _gap_jitter := 1.0
+var _pause_jitter := 1.0
+## Shots in this crew member's bursts: its Gunnery's, give or take its own
+## spawn offset, never under one.
+var burst_length: int:
+	get:
+		return maxi(gunnery.burst_length + _burst_offset, 1)
 ## Counts down inside states that wait: holding cover, pausing on patrol.
 var _hold_timer := 0.0
 var _repath_timer := 0.0
@@ -229,16 +240,15 @@ func _ready() -> void:
 	if target == null:
 		target = get_tree().get_first_node_in_group(&"player")
 	_rng.randomize()
-	if is_worker():
-		spread_degrees = WORKER_SPREAD
-		burst_size = WORKER_BURST
-	else:
+	if gunnery == null:
+		gunnery = Gunnery.for_type(crew_type)
+	if not is_worker():
 		# No two Guards keep the same rhythm.
-		burst_size = clampi(burst_size + _rng.randi_range(-1, 1), 2, 4)
-	burst_gap *= CrewCombat.jitter(_rng)
-	reload_time *= CrewCombat.jitter(_rng)
+		_burst_offset = _rng.randi_range(-1, 1)
+	_gap_jitter = CrewCombat.jitter(_rng)
+	_pause_jitter = CrewCombat.jitter(_rng)
 	cover_hold_time *= CrewCombat.jitter(_rng)
-	_shots_left = burst_size
+	_shots_left = burst_length
 	_dress()
 	_anim = _find_animation_player(model)
 	if _anim != null:
@@ -301,6 +311,18 @@ func get_team() -> StringName:
 
 ## Takes Health from the Sandbox, full: at spawn, and when the Sandbox sheet
 ## changes it mid-Raid on anyone still standing.
+## Degrees either side a shot may stray before aim tightens
+## ([method CrewCombat.spread]): the weapon's base cone plus its Gunnery's
+## aim error.
+func base_cone_degrees() -> float:
+	return weapon.spread_base_degrees + gunnery.aim_error_degrees
+
+
+## Metres off the Pirate this crew member opens fire from: its Gunnery's.
+func engage_range() -> float:
+	return gunnery.engage_range
+
+
 func apply_sandbox() -> void:
 	health.max_health = sandbox.crew_health
 	health.reset()
@@ -591,7 +613,7 @@ func _enter(next: State) -> void:
 			_try_flank()
 		State.FIGHT:
 			_path.clear()
-			_shots_left = burst_size
+			_shots_left = burst_length
 			# A beat before the first shot, different every time.
 			_shot_timer = _rng.randf_range(0.05, 0.35)
 		State.COVER:
@@ -826,14 +848,14 @@ func _try_flank() -> void:
 func _tick_hunt() -> void:
 	if flanking:
 		_flank_clock += get_physics_process_delta_time()
-		if _can_see and _flat_distance(global_position, target.global_position) <= engage_range:
+		if _can_see and _flat_distance(global_position, target.global_position) <= engage_range():
 			_enter(State.FIGHT)
 		elif _path.is_empty() or _flank_clock > CrewCombat.FLANK_GIVE_UP:
 			# Arrived, or given up: back to hunting him the straight way.
 			flanking = false
 			_repath_to(_last_seen)
 		return
-	if _can_see and _flat_distance(global_position, target.global_position) <= engage_range:
+	if _can_see and _flat_distance(global_position, target.global_position) <= engage_range():
 		_enter(State.FIGHT)
 		return
 	if _seen_ago > lose_target_after:
@@ -858,7 +880,7 @@ func _tick_fight() -> void:
 				- (global_position + Vector3.UP * MUZZLE_HEIGHT)).normalized()
 		if _shots_left > 0:
 			if _shot_timer <= 0.0:
-				if _shots_left == burst_size:
+				if _shots_left == burst_length:
 					# Start of a burst: never in step with another's.
 					if CrewCombat.burst_blocked(self):
 						_shot_timer = 0.05
@@ -1144,18 +1166,21 @@ func _face() -> void:
 # --- gunnery ------------------------------------------------------------------
 
 func _fire() -> Projectile3D:
-	if projectile_scene == null:
+	if projectile_scene == null or weapon == null:
 		return null
 	_shots_left -= 1
-	_shot_timer = burst_gap
+	_shot_timer = weapon.fire_interval * _gap_jitter
 	if _shots_left <= 0:
-		_reload_timer = reload_time
+		_reload_timer = gunnery.pause_between_bursts * _pause_jitter
 
-	var cone := CrewCombat.spread(spread_degrees, _exposed_for)
+	var cone := CrewCombat.spread(base_cone_degrees(), _exposed_for)
 	var spread := deg_to_rad(_rng.randf_range(-cone, cone))
 	var direction := _aim.rotated(Vector3.UP, spread)
-	var origin := global_position + Vector3.UP * MUZZLE_HEIGHT + direction * muzzle_offset
+	var origin := global_position + Vector3.UP * MUZZLE_HEIGHT + direction * MUZZLE_FORWARD
 	var shot: Projectile3D = projectile_scene.instantiate()
+	shot.damage = weapon.damage
+	shot.speed = weapon.projectile_speed
+	shot.lifetime = weapon.projectile_lifetime
 	shot.launch(origin, direction, self, TEAM)
 	_shot_parent().add_child(shot)
 	if not shot_streams.is_empty():
@@ -1203,7 +1228,7 @@ func _find_firing_position() -> Vector3:
 	for point in _candidate_points():
 		if _blocked(point + Vector3.UP * MUZZLE_HEIGHT, aim_at):
 			continue
-		if _flat_distance(point, _last_seen) > engage_range:
+		if _flat_distance(point, _last_seen) > engage_range():
 			continue
 		var score := -_flat_distance(global_position, point)
 		if score > best_score:

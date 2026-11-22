@@ -393,7 +393,11 @@ func _begin_crew_phase() -> void:
 	gunman.layout = built_layout
 	gunman.home_room = boarding_room
 	gunman.target = player
-	gunman.spread_degrees = 0.0
+	# A dead-eye: no cone at all, so every shot of his lands.
+	gunman.weapon = (gunman.weapon as WeaponProfile).duplicate()
+	gunman.weapon.spread_base_degrees = 0.0
+	gunman.gunnery = (load(Gunnery.GUARD_PATH) as Gunnery).duplicate()
+	gunman.gunnery.aim_error_degrees = 0.0
 	gunman.position = player.global_position + Vector3(5.6, 0.0, 0.0)
 	holder.add_child(gunman)
 	# Sight is a forward cone that takes time to fill: face him, and hold

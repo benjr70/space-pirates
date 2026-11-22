@@ -6,7 +6,8 @@ extends CanvasLayer
 ## shot; F1 or Esc closes the sheet and the Raid resumes with it. A cell
 ## that differs from disk turns amber and shows the disk value beside it.
 ## Save writes the resources and `docs/sandbox.md`; Revert puts back what is
-## on disk. Health is taken at spawn, so a Health change is pushed onto the
+## on disk. Crew read their Pistol and Gunnery live, so those need nothing
+## more. Health is taken at spawn, so a Health change is pushed onto the
 ## Pirate (refilled) and every crew member still standing.
 ##
 ## Esc belongs to the sheet while it is open, and to the pause menu
@@ -44,7 +45,8 @@ func _ready() -> void:
 	layer = 12
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	var player: Node = _raid.get("player")
-	sheet = SandboxSheet.build(player.weapons, player.sandbox)
+	# The crew's own Gunnery: the cached Resources they hold.
+	sheet = SandboxSheet.build(player.weapons, player.sandbox, Gunnery.all())
 	_build()
 	_root.visible = false
 
