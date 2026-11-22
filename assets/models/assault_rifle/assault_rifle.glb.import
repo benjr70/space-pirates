@@ -4,12 +4,12 @@ importer="scene"
 importer_version=1
 type="PackedScene"
 uid="uid://bjh6n4b2dmo20"
-path="res://.godot/imported/carbine.glb-cd982c29335643fb1edeb7532ea7f548.scn"
+path="res://.godot/imported/assault_rifle.glb-952f42a176bfb4458f39b419c8ed8507.scn"
 
 [deps]
 
-source_file="res://assets/models/carbine/carbine.glb"
-dest_files=["res://.godot/imported/carbine.glb-cd982c29335643fb1edeb7532ea7f548.scn"]
+source_file="res://assets/models/assault_rifle/assault_rifle.glb"
+dest_files=["res://.godot/imported/assault_rifle.glb-952f42a176bfb4458f39b419c8ed8507.scn"]
 
 [params]
 

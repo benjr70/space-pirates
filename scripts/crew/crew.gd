@@ -75,7 +75,7 @@ const SWEEP_PAUSE := 1.5
 ## Seconds a hiding Worker stays put with nothing in sight before it
 ## creeps back to its routine.
 const COWER_CALM := 15.0
-## A Worker's sidearm: wider spread and shorter bursts than a Guard's rifle.
+## A Worker's pistol: wider spread and shorter bursts than a Guard's rifle.
 const WORKER_SPREAD := 12.0
 const WORKER_BURST := 2
 ## How fast the body turns to face where it is looking, radians a second.

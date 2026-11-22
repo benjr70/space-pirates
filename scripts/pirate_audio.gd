@@ -1,6 +1,6 @@
 class_name PirateAudio
 extends Node
-## What the Pirate hears of himself: the Sidearm's shot and dry click, the
+## What the Pirate hears of himself: the Pistol's shot and dry click, the
 ## reload's magazine and rack, a landed Melee, his footsteps and landings,
 ## and the hit he takes. Driven by the Pirate's signals alone, plus his
 ## speed over the floor for the stride, so it never reaches into his state.
@@ -16,7 +16,7 @@ extends Node
 ## A sound went off: [param kind] names the event, [param stream] what played.
 signal played(kind: StringName, stream: AudioStream)
 
-@export_group("Sidearm")
+@export_group("Pistol")
 @export var shot_streams: Array[AudioStream] = [
 	preload("res://assets/audio/kurt_gunshots/shot_1.ogg"),
 	preload("res://assets/audio/kurt_gunshots/shot_2.ogg"),

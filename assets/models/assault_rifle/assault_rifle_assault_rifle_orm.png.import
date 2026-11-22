@@ -2,19 +2,19 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://ba1hb6yrqxwx0"
-path="res://.godot/imported/pistol_pistol_normal.png-51108237d2cb9a62d09915f88e37210e.ctex"
+uid="uid://c6dptaecgwp2r"
+path="res://.godot/imported/assault_rifle_assault_rifle_orm.png-4d7009472e1e4aaed8e012005157c921.ctex"
 metadata={
 "vram_texture": false
 }
 generator_parameters={
-"md5": "659aee9b632dcf89c06e13cf479a7687"
+"md5": "8ab2248f51ad4c7549ef1268b988b04b"
 }
 
 [deps]
 
-source_file="res://assets/models/sidearm/pistol_pistol_normal.png"
-dest_files=["res://.godot/imported/pistol_pistol_normal.png-51108237d2cb9a62d09915f88e37210e.ctex"]
+source_file="res://assets/models/assault_rifle/assault_rifle_assault_rifle_orm.png"
+dest_files=["res://.godot/imported/assault_rifle_assault_rifle_orm.png-4d7009472e1e4aaed8e012005157c921.ctex"]
 
 [params]
 

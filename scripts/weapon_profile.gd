@@ -1,8 +1,8 @@
 class_name WeaponProfile
 extends Resource
 ## Every number that makes a weapon what it is, so a second weapon is a data
-## file and a weapon modifier is a field. The Sidearm is
-## `resources/weapons/sidearm.tres`; the Pirate reads whichever Profile he
+## file and a weapon modifier is a field. The Pistol is
+## `resources/weapons/pistol.tres`; the Pirate reads whichever Profile he
 ## holds and never keeps a weapon number of his own.
 
 @export_group("Trigger")

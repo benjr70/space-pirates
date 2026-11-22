@@ -1,6 +1,6 @@
-"""Boarding carbine: a short energy rifle on modern carbine lines.
+"""Boarding assault rifle: a short energy rifle on modern assault rifle lines.
 
-    flatpak run org.blender.Blender -b --python $PWD/tools/blender/carbine.py [-- draft]
+    flatpak run org.blender.Blender -b --python $PWD/tools/blender/assault_rifle.py [-- draft]
 """
 import math
 import os, sys
@@ -122,7 +122,7 @@ body.append(butt)
 body.append(kit.box("stock_latch", (0.014, 0.034, 0.006), (0, 0.262, 0.031), bare(), bevel=0.002, rot=(0.12, 0, 0)))
 body.append(kit.pin("sling_swivel", (0.017, 0.300, 0.058), 0.005, proud=0.002, material=bare()))
 
-carbine = kit.join("Carbine", body)
+assault_rifle = kit.join("AssaultRifle", body)
 
 # The power cell is its own mesh so a reload clip can drop and seat it.
 cell = kit.join("Cell", [
@@ -143,10 +143,10 @@ bolt = kit.join("Bolt", [
 ])
 
 kit.report()
-kit.bake("carbine", [carbine, cell, bolt])
+kit.bake("assault_rifle", [assault_rifle, cell, bolt])
 
 # Skeleton and the clips the Viewmodel plays, named in the Weapon Profile.
-armature = kit.rig("Carbine", carbine, {"Bolt": bolt, "Cell": cell})
+armature = kit.rig("AssaultRifle", assault_rifle, {"Bolt": bolt, "Cell": cell})
 STROKE = (0, 0.050, 0)  # the bolt's travel, straight back
 REST = (0, 0, 0)
 
@@ -164,9 +164,9 @@ kit.clip(armature, "reload", {
 })
 kit.clip(armature, "rack", {"Bolt": [(1, REST), (5, STROKE), (8, STROKE), (11, REST)]})
 
-kit.marker("Muzzle", (0, -0.522, BORE), carbine)
-kit.marker("SightTip", (0, FRONT_SIGHT, SIGHT), carbine)
-kit.marker("SightRear", (0, REAR_SIGHT, SIGHT), carbine)
+kit.marker("Muzzle", (0, -0.522, BORE), assault_rifle)
+kit.marker("SightTip", (0, FRONT_SIGHT, SIGHT), assault_rifle)
+kit.marker("SightRear", (0, REAR_SIGHT, SIGHT), assault_rifle)
 
-kit.export("carbine")
-kit.render("carbine")
+kit.export("assault_rifle")
+kit.render("assault_rifle")

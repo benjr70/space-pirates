@@ -1,7 +1,7 @@
 extends SceneTree
 ## Headless checks on the pirate: the movement state machine (clamber ledge
 ## band, sprint grace and latch, slide-jump, crouch headroom, the CLAMBER
-## input lock) and the Sidearm (semi-auto trigger, dry-pull reload, reload
+## input lock) and the Pistol (semi-auto trigger, dry-pull reload, reload
 ## carrying through moves, spread and bloom, a swapped Weapon Profile) and
 ## Aim Down Sights (where it is allowed, what ends it, the raise out of a
 ## sprint, its zoom, slowdown and tighter cone) and the Melee (the cone, the
@@ -21,7 +21,7 @@ extends SceneTree
 const UP := Vector3.UP
 const PLAYER_SCENE: PackedScene = preload("res://scenes/player_3d.tscn")
 const HEAVY_PISTOL: WeaponProfile = preload("res://tests/weapons/heavy_pistol.tres")
-const CARBINE: WeaponProfile = preload("res://resources/weapons/carbine.tres")
+const ASSAULT_RIFLE: WeaponProfile = preload("res://resources/weapons/assault_rifle.tres")
 const FRAME := 1.0 / 60.0
 ## Course blocks, one per height, spaced along X with their near face at Z -2.5.
 const BLOCK_HEIGHTS := [0.3, 0.5, 0.7, 0.9, 1.1, 1.3, 1.5, 1.7, 1.9, 2.1]
@@ -121,8 +121,8 @@ func _run() -> void:
 	await _check_profile_swap()
 	await _check_weapon_wheel()
 	await _check_swap_is_busy()
-	await _check_carbine_full_auto()
-	await _check_carbine_model()
+	await _check_assault_rifle_full_auto()
+	await _check_assault_rifle_model()
 	await _check_ads_states()
 	await _check_ads_ends()
 	await _check_ads_raise()
@@ -143,8 +143,8 @@ func _run() -> void:
 	_check_clips_exist()
 	await _check_clips_play()
 	await _check_clips_follow_profile()
-	await _check_sidearm_model()
-	await _check_sidearm_clips()
+	await _check_holder_model()
+	await _check_pistol_clips()
 	await _check_hud_crosshair()
 	await _check_hud_ammo()
 	await _check_hud_dry_click()
@@ -495,7 +495,7 @@ func _check_clamber_lockout() -> void:
 	_expect(door.is_open, "interact after the clamber did not open the door")
 
 
-## --- the Sidearm ---
+## --- the Pistol ---
 
 func _pull_trigger(frames_held: int = 1) -> void:
 	Input.action_press("shoot")
@@ -525,7 +525,7 @@ func _check_reload_lasts(seconds: float, label: String) -> void:
 func _check_semi_auto() -> void:
 	await _place(RUNWAY)
 	var profile: WeaponProfile = player.weapon
-	_expect(profile.magazine_size == 12, "the Sidearm holds %d rounds, expected 12" % profile.magazine_size)
+	_expect(profile.magazine_size == 12, "the Pistol holds %d rounds, expected 12" % profile.magazine_size)
 	_expect(player.ammo == 12, "the pirate started with %d rounds" % player.ammo)
 	await _pull_trigger(60)
 	await _frames(2)
@@ -681,7 +681,7 @@ func _check_spread() -> void:
 
 ## A different .tres changes the numbers with no code change.
 func _check_profile_swap() -> void:
-	var sidearm: WeaponProfile = player.weapon
+	var pistol: WeaponProfile = player.weapon
 	player.weapon = HEAVY_PISTOL
 	await _place(RUNWAY)
 	_expect(player.ammo == HEAVY_PISTOL.magazine_size,
@@ -699,7 +699,7 @@ func _check_profile_swap() -> void:
 	_expect(is_equal_approx(player.spread_degrees(),
 			(HEAVY_PISTOL.spread_base_degrees + HEAVY_PISTOL.bloom_per_shot_degrees) * HEAVY_PISTOL.spread_still),
 			"heavy pistol spread after a shot is %.2f deg" % player.spread_degrees())
-	player.weapon = sidearm
+	player.weapon = pistol
 	_clear_shots()
 
 
@@ -719,41 +719,41 @@ func _wheel(action: StringName) -> void:
 	await _frames(2)
 
 
-## The wheel turns Sidearm to Carbine and back, either way round, and each
+## The wheel turns Pistol to Assault Rifle and back, either way round, and each
 ## keeps the rounds it had.
 func _check_weapon_wheel() -> void:
-	var sidearm: WeaponProfile = player.weapon
+	var pistol: WeaponProfile = player.weapon
 	await _place(RUNWAY)
-	_expect(player.weapons.size() == 2 and player.weapons[0] == sidearm and player.weapons[1] == CARBINE,
-			"he does not carry the Sidearm and the Carbine")
-	_expect(_fire_and_drop(), "no shot from the Sidearm before the swap")
+	_expect(player.weapons.size() == 2 and player.weapons[0] == pistol and player.weapons[1] == ASSAULT_RIFLE,
+			"he does not carry the Pistol and the Assault Rifle")
+	_expect(_fire_and_drop(), "no shot from the Pistol before the swap")
 	await _wheel(&"weapon_next")
-	_expect(player.weapon == CARBINE, "wheel down did not bring up the Carbine")
-	_expect(player.ammo == CARBINE.magazine_size, "the Carbine came up with %d rounds, not a full %d" % [player.ammo, CARBINE.magazine_size])
+	_expect(player.weapon == ASSAULT_RIFLE, "wheel down did not bring up the Assault Rifle")
+	_expect(player.ammo == ASSAULT_RIFLE.magazine_size, "the Assault Rifle came up with %d rounds, not a full %d" % [player.ammo, ASSAULT_RIFLE.magazine_size])
 	await _seconds(player.swap_time + 0.05)
-	_expect(_fire_and_drop(), "no shot from the Carbine after the swap")
+	_expect(_fire_and_drop(), "no shot from the Assault Rifle after the swap")
 	await _wheel(&"weapon_next")
-	_expect(player.weapon == sidearm, "a second turn did not come back to the Sidearm")
-	_expect(player.ammo == sidearm.magazine_size - 1, "the Sidearm came back with %d rounds, it was stowed with %d" % [player.ammo, sidearm.magazine_size - 1])
+	_expect(player.weapon == pistol, "a second turn did not come back to the Pistol")
+	_expect(player.ammo == pistol.magazine_size - 1, "the Pistol came back with %d rounds, it was stowed with %d" % [player.ammo, pistol.magazine_size - 1])
 	await _wheel(&"weapon_prev")
-	_expect(player.weapon == CARBINE, "wheel up did not bring up the Carbine")
-	_expect(player.ammo == CARBINE.magazine_size - 1, "the Carbine came back with %d rounds, it was stowed with %d" % [player.ammo, CARBINE.magazine_size - 1])
+	_expect(player.weapon == ASSAULT_RIFLE, "wheel up did not bring up the Assault Rifle")
+	_expect(player.ammo == ASSAULT_RIFLE.magazine_size - 1, "the Assault Rifle came back with %d rounds, it was stowed with %d" % [player.ammo, ASSAULT_RIFLE.magazine_size - 1])
 	await _wheel(&"weapon_prev")
-	_expect(player.weapon == sidearm, "the wheel did not end on the Sidearm")
+	_expect(player.weapon == pistol, "the wheel did not end on the Pistol")
 	await _place(RUNWAY)
-	_expect(player.weapon == sidearm and player.ammo == sidearm.magazine_size, "a respawn did not leave him a full Sidearm")
+	_expect(player.weapon == pistol and player.ammo == pistol.magazine_size, "a respawn did not leave him a full Pistol")
 	player.switch_weapon(1)
-	_expect(player.ammo == CARBINE.magazine_size, "a respawn did not refill the stowed Carbine")
+	_expect(player.ammo == ASSAULT_RIFLE.magazine_size, "a respawn did not refill the stowed Assault Rifle")
 	player.switch_weapon(1)
 	await _place(RUNWAY)
 
 
 ## A swap holds the trigger and the sights for its time, and drops a reload.
 func _check_swap_is_busy() -> void:
-	var sidearm: WeaponProfile = player.weapon
+	var pistol: WeaponProfile = player.weapon
 	await _place(RUNWAY)
 	_expect(_fire_and_drop(), "no shot to start a reload from")
-	await _seconds(sidearm.fire_interval + 0.05)
+	await _seconds(pistol.fire_interval + 0.05)
 	player.start_reload()
 	_expect(player.is_reloading(), "no reload to swap out of")
 	await _aim(true)
@@ -769,78 +769,78 @@ func _check_swap_is_busy() -> void:
 	_expect(_fire_and_drop(), "no shot after the swap")
 	await _aim(false)
 	player.switch_weapon(-1)
-	_expect(player.ammo == sidearm.magazine_size - 1, "the dropped reload still filled the Sidearm")
+	_expect(player.ammo == pistol.magazine_size - 1, "the dropped reload still filled the Pistol")
 	await _place(RUNWAY)
 
 
-## The Carbine is fully automatic: a held trigger keeps firing at its
-## interval, where the Sidearm fires once.
-func _check_carbine_full_auto() -> void:
-	var sidearm: WeaponProfile = player.weapon
+## The Assault Rifle is fully automatic: a held trigger keeps firing at its
+## interval, where the Pistol fires once.
+func _check_assault_rifle_full_auto() -> void:
+	var pistol: WeaponProfile = player.weapon
 	await _place(RUNWAY)
 	player.switch_weapon(1)
 	await _seconds(player.swap_time + 0.05)
-	_expect(not CARBINE.semi_auto, "the Carbine's Profile is semi-automatic")
+	_expect(not ASSAULT_RIFLE.semi_auto, "the Assault Rifle's Profile is semi-automatic")
 	shots_fired = 0
 	Input.action_press("shoot")
 	await _seconds(1.0)
 	Input.action_release("shoot")
-	var wanted := int(1.0 / CARBINE.fire_interval)
+	var wanted := int(1.0 / ASSAULT_RIFLE.fire_interval)
 	_expect(absi(shots_fired - wanted) <= 2, "a second of held trigger fired %d shots, about %d expected" % [shots_fired, wanted])
-	_expect(player.ammo == CARBINE.magazine_size - shots_fired, "the Carbine spent %d rounds on %d shots" % [CARBINE.magazine_size - player.ammo, shots_fired])
+	_expect(player.ammo == ASSAULT_RIFLE.magazine_size - shots_fired, "the Assault Rifle spent %d rounds on %d shots" % [ASSAULT_RIFLE.magazine_size - player.ammo, shots_fired])
 	await _frames(2)
 	_clear_shots()
 	player.switch_weapon(1)
-	_expect(player.weapon == sidearm, "the wheel did not end on the Sidearm")
+	_expect(player.weapon == pistol, "the wheel did not end on the Pistol")
 	await _place(RUNWAY)
 
 
-## The Viewmodel swaps the mesh: the Carbine's own clips, muzzle and sights,
+## The Viewmodel swaps the mesh: the Assault Rifle's own clips, muzzle and sights,
 ## its front sight on the camera axis in ADS, and the pistol back afterwards.
-func _check_carbine_model() -> void:
-	var sidearm: WeaponProfile = player.weapon
+func _check_assault_rifle_model() -> void:
+	var pistol: WeaponProfile = player.weapon
 	await _place(RUNWAY)
-	var pistol_clips: AnimationPlayer = weapon.sidearm_clips
+	var pistol_clips: AnimationPlayer = weapon.model_clips
 	var pistol_muzzle: Vector3 = player.muzzle.position
 	player.switch_weapon(1)
 	await _seconds(player.swap_time + 0.3)
-	var anim: AnimationPlayer = weapon.sidearm_clips
-	_expect(anim != null and anim != pistol_clips, "the Carbine did not bring its own clips")
+	var anim: AnimationPlayer = weapon.model_clips
+	_expect(anim != null and anim != pistol_clips, "the Assault Rifle did not bring its own clips")
 	if anim != null:
-		for clip_name in [CARBINE.model_fire_clip, CARBINE.model_reload_clip, CARBINE.model_rack_clip]:
-			_expect(anim.has_animation(clip_name), "the Carbine mesh lacks the %s clip" % clip_name)
-	_expect(player.muzzle.position.z > pistol_muzzle.z + 0.2, "the Carbine's muzzle is at %s, no further out than the pistol's" % player.muzzle.position)
-	_at_pose(CARBINE.pose_hip, "Carbine at the hip")
+		for clip_name in [ASSAULT_RIFLE.model_fire_clip, ASSAULT_RIFLE.model_reload_clip, ASSAULT_RIFLE.model_rack_clip]:
+			_expect(anim.has_animation(clip_name), "the Assault Rifle mesh lacks the %s clip" % clip_name)
+	_expect(player.muzzle.position.z > pistol_muzzle.z + 0.2, "the Assault Rifle's muzzle is at %s, no further out than the pistol's" % player.muzzle.position)
+	_at_pose(ASSAULT_RIFLE.pose_hip, "Assault Rifle at the hip")
 	var shown := 0
-	for model in weapon.sidearm.get_children():
+	for model in weapon.holder.get_children():
 		if (model as Node3D).visible:
 			shown += 1
 	_expect(shown == 1, "%d weapon meshes are showing" % shown)
-	_expect(_fire_and_drop(), "no shot for the Carbine fire clip")
+	_expect(_fire_and_drop(), "no shot for the Assault Rifle fire clip")
 	await _frames(1)
-	_expect(anim.current_animation == CARBINE.model_fire_clip and anim.is_playing(), "a shot played %s on the Carbine" % anim.current_animation)
+	_expect(anim.current_animation == ASSAULT_RIFLE.model_fire_clip and anim.is_playing(), "a shot played %s on the Assault Rifle" % anim.current_animation)
 	await _aim(true)
 	await _seconds(0.5)
 	var sight: Node3D = weapon.get_node("SightTip")
 	var in_camera: Vector3 = player.camera.to_local(sight.global_position)
 	_expect(absf(in_camera.x) < 0.005 and absf(in_camera.y) < 0.005,
-			"in ADS the Carbine's front sight sits at (%.3f, %.3f) m off the camera axis" % [in_camera.x, in_camera.y])
-	_expect(in_camera.z < 0.0, "the Carbine's front sight is behind the camera in ADS")
+			"in ADS the Assault Rifle's front sight sits at (%.3f, %.3f) m off the camera axis" % [in_camera.x, in_camera.y])
+	_expect(in_camera.z < 0.0, "the Assault Rifle's front sight is behind the camera in ADS")
 	# The rear ring sits on the same line, nearer the eye, so he looks
 	# through it at the post.
-	var rear: Node3D = weapon.sidearm.find_child("SightRear", true, false)
-	_expect(rear != null, "the Carbine mesh has no SightRear marker")
+	var rear: Node3D = weapon.holder.find_child("SightRear", true, false)
+	_expect(rear != null, "the Assault Rifle mesh has no SightRear marker")
 	if rear != null:
 		var ring: Vector3 = player.camera.to_local(rear.global_position)
 		_expect(absf(ring.x) < 0.003 and absf(ring.y) < 0.003,
-				"in ADS the Carbine's rear ring sits at (%.3f, %.3f) m off the camera axis" % [ring.x, ring.y])
+				"in ADS the Assault Rifle's rear ring sits at (%.3f, %.3f) m off the camera axis" % [ring.x, ring.y])
 		_expect(ring.z < -0.06 and ring.z > in_camera.z + 0.3,
 				"the rear ring is %.2f m out and the post %.2f m: not a sight line to look down" % [-ring.z, -in_camera.z])
 	# Braced in the shoulder: an aimed shot comes straight back, the muzzle
 	# does not climb and the sights stay on the line.
 	var rest_pitch: float = weapon.rotation_degrees.x
 	var rest_z: float = weapon.position.z
-	_expect(_fire_and_drop(), "no aimed shot from the Carbine")
+	_expect(_fire_and_drop(), "no aimed shot from the Assault Rifle")
 	var climb := 0.0
 	var push := 0.0
 	var drift := 0.0
@@ -850,14 +850,14 @@ func _check_carbine_model() -> void:
 		push = maxf(push, weapon.position.z - rest_z)
 		var tip: Vector3 = player.camera.to_local(sight.global_position)
 		drift = maxf(drift, Vector2(tip.x, tip.y).length())
-	_expect(climb < 0.2, "an aimed Carbine shot tipped the weapon %.1f deg" % climb)
-	_expect(push > 0.01, "an aimed Carbine shot pushed it back only %.3f m" % push)
-	_expect(drift < 0.005, "an aimed Carbine shot threw the front sight %.3f m off the line" % drift)
+	_expect(climb < 0.2, "an aimed Assault Rifle shot tipped the weapon %.1f deg" % climb)
+	_expect(push > 0.01, "an aimed Assault Rifle shot pushed it back only %.3f m" % push)
+	_expect(drift < 0.005, "an aimed Assault Rifle shot threw the front sight %.3f m off the line" % drift)
 	await _aim(false)
 	_clear_shots()
 	player.switch_weapon(1)
 	await _seconds(player.swap_time + 0.3)
-	_expect(player.weapon == sidearm and weapon.sidearm_clips == pistol_clips, "the pistol's mesh did not come back")
+	_expect(player.weapon == pistol and weapon.model_clips == pistol_clips, "the pistol's mesh did not come back")
 	_expect(player.muzzle.position.is_equal_approx(pistol_muzzle), "the muzzle did not go back to the pistol's")
 	await _place(RUNWAY)
 
@@ -999,8 +999,8 @@ func _check_ads_numbers() -> void:
 	await _seconds(0.5)
 	_expect(is_equal_approx(player.spread_degrees(), 0.5),
 			"ADS spread while still is %.2f deg, expected 0.5" % player.spread_degrees())
-	# The Sidearm zooms 1.6x: a 75 deg hip view narrows to 51.2 deg.
-	_expect(is_equal_approx(profile.ads_zoom, 1.6), "the Sidearm zooms %.2fx, spec says 1.6" % profile.ads_zoom)
+	# The Pistol zooms 1.6x: a 75 deg hip view narrows to 51.2 deg.
+	_expect(is_equal_approx(profile.ads_zoom, 1.6), "the Pistol zooms %.2fx, spec says 1.6" % profile.ads_zoom)
 	_expect(is_equal_approx(player.ads_raise_time, 0.12), "the ADS raise is %.2f s, spec says 0.12" % player.ads_raise_time)
 	var zoomed_fov := rad_to_deg(2.0 * atan(tan(deg_to_rad(hip_fov) / 2.0) / profile.ads_zoom))
 	_expect(absf(hip_fov - 75.0) < 0.01 and absf(zoomed_fov - 51.2) < 0.1, "75 deg at 1.6x should be 51.2, got %.1f" % zoomed_fov)
@@ -1553,7 +1553,7 @@ func _check_clips_exist() -> void:
 
 
 func _mesh_at_identity() -> bool:
-	var mesh: Node3D = weapon.sidearm
+	var mesh: Node3D = weapon.holder
 	return mesh.position.is_zero_approx() and mesh.rotation.is_zero_approx()
 
 
@@ -1570,7 +1570,7 @@ func _check_clips_play() -> void:
 	_expect(clips.current_animation == "fire" and clips.is_playing(), "a shot did not play fire, playing %s" % clips.current_animation)
 	await _seconds(0.3)
 	_expect(not clips.is_playing(), "fire clip still playing after 0.3 s")
-	_expect(_mesh_at_identity(), "the mesh is off identity after the fire clip: %s %s" % [weapon.sidearm.position, weapon.sidearm.rotation_degrees])
+	_expect(_mesh_at_identity(), "the mesh is off identity after the fire clip: %s %s" % [weapon.holder.position, weapon.holder.rotation_degrees])
 
 	# Tactical reload with rounds left.
 	player.start_reload()
@@ -1589,7 +1589,7 @@ func _check_clips_play() -> void:
 	player.cancel_reload()
 	await _frames(1)
 	_expect(not clips.is_playing(), "the reload cancel left %s playing" % clips.current_animation)
-	_expect(_mesh_at_identity(), "the reload cancel left the mesh at %s %s" % [weapon.sidearm.position, weapon.sidearm.rotation_degrees])
+	_expect(_mesh_at_identity(), "the reload cancel left the mesh at %s %s" % [weapon.holder.position, weapon.holder.rotation_degrees])
 
 	# Empty reload on the dry pull.
 	player.ammo = 0
@@ -1613,7 +1613,7 @@ func _check_clips_play() -> void:
 func _check_clips_follow_profile() -> void:
 	var clips: AnimationPlayer = weapon.clips
 	await _place(RUNWAY)
-	var sidearm: WeaponProfile = player.weapon
+	var pistol: WeaponProfile = player.weapon
 	player.weapon = HEAVY_PISTOL
 	player.ammo = HEAVY_PISTOL.magazine_size - 1
 	player.start_reload()
@@ -1626,23 +1626,23 @@ func _check_clips_follow_profile() -> void:
 	_expect(clips.is_playing(), "the reload clip ended before the heavy pistol's %.1f s reload" % HEAVY_PISTOL.reload_tactical)
 	await _seconds(0.2)
 	_expect(not clips.is_playing(), "the reload clip outlasted the heavy pistol's reload")
-	player.weapon = sidearm
+	player.weapon = pistol
 	await _place(RUNWAY)
 
 
-## --- the Sidearm mesh ---
+## --- the Pistol mesh ---
 
 ## The Viewmodel carries the pistol model: in ADS its front sight sits
 ## on the camera axis, from the hip it sits low right, and the shot leaves
 ## its muzzle.
-func _check_sidearm_model() -> void:
+func _check_holder_model() -> void:
 	await _place(RUNWAY)
-	var sidearm: Node3D = weapon.get_node_or_null("Sidearm")
-	_expect(sidearm != null, "the Viewmodel has no Sidearm node")
-	if sidearm == null:
+	var holder: Node3D = weapon.get_node_or_null("Holder")
+	_expect(holder != null, "the Viewmodel has no Holder node")
+	if holder == null:
 		return
-	_expect(weapon.sidearm == sidearm, "the Viewmodel's Sidearm node is not the pistol model")
-	_expect(sidearm.find_child("Skeleton3D", true, false) != null, "the pistol has no skeleton")
+	_expect(weapon.holder == holder, "the Viewmodel's Holder node is not the pistol model")
+	_expect(holder.find_child("Skeleton3D", true, false) != null, "the pistol has no skeleton")
 	var sight: Node3D = weapon.get_node_or_null("SightTip")
 	_expect(sight != null, "no SightTip marker on the Viewmodel")
 	if sight == null:
@@ -1663,28 +1663,28 @@ func _check_sidearm_model() -> void:
 
 ## The pistol's own clips: the slide cycles on a shot, the magazine on a
 ## reload for the Profile's time, and a cancel leaves the skeleton at rest.
-func _check_sidearm_clips() -> void:
+func _check_pistol_clips() -> void:
 	await _place(RUNWAY)
-	var anim: AnimationPlayer = weapon.sidearm_clips
-	_expect(anim != null, "the Sidearm mesh has no AnimationPlayer")
+	var anim: AnimationPlayer = weapon.model_clips
+	_expect(anim != null, "the Pistol mesh has no AnimationPlayer")
 	if anim == null:
 		return
 	var profile: WeaponProfile = player.weapon
 	for clip_name in [profile.model_fire_clip, profile.model_reload_clip, profile.model_rack_clip]:
-		_expect(anim.has_animation(clip_name), "the Sidearm mesh lacks the %s clip" % clip_name)
+		_expect(anim.has_animation(clip_name), "the Pistol mesh lacks the %s clip" % clip_name)
 	_expect(not anim.is_playing(), "a pistol clip is playing at rest: %s" % anim.current_animation)
 	_expect(_fire_and_drop(), "no shot for the pistol fire clip")
 	await _frames(1)
-	_expect(anim.current_animation == profile.model_fire_clip and anim.is_playing(), "a shot played %s on the Sidearm" % anim.current_animation)
+	_expect(anim.current_animation == profile.model_fire_clip and anim.is_playing(), "a shot played %s on the Pistol" % anim.current_animation)
 	await _seconds(0.3)
 	_expect(not anim.is_playing(), "the pistol fire clip outlasted 0.3 s")
 	player.start_reload()
 	await _frames(1)
-	_expect(anim.current_animation == profile.model_reload_clip and anim.is_playing(), "a reload played %s on the Sidearm" % anim.current_animation)
+	_expect(anim.current_animation == profile.model_reload_clip and anim.is_playing(), "a reload played %s on the Pistol" % anim.current_animation)
 	var wanted: float = anim.get_animation(profile.model_reload_clip).length / profile.reload_tactical
 	_expect(absf(anim.get_playing_speed() - wanted) < 0.01, "the pistol reload runs at %.2fx, want %.2fx" % [anim.get_playing_speed(), wanted])
 	await _seconds(0.4)
-	var skeleton: Skeleton3D = weapon.sidearm.find_child("Skeleton3D", true, false)
+	var skeleton: Skeleton3D = weapon.holder.find_child("Skeleton3D", true, false)
 	var magazine := skeleton.find_bone("Magazine")
 	var moved: Vector3 = skeleton.get_bone_pose_position(magazine)
 	_expect(not moved.is_equal_approx(skeleton.get_bone_rest(magazine).origin), "the reload clip is not moving the magazine bone")
@@ -1698,11 +1698,11 @@ func _check_sidearm_clips() -> void:
 	player.ammo = 0
 	player.fire()
 	await _frames(1)
-	_expect(anim.current_animation == profile.model_reload_clip, "the empty reload played %s on the Sidearm" % anim.current_animation)
+	_expect(anim.current_animation == profile.model_reload_clip, "the empty reload played %s on the Pistol" % anim.current_animation)
 	await _seconds(profile.reload_empty - profile.rack_time / 2.0)
-	_expect(anim.current_animation == profile.model_rack_clip and anim.is_playing(), "near the end of the empty reload the Sidearm plays %s, not the rack" % anim.current_animation)
+	_expect(anim.current_animation == profile.model_rack_clip and anim.is_playing(), "near the end of the empty reload the Pistol plays %s, not the rack" % anim.current_animation)
 	await _seconds(profile.rack_time / 2.0 + 0.1)
-	_expect(not anim.is_playing(), "the Sidearm clip outlasted the empty reload")
+	_expect(not anim.is_playing(), "the Pistol clip outlasted the empty reload")
 	_clear_shots()
 
 

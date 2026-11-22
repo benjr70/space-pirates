@@ -2,19 +2,19 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://dvew5cjs0i0by"
-path="res://.godot/imported/carbine_carbine_color.png-de1c634e920a043e51f965216f0156e8.ctex"
+uid="uid://cltgubp1fj1kc"
+path="res://.godot/imported/assault_rifle_assault_rifle_emission.png-18926eeeacdc2a1a5df0d316e46488d5.ctex"
 metadata={
 "vram_texture": false
 }
 generator_parameters={
-"md5": "cca66ddc87e26481d0dadc2666bd0238"
+"md5": "13ae65e7a2cc0d994f670180ed97adf9"
 }
 
 [deps]
 
-source_file="res://assets/models/carbine/carbine_carbine_color.png"
-dest_files=["res://.godot/imported/carbine_carbine_color.png-de1c634e920a043e51f965216f0156e8.ctex"]
+source_file="res://assets/models/assault_rifle/assault_rifle_assault_rifle_emission.png"
+dest_files=["res://.godot/imported/assault_rifle_assault_rifle_emission.png-18926eeeacdc2a1a5df0d316e46488d5.ctex"]
 
 [params]
 

@@ -20,7 +20,7 @@ extends CharacterBody3D
 ## `ads` and `flat_speed()` for the weapon's pose and lends this camera work
 ## its Descope roll.
 ##
-## The Sidearm is a Weapon Profile: every number the gun has lives on the
+## The Pistol is a Weapon Profile: every number the gun has lives on the
 ## resource, and the Pirate only pulls the trigger. Semi-auto, one shot per
 ## press; a dry magazine reloads on the next pull, not the last shot; the
 ## reload runs on through every move. Spread is a cone that blooms per shot
@@ -134,7 +134,7 @@ const TEAM := &"pirate"
 
 @export_group("Gunnery")
 ## What he is holding. Swap the resource and every number follows.
-@export var weapon: WeaponProfile = preload("res://resources/weapons/sidearm.tres"):
+@export var weapon: WeaponProfile = preload("res://resources/weapons/pistol.tres"):
 	set(value):
 		if value == weapon:
 			return
@@ -143,8 +143,8 @@ const TEAM := &"pirate"
 			weapon_changed.emit(weapon)
 ## What he carries, in the order the mouse wheel turns through them.
 @export var weapons: Array[WeaponProfile] = [
-	preload("res://resources/weapons/sidearm.tres"),
-	preload("res://resources/weapons/carbine.tres"),
+	preload("res://resources/weapons/pistol.tres"),
+	preload("res://resources/weapons/assault_rifle.tres"),
 ]
 ## Seconds a weapon swap keeps the trigger, the sights and the reload busy.
 @export var swap_time := 0.4

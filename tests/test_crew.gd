@@ -391,7 +391,7 @@ func _has_fired(crew: Crew3D) -> bool:
 
 
 ## A Worker that spots the Pirate 8 m off runs for the Guard behind it and
-## does not shoot; cornered at 2.5 m it fires its sidearm. Workers wear
+## does not shoot; cornered at 2.5 m it fires its pistol. Workers wear
 ## the Engineer, Guards the Soldier.
 func _check_worker() -> void:
 	var guard := _crew(CrewTypes.Type.GUARD)

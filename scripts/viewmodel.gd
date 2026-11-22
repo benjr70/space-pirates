@@ -1,7 +1,8 @@
 class_name Viewmodel
 extends Node3D
 ## The weapon as the Pirate sees it: the node under the camera that carries
-## the Sidearm, moved every frame from what he is doing. Weapon only, no arms.
+## the Holder and the gun mounted in it, moved every frame from what he is
+## doing. Weapon only, no arms.
 ##
 ## This is the procedural layer. It owns the Viewmodel's transform:
 ##   pose    hip by default; sights centred under the crosshair in Aim Down
@@ -18,14 +19,14 @@ extends Node3D
 ## Below it, the clip layer: `Clips` plays `fire`, `reload_tactical`,
 ## `reload_empty` and `melee` on the mesh child from the library in
 ## `resources/animations/viewmodel_clips.tres`. The reload clips are authored
-## at the Sidearm's durations and played at whatever speed makes them last
+## at the Pistol's durations and played at whatever speed makes them last
 ## the Weapon Profile's, so a new Profile never needs a new clip. A reload
 ## owns the mesh until it ends or is cancelled: a shot never cuts a reload
 ## clip, a Melee does (the Pirate has already dropped the reload by then),
 ## and a cancel stops the clip and puts the mesh back at rest.
 ##
-## What hangs under `Sidearm` is whatever the Weapon Profile's `model` scene
-## is: the holder keeps its name from the first weapon, but the wheel swaps
+## What hangs under `Holder` is whatever the Weapon Profile's `model` scene
+## is: the holder belongs to no one weapon, and the wheel swaps
 ## the mesh under it. A swap dips the Viewmodel out of the bottom of the view
 ## and changes the mesh while it is out of sight; each mesh brings its own
 ## `Muzzle` and `SightTip` markers and the Profile its own poses, so the shot
@@ -106,11 +107,11 @@ var pose_low := Vector3(0.20, -0.26, -0.30)
 
 ## The clip layer and the holder it moves.
 @onready var clips: AnimationPlayer = $Clips
-@onready var sidearm: Node3D = $Sidearm
+@onready var holder: Node3D = $Holder
 @onready var _muzzle: Node3D = $Muzzle
 @onready var _sight_tip: Node3D = $SightTip
 ## The mounted mesh's own skeleton clips and bones.
-var sidearm_clips: AnimationPlayer
+var model_clips: AnimationPlayer
 var _skeleton: Skeleton3D
 ## Every model mounted so far, by its scene; all but one are hidden.
 var _models := {}
@@ -247,7 +248,7 @@ func _on_fired() -> void:
 	if not _reload_clip_playing():
 		if profile.fire_clip != &"":
 			_play_clip(profile.fire_clip)
-		_play_for(sidearm_clips, profile.model_fire_clip, profile.fire_cycle_time)
+		_play_for(model_clips, profile.model_fire_clip, profile.fire_cycle_time)
 
 
 ## The clips stretched or squeezed to the Profile's reload time. The empty
@@ -257,13 +258,13 @@ func _on_reload_started(from_empty: bool) -> void:
 	var wanted: float = profile.reload_empty if from_empty else profile.reload_tactical
 	_play_for(clips, RELOAD_CLIPS[1] if from_empty else RELOAD_CLIPS[0], wanted)
 	_rack_after_reload = profile.racks_after(from_empty)
-	_play_for(sidearm_clips, profile.model_reload_clip, profile.swap_time(from_empty))
+	_play_for(model_clips, profile.model_reload_clip, profile.swap_time(from_empty))
 
 
-func _on_sidearm_clip_finished(clip: StringName) -> void:
+func _on_model_clip_finished(clip: StringName) -> void:
 	if clip == profile.model_reload_clip and _rack_after_reload:
 		_rack_after_reload = false
-		_play_for(sidearm_clips, profile.model_rack_clip, profile.rack_time)
+		_play_for(model_clips, profile.model_rack_clip, profile.rack_time)
 
 
 func _on_weapon_changed(_profile: WeaponProfile) -> void:
@@ -282,17 +283,17 @@ func _mount(weapon: WeaponProfile) -> void:
 	_stop_clip()
 	if _mounted != null:
 		_mounted.visible = false
-		sidearm_clips.animation_finished.disconnect(_on_sidearm_clip_finished)
+		model_clips.animation_finished.disconnect(_on_model_clip_finished)
 	if not _models.has(weapon.model):
 		var model: Node3D = weapon.model.instantiate()
-		sidearm.add_child(model)
+		holder.add_child(model)
 		_models[weapon.model] = model
 		_flag_materials(model)
 	_mounted = _models[weapon.model]
 	_mounted.visible = true
-	sidearm_clips = _mounted.find_child("AnimationPlayer", true, false)
+	model_clips = _mounted.find_child("AnimationPlayer", true, false)
 	_skeleton = _mounted.find_child("Skeleton3D", true, false)
-	sidearm_clips.animation_finished.connect(_on_sidearm_clip_finished)
+	model_clips.animation_finished.connect(_on_model_clip_finished)
 
 	# The holder is at rest, so the model's markers map straight into the
 	# Viewmodel's own space.
@@ -327,15 +328,15 @@ func _play_for(player: AnimationPlayer, clip: StringName, seconds: float) -> voi
 	player.play(clip, -1, player.get_animation(clip).length / maxf(seconds, 0.01))
 
 
-## Whatever was playing stops, the Sidearm sits at rest on the Viewmodel and
+## Whatever was playing stops, the Holder sits at rest on the Viewmodel and
 ## its bones go back to their rest pose.
 func _stop_clip() -> void:
 	clips.stop()
-	sidearm.position = Vector3.ZERO
-	sidearm.rotation = Vector3.ZERO
+	holder.position = Vector3.ZERO
+	holder.rotation = Vector3.ZERO
 	_rack_after_reload = false
-	if sidearm_clips != null:
-		sidearm_clips.stop()
+	if model_clips != null:
+		model_clips.stop()
 		_skeleton.reset_bone_poses()
 
 

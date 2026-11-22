@@ -16,7 +16,7 @@ sun_angle_max = 0.0
 [sub_resource type="Sky" id="reflection"]
 sky_material = SubResource("reflection_sky")
 
-; The sky is never drawn: it is only what metal reflects, so the Sidearm's
+; The sky is never drawn: it is only what metal reflects, so the Pistol's
 ; steel reads as steel in a dark room instead of going black.
 [sub_resource type="Environment" id="env"]
 background_mode = 1

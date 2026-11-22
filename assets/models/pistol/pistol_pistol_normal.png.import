@@ -2,19 +2,19 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://bxb3gj1twc1hm"
-path="res://.godot/imported/pistol_pistol_color.png-4717e38b312d92144acb19fb770a7e86.ctex"
+uid="uid://ba1hb6yrqxwx0"
+path="res://.godot/imported/pistol_pistol_normal.png-437d18e370fa6bf7e017220a4946e7c2.ctex"
 metadata={
 "vram_texture": false
 }
 generator_parameters={
-"md5": "11dc14602a417825cb867914a6c3da3a"
+"md5": "659aee9b632dcf89c06e13cf479a7687"
 }
 
 [deps]
 
-source_file="res://assets/models/sidearm/pistol_pistol_color.png"
-dest_files=["res://.godot/imported/pistol_pistol_color.png-4717e38b312d92144acb19fb770a7e86.ctex"]
+source_file="res://assets/models/pistol/pistol_pistol_normal.png"
+dest_files=["res://.godot/imported/pistol_pistol_normal.png-437d18e370fa6bf7e017220a4946e7c2.ctex"]
 
 [params]
 

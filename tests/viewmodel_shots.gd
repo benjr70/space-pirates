@@ -9,8 +9,8 @@ extends SceneTree
 ##
 ## Args after --: out=<dir>; hip=x,y,z ads=x,y,z low=x,y,z lowrot=x,y,z
 ## override the Viewmodel's poses; wheel=<n> turns the weapon wheel n places
-## first, so wheel=1 shoots the Carbine; pistol=1 scale=<f> rot=x,y,z pos=x,y,z
-## hides the scene's Sidearm and mounts a fresh pistol.glb instance at that
+## first, so wheel=1 shoots the Assault Rifle; pistol=1 scale=<f> rot=x,y,z pos=x,y,z
+## hides the scene's Holder and mounts a fresh pistol.glb instance at that
 ## transform instead, for trying a new mesh before it goes in the scene.
 var out := "/tmp/shots"
 var use_pistol := false
@@ -74,9 +74,9 @@ func _run() -> void:
 	player.position = Vector3(0, 0, 0)
 	var weapon: Node3D = player.get_node("Head/Camera3D/Weapon")
 	if use_pistol:
-		weapon.get_node("Sidearm").visible = false
+		weapon.get_node("Holder").visible = false
 		var holder := Node3D.new(); holder.name = "PistolHolder"
-		var pistol: Node3D = load("res://assets/models/sidearm/pistol.glb").instantiate()
+		var pistol: Node3D = load("res://assets/models/pistol/pistol.glb").instantiate()
 		holder.add_child(pistol)
 		holder.scale = Vector3.ONE * pscale
 		holder.rotation_degrees = prot

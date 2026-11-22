@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: resolved
 Blocked by: none
 
 # Rename Sidearm to Pistol and Carbine to Assault Rifle
@@ -15,8 +15,18 @@ Sidearm becomes Pistol and Carbine becomes Assault Rifle everywhere they appear:
 
 ## Acceptance criteria
 
-- [ ] No file, node, identifier or comment says sidearm or carbine outside `.scratch/`, `docs/research/` and git history (a case-insensitive grep finds none).
-- [ ] `tests/run_all.sh` passes with no test logic changed.
-- [ ] A Raid plays as before: both guns fire, reload, aim and swap.
+- [x] No file, node, identifier or comment says sidearm or carbine outside `.scratch/`, `docs/research/` and git history (a case-insensitive grep finds none).
+- [x] `tests/run_all.sh` passes with no test logic changed.
+- [x] A Raid plays as before: both guns fire, reload, aim and swap.
 
 ## Comments
+
+Built 2026-11-22. Files moved with `git mv` (each `.import` kept with its file; every `uid` unchanged, checked in the diff): `resources/weapons/pistol.tres` and `assault_rifle.tres`, `scenes/weapons/pistol_model.tscn` and `assault_rifle_model.tscn`, `assets/models/pistol/` and `assets/models/assault_rifle/`, `tools/blender/assault_rifle.py`. All `res://` paths, comments, test names and messages renamed.
+
+Two choices worth knowing:
+- The Viewmodel's mount node was `Sidearm` but carries whichever gun is wielded, so it is now `Holder` (the word the code already used), not `Pistol`: `viewmodel.holder`, `viewmodel.model_clips` (was `sidearm_clips`), `_on_model_clip_finished`, and the `Holder:` tracks in `viewmodel_clips.tres`. A Worker's gun in `crew.gd`/`CREW_AI.md` became "pistol".
+- `assault_rifle.glb` held "Carbine" in its internal glTF names. The JSON chunk was rewritten in place (geometry and textures byte-identical): nodes/mesh `AssaultRifle`, `AssaultRifleArmature`, material `assault_rifle`, images `assault_rifle_*`, matching what `tools/blender/assault_rifle.py` now exports. Reimport extracted no new textures.
+
+The ticket names `tests/shots.gd`; on this branch the file is `tests/viewmodel_shots.gd` and was updated (not run). `tests/run_all.sh` had no occurrence.
+
+Verified: case-insensitive grep for sidearm|carbine outside `.scratch/`, `docs/research/` and `.godot/` finds nothing (binaries included); `bash tests/run_all.sh` passes, all five suites (pirate 597, crew 88). Fire, reload, ADS and swap of both guns are covered by the pirate suite; not playtested by hand.

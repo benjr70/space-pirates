@@ -49,7 +49,7 @@ its Post Room's Role (`CrewTypes.for_role`):
   on the way it runs on to the next, without a second roll to hide. A cowering Worker returns to its
   routine after 15 s with nothing in sight, at Awareness 0.15.
 - A Worker fights only when **cornered**: the Pirate in sight within 3 m.
-  Then it fires a sidearm (12° spread, 2-round bursts, against a Guard's 7°
+  Then it fires a pistol (12° spread, 2-round bursts, against a Guard's 7°
   and 3) and goes back to fleeing once he is more than 5 m off. A Worker that
   loses him hides (COWER) where a Guard would search.
 - Guards wear the dark Quaternius Soldier; Workers wear the Engineer, the
@@ -199,7 +199,7 @@ him in.
 - **Aim**: spread is `base × 1.5` on first sight, closing linearly to
   `base × 0.5` after 3 s of continuous sight, and back to 1.5× the moment the
   Pirate breaks line of sight. A Guard's first shots mostly warn; staying
-  exposed is what gets him hit. Workers' sidearms follow the same curve from
+  exposed is what gets him hit. Workers' pistols follow the same curve from
   their wider base.
 - **Rhythm**: each crew member draws its own multipliers (0.75–1.35×) on burst
   gap, reload and cover hold, and each Guard's burst is 2–4 rounds. No crew

@@ -2,19 +2,19 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://dhsowmrv1htq5"
-path="res://.godot/imported/carbine_carbine_normal.png-ebc85669bd216c8b7ba4a17f0e8cff8b.ctex"
+uid="uid://bxb3gj1twc1hm"
+path="res://.godot/imported/pistol_pistol_color.png-d8db120ab5e63547d0f0fc1ef7edb9d5.ctex"
 metadata={
 "vram_texture": false
 }
 generator_parameters={
-"md5": "67291acbb8c8260280a6d971abf92165"
+"md5": "11dc14602a417825cb867914a6c3da3a"
 }
 
 [deps]
 
-source_file="res://assets/models/carbine/carbine_carbine_normal.png"
-dest_files=["res://.godot/imported/carbine_carbine_normal.png-ebc85669bd216c8b7ba4a17f0e8cff8b.ctex"]
+source_file="res://assets/models/pistol/pistol_pistol_color.png"
+dest_files=["res://.godot/imported/pistol_pistol_color.png-d8db120ab5e63547d0f0fc1ef7edb9d5.ctex"]
 
 [params]
 

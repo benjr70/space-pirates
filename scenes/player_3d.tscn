@@ -30,7 +30,7 @@ near = 0.05
 transform = Transform3D(-1, 0, 0, 0, 1, 0, 0, 0, -1, 0.16, -0.18, -0.3)
 script = ExtResource("4")
 
-[node name="Sidearm" type="Node3D" parent="Head/Camera3D/Weapon"]
+[node name="Holder" type="Node3D" parent="Head/Camera3D/Weapon"]
 
 [node name="Muzzle" type="Node3D" parent="Head/Camera3D/Weapon"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.0896, 0.0872)
