@@ -1,4 +1,4 @@
-Status: needs-triage
+Status: ready-for-agent
 Map: map.md
 
 # Spec: Shotgun, Marksman Rifle and the Sandbox sheet
@@ -208,17 +208,17 @@ All picked by ear in the sound booth, all CC0 from OpenGameArt. The cuts, a `LIC
 
 ## Build Order
 
-Each step leaves the game playable; playtest after each before starting the next. Build tickets are cut from this list.
+Each step leaves the game playable; playtest after each before starting the next. One ticket per step, numbered on from the map's decision tickets (01 to 16) in the same folder.
 
-1. **Rename** Sidearm to Pistol and Carbine to Assault Rifle everywhere. Nothing else.
-2. **Health and damage times 25**, with the segmented Health bar.
-3. **The Sandbox sheet**: the in-Raid sheet, the Sandbox resource for Health and Melee, `docs/sandbox.md` and its stale check. Every later step is dialled with it.
-4. **Crew fire the Pistol**: Gunnery resources, crew reading the Pistol Profile, Gunnery in the sheet.
-5. **Per-weapon sound and loudness**: the Profile fields, and the new Pistol shot.
-6. **Pellets and the Shotgun**: the pellet count, one kill per shot, the Shotgun Profile, its model imported as built.
-7. **Shell-by-shell reload.**
-8. **Shotgun rig, clips and sounds**: the pump, a shell going in, the closing pump.
-9. **Headshots**: the head zone, the multiplier, the gold marker.
-10. **Aiming**: the aimed-and-moving spread, sway, the mouse slowed by zoom.
-11. **The Marksman Rifle**: its Profile, the finished bullpup with rig and clips, its sounds; the wheel of four and keys 1 to 4.
-12. **First balance pass** in the sheet, played by the user: all four weapons against each other and against crew, and crew Gunnery retuned now that their bolts are fast.
+1. [Rename Sidearm to Pistol and Carbine to Assault Rifle](issues/17-rename-pistol-and-assault-rifle.md)
+2. [Scale Health and damage by 25, with a segmented Health bar](issues/18-health-and-damage-times-25.md)
+3. [The Sandbox sheet: in-Raid sheet, Sandbox resource and docs/sandbox.md](issues/19-sandbox-sheet.md)
+4. [Crew fire the Pistol, handled with a Gunnery](issues/20-crew-fire-the-pistol.md)
+5. [Per-weapon sounds and loudness](issues/21-per-weapon-sound-and-loudness.md)
+6. [Pellets and the Shotgun](issues/22-pellets-and-the-shotgun.md)
+7. [Shell-by-shell reload](issues/23-shell-by-shell-reload.md)
+8. [Shotgun rig, clips and sounds](issues/24-shotgun-rig-clips-and-sounds.md)
+9. [Headshots](issues/25-headshots.md)
+10. [Aiming: aimed-and-moving spread, sway and a mouse slowed by zoom](issues/26-aiming-spread-sway-and-mouse.md)
+11. [The Marksman Rifle, and a wheel of four](issues/27-marksman-rifle.md)
+12. [First balance pass in the Sandbox sheet](issues/28-first-balance-pass.md)
