@@ -1,45 +1,77 @@
-# Issue tracker: GitHub
+# Issue tracker: Local Markdown
 
-Issues and specs for this repo live as GitHub issues. Use the `gh` CLI for all operations.
+Issues and specs for this repo live as markdown files in `.scratch/`.
 
 ## Conventions
 
-- **Create an issue**: `gh issue create --title "..." --body "..."`. Use a heredoc for multi-line bodies.
-- **Read an issue**: `gh issue view <number> --comments`, filtering comments by `jq` and also fetching labels.
-- **List issues**: `gh issue list --state open --json number,title,body,labels,comments --jq '[.[] | {number, title, body, labels: [.labels[].name], comments: [.comments[].body]}]'` with appropriate `--label` and `--state` filters.
-- **Comment on an issue**: `gh issue comment <number> --body "..."`
-- **Apply / remove labels**: `gh issue edit <number> --add-label "..."` / `--remove-label "..."`
-- **Close**: `gh issue close <number> --comment "..."`
+- One feature per directory: `.scratch/<feature-slug>/`
+- The spec is `.scratch/<feature-slug>/spec.md`
+- Implementation issues are one file per ticket at `.scratch/<feature-slug>/issues/<NN>-<slug>.md`, numbered from `01`, never a single combined tickets file
+- Triage state is recorded as a `Status:` line near the top of each issue file (see `triage-labels.md` for the role strings)
+- Comments and conversation history append to the bottom of the file under a `## Comments` heading
 
-Infer the repo from `git remote -v`; `gh` does this automatically when run inside a clone.
+## Acceptance criteria and evidence
 
-## Pull requests as a triage surface
+Every ticket that builds something has an `## Acceptance criteria` checklist. This covers `Type: task` tickets and any implementation ticket with no `Type:` line; `research`, `prototype` and `grilling` tickets are exempt. Each line is one observable outcome with one tag:
 
-**PRs as a request surface: no.** _(Set to `yes` if this repo treats external PRs as feature requests; `/triage` reads this flag.)_
+- `(agent)`: provable by a suite check, a scripted headless run, or a screenshot defect check.
+- `(human)`: needs a play session or a judgement of look, sound or feel.
 
-When set to `yes`, PRs run through the same labels and states as issues, using the `gh pr` equivalents:
+A number in the spec becomes an `(agent)` line that states the value and the tolerance, and a check asserts both. "About 1.5 s at 10 m" is not a criterion; "1.5 s at 10 m, within ±25%" is.
 
-- **Read a PR**: `gh pr view <number> --comments` and `gh pr diff <number>` for the diff.
-- **List external PRs for triage**: `gh pr list --state open --json number,title,body,labels,author,authorAssociation,comments` then keep only `authorAssociation` of `CONTRIBUTOR`, `FIRST_TIME_CONTRIBUTOR`, or `NONE` (drop `OWNER`/`MEMBER`/`COLLABORATOR`).
-- **Comment / label / close**: `gh pr comment`, `gh pr edit --add-label`/`--remove-label`, `gh pr close`.
+A ticket without tagged criteria is not `ready-for-agent`. An agent that picks one up sets its `Status:` to `needs-info` and says what is missing under `## Comments`, instead of guessing the criteria.
 
-GitHub shares one number space across issues and PRs, so a bare `#42` may be either: resolve with `gh pr view 42` and fall back to `gh issue view 42`.
+On completion, before closing, the builder ticks every met `(agent)` line and adds two sections above `## Comments`:
+
+- `## Evidence`: one entry per `(agent)` line, giving one of: the suite and check function that proves it (`tests/test_crew.gd::_check_timings`); the command run and the relevant output lines; or the screenshot path and what was confirmed in it.
+- `## Owed to playtest`: every `(human)` line, copied as written. These stay unchecked in `## Acceptance criteria`; the maintainer ticks them after playing.
+
+The Code Reviewer walks the list. An `(agent)` line with no evidence entry, or an entry whose check does not assert what the line says (a different value, a looser tolerance, a different case), blocks the ticket.
+
+A ticket that is built, reviewed and passing the gate is closed by setting its `Status:` line to `resolved`, in the same session, even when the commit is still pending. Unticked `(human)` lines do not hold it open; they stay listed under `## Owed to playtest`.
+
+### Worked example
+
+The Awareness timings slice of `.scratch/crew-ai/spec.md`, as it would read when finished:
+
+```md
+## Acceptance criteria
+
+- [x] (agent) Standing in the open, square in view, time to spotted is 0.3 s at 3 m, 1.5 s at 10 m and 3 s at 14 m, each within ±25%.
+- [x] (agent) Crouching doubles the time to spotted at each of those distances, within ±0.25 of 2×.
+- [x] (agent) The Pirate 3 m behind a crew member raises no Awareness in 2 s.
+- [ ] (human) Being spotted feels fair: the approach from behind works and the marker gives time to back off.
+
+## Evidence
+
+- Standing times: `tests/test_crew.gd::_check_timings`, which spots the Pirate at 3, 10 and 14 m and asserts each time is within 25% of 0.3, 1.5 and 3.0 s.
+- Crouching doubles: `tests/test_crew.gd::_check_timings`, which repeats each distance crouched and asserts the ratio to standing is within 0.25 of 2.0.
+- Nothing from behind: `tests/test_crew.gd::_check_behind`, which ticks 2 s with the Pirate 3 m behind and asserts Awareness is still 0.
+
+## Owed to playtest
+
+- (human) Being spotted feels fair: the approach from behind works and the marker gives time to back off.
+```
 
 ## When a skill says "publish to the issue tracker"
 
-Create a GitHub issue.
+Create a new file under `.scratch/<feature-slug>/` (creating the directory if needed).
 
 ## When a skill says "fetch the relevant ticket"
 
-Run `gh issue view <number> --comments`.
+Read the file at the referenced path. The user will normally pass the path or the issue number directly.
 
 ## Wayfinding operations
 
-Used by `/wayfinder`. The **map** is a single issue with **child** issues as tickets.
+Used by `/wayfinder`. The **map** is a file with one **child** file per ticket.
 
-- **Map**: a single issue labelled `wayfinder:map`, holding the Notes / Decisions-so-far / Fog body. `gh issue create --label wayfinder:map`.
-- **Child ticket**: an issue linked to the map as a GitHub sub-issue (`gh api` on the sub-issues endpoint). Where sub-issues aren't enabled, add the child to a task list in the map body and put `Part of #<map>` at the top of the child body. Labels: `wayfinder:<type>` (`research`/`prototype`/`grilling`/`task`). Once claimed, the ticket is assigned to the driving dev.
-- **Blocking**: GitHub's **native issue dependencies**, the canonical, UI-visible representation. Add an edge with `gh api --method POST repos/<owner>/<repo>/issues/<child>/dependencies/blocked_by -F issue_id=<blocker-db-id>`, where `<blocker-db-id>` is the blocker's numeric **database id** (`gh api repos/<owner>/<repo>/issues/<n> --jq .id`, _not_ the `#number` or `node_id`). GitHub reports `issue_dependencies_summary.blocked_by` (open blockers only, the live gate). Where dependencies aren't available, fall back to a `Blocked by: #<n>, #<n>` line at the top of the child body. A ticket is unblocked when every blocker is closed.
-- **Frontier query**: list the map's open children (`gh issue list --state open`, scoped to the map's sub-issues / task list), drop any with an open blocker (`issue_dependencies_summary.blocked_by > 0`, or an open issue in the `Blocked by` line) or an assignee; first in map order wins.
-- **Claim**: `gh issue edit <n> --add-assignee @me`, the session's first write.
-- **Resolve**: `gh issue comment <n> --body "<answer>"`, then `gh issue close <n>`, then append a context pointer (gist + link) to the map's Decisions-so-far.
+- **Map**: `.scratch/<effort>/map.md` (the Notes / Decisions-so-far / Fog body).
+- **Child ticket**: `.scratch/<effort>/issues/NN-<slug>.md`, numbered from `01`, with the question in the body. A `Type:` line records the ticket type (`research`/`prototype`/`grilling`/`task`); a `Status:` line records `claimed`/`resolved`.
+- **Blocking**: a `Blocked by: NN, NN` line near the top. A ticket is unblocked when every file it lists is `resolved`.
+- **Frontier**: scan `.scratch/<effort>/issues/` for files that are open, unblocked, and unclaimed; first by number wins.
+- **Claim**: set `Status: claimed` and save before any work.
+- **Resolve**: append the answer under an `## Answer` heading, set `Status: resolved`, then append a context pointer (gist + link) to the map's Decisions-so-far in `map.md`.
+
+## GitHub is not the tracker
+
+Never create, comment on, label or close GitHub issues for this repo. `#NN` references in older files and commits point at the retired GitHub tracker in `benjr70/space-pirates` (issues #1–#63); treat them as history. Work that was still open there was imported into `.scratch/`.
