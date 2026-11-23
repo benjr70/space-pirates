@@ -257,6 +257,6 @@ func _prompt() -> String:
 func _door_prompt() -> String:
 	for node in get_tree().get_nodes_in_group(&"doors"):
 		var door: Door3D = node
-		if door.in_reach():
+		if door.in_reach_of(player):
 			return door.prompt_text()
 	return ""

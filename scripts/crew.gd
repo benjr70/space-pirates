@@ -71,7 +71,8 @@ func _ready() -> void:
 	if target == null:
 		target = get_tree().get_first_node_in_group(&"player")
 	_shots_left = burst_size
-	_rng.randomize()
+	# Seeded off the global RNG (randomized at launch) so a test can replay it.
+	_rng.seed = randi()
 	_enter(State.PATROL)
 
 

@@ -18,14 +18,21 @@ being built toward is spec #52 (tickets #53–#63).
 | `ship_alarm.gd` (`ShipAlarm`) | The ship-wide Alarm: raised once, red lights, every crew member told. Built per ship as `Ship/Alarm`. |
 | `alarm_panel.gd` (`AlarmPanel`) | The wall panels the Alarm is raised from, where they go, and breaking them. Built under `Ship/AlarmPanels`. |
 | `crew_noise.gd` (`CrewNoise`) | Hearing: noise events (footsteps, gunshots, doors), how far each reaches, and which Rooms it carries into. |
+| `crew_paths.gd` (`CrewPaths`) | Walking round props: the tile grid made from the layout's floor and prop footprints, and bending a navigator route round what blocks it. |
 | `../ui/awareness_markers.gd` (`AwarenessMarkers`) | The bar over each crew member's head and the spotted sting, drawn by the HUD. |
 
 Scene: `scenes/crew_3d.tscn`. Tests: `tests/test_crew.gd` (Awareness, the walk
 to look, being shot, the sting, hearing, Workers fleeing and cornered, crew
 types, On Edge, Guards sharing his position, aim tightening, staggered bursts,
-flanking, bodies and other traces, routes into the pod, the Alarm and its panels, and 60 simulated seconds of routines
+flanking, cover it cannot reach, facing a body in its way, holding fire when
+its muzzle line is blocked, walking round props and round a body in its way,
+two crew head-on in a two-wide doorway (both arrive within 12 s), one
+standing in a one-wide gap with a way round (passed within 15 s), a Worker
+working in a dead-end lane making way for one walking out (out within 11 s,
+the Worker back at its spot), two Workers sharing one work spot,
+bodies and other traces, routes into the pod, the Alarm and its panels, and 60 simulated seconds of routines
 on a generated medium ship ending in the Alarm), plus the crew fight in
-`tests/test_ship_3d.gd`.
+`tests/test_ship_3d.gd` and whole Raids in `tests/test_raid_smoke.gd`.
 
 ## Crew types
 
@@ -99,10 +106,91 @@ PATROL / INVESTIGATE ──spotted──▶ FLEE ──reached its Guard──�
   hold; 3 s out of sight sends any of them to SEARCH, which walks to the
   last-seen spot and waits 2.5 s. Base numbers, before each Guard's jitter:
   3-round bursts 0.14 s apart, 7° spread, 1.1 s reload, 1.2 s cover hold.
+- **A clear shot**: FIGHT fires only while its muzzle line is clear as well
+  as its eye line. The muzzle line is a ball 0.1 m across (a bolt's overlap
+  sphere is 0.09 m) swept from the body's axis at muzzle height (1.3 m) to
+  0.4 m short of the Pirate's torso, plus the two edges of its current
+  spread for the first 1.5 m, so a crate he crouches behind, or a prop at
+  its own shoulder that the barrel pokes past, stops it firing. It then holds
+  fire and steps out: to the nearest tile at least 1 m away, in range, whose
+  muzzle line is clear, walking all the way there before it fires again;
+  with no such tile it closes on him.
+- **Cover it cannot reach**: a crew member that has run for its cover point
+  for 3 s without getting there (the way blocked by the Pirate, another body
+  or a prop) holds where it is instead, and leaves COVER as soon as its hold
+  and reload are done, at most 3 s after ducking.
 - **DEAD**: collision off, death clip or tip-over.
 
 The body turns toward where it is looking at 6 rad/s rather than snapping;
 shots leave along the aim direction regardless of where the body has got to.
+Out of combat a walking crew member looks the way it moves; one trying to
+walk but held still (a body in its way) looks the way it is trying to go,
+so a Pirate blocking its path is in its cone (spotted within 1 s from
+pressed against him, facing 90° off).
+
+## Getting about
+
+Between Rooms crew follow the door graph (`ShipNavigator`): doorway centres
+and seam crossings. Inside a Room a straight line between two of those can
+run through a prop (by design: props break up Lanes), so `CrewPaths` bends
+each leg a prop would block round it:
+
+- The **walking grid** is one cell per tile: every Room's floor and every
+  unlocked doorway, minus every prop's footprint (`Interiors.footprint`). It
+  is made from the layout once, the first time any crew member routes, and
+  kept on the layout; nothing is read back from the built scene.
+- A leg is walked **straight** when a square 0.9 m across (the 0.7 m capsule
+  and a margin) swept along it touches only open tiles; otherwise it is
+  replaced by an A* route over the grid, string-pulled to the furthest tile
+  centre still in a clear straight line. A destination inside a prop ends on
+  the nearest open tile; a seam crossing boxed in by props is skipped. A way
+  round that would pass through a Room other than the leg's own is not
+  taken (the leg stays straight), so a flank still avoids the Pirate's Room.
+  An end in a doorway stands for the two Rooms its Door joins, and the leg's
+  own Room is the one both ends share: so a leg from one doorway to the next
+  across a Room (two Doors in the same wall row, where the straight line
+  runs inside the wall) is bent through that Room.
+- A crew member **stood in a doorway** (in no Room) that re-paths steps
+  first onto whichever Room tile beside it gives the shorter door-graph
+  route, rather than walking straight at its destination through the hull.
+- **Getting loose**: a crew member trying to walk that moves less than
+  0.3 m in 1 s re-routes from where it stands. Stuck again, something no
+  route knows of is in its way:
+  - **another crew member** (living, ahead, centres within 1 m): it gets
+    past (`_get_past`). If that one is standing still (working, waiting,
+    chatting, or itself giving way) it goes round it over open floor, the
+    tiles within 0.75 m of every crew body near shut (`CrewPaths.route_around`);
+    with no way round it asks it to **make way** (`make_way_for`): a crew
+    member on routine working at a prop or waiting steps off the walker's way
+    as below and waits; one that was working then walks back to its spot
+    and works the Job again from the start. If both are
+    walking, **only one of the pair acts**: the one that can (has a way
+    round, or an open tile within 5 steps whose centre is 1 m or more off
+    the other's way, reached without passing through a body:
+    `CrewPaths.make_way`), and of two that both can, the one created first
+    (lower instance id). It goes round if it can; else it **gives way**:
+    steps to that tile and waits there until the other has walked 2 m on,
+    stopped, or 5 s are up, then routes on. One that is being given way to
+    never acts itself. Still stuck after 8 tries, either acts whenever it
+    can (in case the two ever judged it from different positions).
+  - **anything else** (the Pirate): it steps 1 m aside (alternating sides,
+    and only onto open tiles) and walks on, with its periodic re-path held
+    off for 1 s.
+
+  A Job it still cannot reach is given up at 30 s as before.
+- **Why it cannot deadlock**: two crew mirroring each other forever needs
+  both to act, or neither. Of a walking pair blocked by each other, the
+  rule above picks exactly one whenever either can act, by an order that
+  never changes (instance ids are fixed), so the other holds still; the
+  actor then leaves the other's way entirely (1 m off it) or goes round.
+  Neither can act only when neither has a way round nor any open tile off
+  the other's way within 5 steps (a corridor closed at both ends); then
+  the Job's 30 s give-up still applies. A crew member standing in the way
+  with no way round it makes way if it is working or waiting (a Worker can
+  work the same spot Job after Job, so its timer alone is no promise);
+  chats and give-ways end on a timer; and a Guard sweeping under the Alarm
+  (where a hiding Worker never moves) gives up a Room it has not reached in
+  30 s.
 
 ## Awareness
 
@@ -229,7 +317,8 @@ cowers. Once raised it stays up for the rest of the Raid:
   (COWER) and never come out; Guards on routine, investigating or searching
   hunt the last-seen position, and once that goes cold they **sweep** the ship
   at full speed, Room to random Room, pausing 1.5 s in each, instead of their
-  patrol loop. Crew already fighting or fleeing carry on.
+  patrol loop, giving up on a Room it has not reached in 30 s. Crew already
+  fighting or fleeing carry on.
 
 **Breaking a panel**: the Pirate's shot breaks a panel (screen goes dark); crew
 shots do not. A broken panel raises nothing: a Worker running to it when it
@@ -259,6 +348,11 @@ begins at a random point in its loop, after a random 0–5 s pause.
 - Crew walk routine at **50 %** speed (Walk clip below 2.4 m/s, Run above).
 - A work Job whose spot turns out blocked is skipped; one not reached within 30 s
   is given up for the next.
+- **One crew member per work spot**: a prop has one spot, and a work Job
+  whose spot another crew member is walking to or working at is skipped
+  for the next, so nobody works pressed against someone already there (and
+  nudged off the spot, facing past the prop). With every spot in its loop
+  held it waits 1–3 s where it is and tries again.
 - **Chat**: two routine crew walking within 1.6 m of each other have a 30 %
   chance to stop face to face for 3–5 s; either way neither chats again for
   40 s.
@@ -320,7 +414,11 @@ and `crew.gd` (`SEARCH_AWARENESS`, `INVESTIGATE_SPEED`, `INVESTIGATE_LINGER`,
 `WALK_ANIM_SPEED`, `DOOR_CLOSE_AFTER`, `DOOR_FORGET`, `DOOR_ADOPT`, `CHAT_*`,
 `JOB_GIVE_UP`, `CORNERED_RANGE`, `CORNER_RELEASE`, `HIDE_CHANCE`,
 `GUARD_REACH`, `COWER_CALM`, `WORKER_SPREAD`, `WORKER_BURST`, `PANEL_REACH`,
-`ON_EDGE_PAUSE`, `SWEEP_PAUSE`), `crew_perception.gd` (`ON_EDGE_FACTOR`),
+`ON_EDGE_PAUSE`, `SWEEP_PAUSE`, `COVER_GIVE_UP`, `MUZZLE_BALL`,
+`MUZZLE_TARGET_GAP`, `MUZZLE_NEAR`, `FIRING_STEP`, `UNSTICK_AFTER`,
+`UNSTICK_MOVE`, `SIDESTEP`, `GIVE_WAY_NEAR`, `GIVE_WAY_PASSED`,
+`GIVE_WAY_WAIT`, `GIVE_WAY_INSIST`), `crew_paths.gd` (`CLEARANCE`, `SAMPLE`,
+`SNAP`, `BODY_GAP`, `MAKE_WAY_REACH`, `MAKE_WAY_CLEAR`), `crew_perception.gd` (`ON_EDGE_FACTOR`),
 `crew_combat.gd` (`OPEN_SPREAD`, `TIGHT_SPREAD`, `TIGHTEN_TIME`,
 `BURST_STAGGER_FRAMES`, `SHARE_EVERY`, `FLANK_GIVE_UP`, `JITTER`),
 `crew_traces.gd` (`LOOK_EVERY`, `REACH`, `AWARENESS`, `AIM_HEIGHT`),

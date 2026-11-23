@@ -220,6 +220,8 @@ var _lunge_tween: Tween
 
 func _ready() -> void:
 	health.died.connect(_on_died)
+	# Seeded off the global RNG (randomized at launch) so a test can replay it.
+	_rng.seed = randi()
 	ammo = weapon.magazine_size
 	# Each pirate gets his own capsule so a crouch never resizes the scene's.
 	_capsule = collider.shape.duplicate()

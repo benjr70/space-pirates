@@ -220,6 +220,12 @@ func in_reach() -> bool:
 	return _nearby > 0
 
 
+## True when [param body] itself is close enough to work the controls: crew
+## at a Door do not put its prompt in front of the Pirate across the ship.
+func in_reach_of(body: Node3D) -> bool:
+	return _nearby > 0 and body in $Trigger.get_overlapping_bodies()
+
+
 ## What the HUD should offer whoever is stood at the controls.
 func prompt_text() -> String:
 	if sealed:
