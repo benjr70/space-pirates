@@ -24,7 +24,19 @@ func _initialize() -> void:
 	_check_release_has_no_sheet()
 	_remove_scratch()
 	_report()
+	await _silence()
 	quit(1 if failures.size() > 0 else 0)
+
+
+## The Raid check fires shots; let the audio server drop their playbacks
+## before quitting, or the streams are reported as leaked at exit.
+func _silence() -> void:
+	for node in root.find_children("*", "", true, false):
+		if node is AudioStreamPlayer or node is AudioStreamPlayer3D:
+			node.stop()
+	OS.delay_msec(300)
+	await process_frame
+	await process_frame
 
 
 ## The committed Markdown view is what the resources on disk say.
@@ -191,7 +203,11 @@ func _check_read_only() -> void:
 
 ## The Raid: Health from the Sandbox, F1 and Esc, a live edit on the next shot.
 func _check_in_raid() -> void:
-	var sandbox: Sandbox = load(Sandbox.PATH)
+	# Locals here are typed by their engine class (Node, Resource), not their
+	# script class: naming PauseMenu, SandboxSheetView, Crew3D and the rest
+	# as types in this function leaves their scripts "still in use" at exit
+	# under --script, which the gate counts as an engine error.
+	var sandbox: Resource = load(Sandbox.PATH)
 	sandbox.pirate_health = 123
 	sandbox.crew_health = 77
 	var main: Node3D = load("res://scenes/main_3d.tscn").instantiate()
@@ -200,7 +216,7 @@ func _check_in_raid() -> void:
 		await process_frame
 	var player: CharacterBody3D = main.get_node("Player")
 	player.set_physics_process(false)
-	var pause: PauseMenu = main.get_node("PauseMenu")
+	var pause: Node = main.get_node("PauseMenu")
 	_expect(player.health.max_health == 123 and player.health.current == 123,
 			"the Pirate spawned on %d Health, not the Sandbox's 123" % player.health.max_health)
 	var crew := get_nodes_in_group(&"crew")
@@ -211,7 +227,7 @@ func _check_in_raid() -> void:
 	sandbox.pirate_health = 150
 	sandbox.crew_health = 100
 
-	var view: SandboxSheetView = main.get_node_or_null("SandboxSheet")
+	var view: Node = main.get_node_or_null("SandboxSheet")
 	_expect(view != null, "a debug Raid has no Sandbox sheet")
 	if view == null:
 		main.free()
@@ -234,7 +250,7 @@ func _check_in_raid() -> void:
 
 	# A live edit through the sheet's own cell reaches the next shot.
 	_key(KEY_F1)
-	var pistol: WeaponProfile = player.weapon
+	var pistol: Resource = player.weapon
 	_expect(pistol.resource_path == "res://resources/weapons/pistol.tres", "the Pirate does not start on the Pistol")
 	var cell := view.cell(SandboxSheet.WEAPONS, &"damage", 0) as SpinBox
 	_expect(cell != null, "the Pistol's damage cell is not a number field")
@@ -246,19 +262,19 @@ func _check_in_raid() -> void:
 		_expect((view.cell(SandboxSheet.WEAPONS, &"shots_to_kill_crew", 0) as Label).text == "3",
 				"the derived shots-to-kill cell did not follow the edit")
 	_key(KEY_F1)
-	var shot: Projectile3D = player.fire()
+	var shot: Node = player.fire()
 	_expect(shot != null and shot.damage == 40, "the next shot after the edit does %s damage, not 40" % (shot.damage if shot else "no"))
 	# Crew fire the same Pistol, so the edit reaches their shots too.
-	var gunman: Crew3D = crew[0]
+	var gunman: Node = crew[0]
 	_expect(gunman.weapon == pistol, "crew do not hold the Pirate's own Pistol")
-	var crew_shot := gunman._fire()
+	var crew_shot: Node = gunman._fire()
 	_expect(crew_shot != null and crew_shot.damage == 40, "a crew shot after the edit does %s damage, not 40"
 			% (crew_shot.damage if crew_shot else "no"))
 	# A Gunnery edit reaches the crew of that type.
 	_key(KEY_F1)
-	var guard_gunnery: Gunnery = load(Gunnery.GUARD_PATH)
+	var guard_gunnery: Resource = load(Gunnery.GUARD_PATH)
 	(view.cell(SandboxSheet.GUNNERY, &"aim_error_degrees", 0) as SpinBox).value = 3.0
-	for body: Crew3D in crew:
+	for body: Node in crew:
 		if not body.is_worker():
 			_expect(body.gunnery == guard_gunnery and is_equal_approx(body.base_cone_degrees(), 4.0),
 					"a Guard's cone is %.1f after aim error 3 on a 1 degree Pistol" % body.base_cone_degrees())

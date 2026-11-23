@@ -34,7 +34,7 @@ static func build(weapons: Array, sandbox_resource: Sandbox, gunneries: Array = 
 	for weapon: Resource in weapons:
 		names.append(weapon_name(weapon))
 	var weapon_table := SheetTable.from_resources(WEAPONS, names, weapons)
-	sheet._add_weapon_derived(weapon_table)
+	_add_weapon_derived(weapon_table, sandbox_resource)
 	sheet.add_table(weapon_table)
 	var health := SheetTable.from_resources(HEALTH, PackedStringArray(["Value"]), [sandbox_resource])
 	health.add_note("Melee from behind (inside the %s degree cone behind the target's facing) kills outright, whatever the damage."
@@ -91,12 +91,16 @@ static func _player_default(property: StringName) -> Variant:
 	return script.get_property_default_value(property)
 
 
-func _add_weapon_derived(table: SheetTable) -> void:
+## Static, and reading the Sandbox through a local: a lambda that captured
+## the sheet would hold it alive from its own table, and the pair (with every
+## Weapon Profile) would never be freed.
+static func _add_weapon_derived(table: SheetTable, sandbox: Sandbox) -> void:
 	table.add_derived(&"reach", "Reach (m)", func(w: WeaponProfile) -> float:
 		return w.projectile_speed * w.projectile_lifetime)
 	table.add_derived(&"damage_per_shot", "Damage per shot", func(w: WeaponProfile) -> int:
 		return w.damage * w.pellet_count)
-	table.add_derived(&"shots_to_kill_crew", "Shots to kill crew", _shots_to_kill_crew)
+	table.add_derived(&"shots_to_kill_crew", "Shots to kill crew", func(w: WeaponProfile) -> int:
+		return _shots_to_kill_crew(w, sandbox))
 	# Every bolt on the head: for the Shotgun, every pellet.
 	table.add_derived(&"shots_to_kill_crew_headshot", "Shots to kill crew by Headshot", func(w: WeaponProfile) -> int:
 		return ceili(float(sandbox.crew_health) / maxi(w.headshot_damage() * w.pellet_count, 1)))
@@ -104,7 +108,7 @@ func _add_weapon_derived(table: SheetTable) -> void:
 	table.add_derived(&"pellets_to_kill_crew", "Pellets to kill crew", func(w: WeaponProfile) -> Variant:
 		return ceili(float(sandbox.crew_health) / maxi(w.damage, 1)) if w.pellet_count > 1 else null)
 	table.add_derived(&"seconds_to_kill_crew", "Seconds to kill crew (from a full magazine)", func(w: WeaponProfile) -> float:
-		var shots := _shots_to_kill_crew(w)
+		var shots := _shots_to_kill_crew(w, sandbox)
 		@warning_ignore("integer_division")
 		var reloads := (shots - 1) / maxi(w.magazine_size, 1)
 		return (shots - 1 - reloads) * w.fire_interval + reloads * w.seconds_empty_to_full())
@@ -115,7 +119,7 @@ func _add_weapon_derived(table: SheetTable) -> void:
 
 
 ## With every pellet landing.
-func _shots_to_kill_crew(w: WeaponProfile) -> int:
+static func _shots_to_kill_crew(w: WeaponProfile, sandbox: Sandbox) -> int:
 	return ceili(float(sandbox.crew_health) / maxi(w.damage * w.pellet_count, 1))
 
 
