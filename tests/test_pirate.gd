@@ -42,6 +42,8 @@ const BACKSTOP_Z := 5.5
 
 var failures: Array[String] = []
 var checks := 0
+## The seed this run draws from (`-- seed=<n>` to replay one).
+var run_seed := 0
 var world: Node3D
 var player: CharacterBody3D
 var door: Door3D
@@ -98,6 +100,7 @@ class Dummy extends CharacterBody3D:
 
 
 func _initialize() -> void:
+	run_seed = SuiteSeed.pick("pirate")
 	_build_course()
 	_run()
 
@@ -158,7 +161,19 @@ func _run() -> void:
 	await _check_tracer()
 	await _check_crew_models()
 	_report()
+	await _silence()
 	quit(1 if failures.size() > 0 else 0)
+
+
+## Under the runner's fixed frame step the suite outruns the audio mixer, which
+## still plays in real time: stop every sound so none is mid-play at exit.
+func _silence() -> void:
+	for node in root.find_children("*", "", true, false):
+		if node is AudioStreamPlayer or node is AudioStreamPlayer3D:
+			node.stop()
+	OS.delay_msec(300)
+	await process_frame
+	await process_frame
 
 
 ## --- the course ---
@@ -2200,3 +2215,4 @@ func _report() -> void:
 		print("PASS  %d checks" % checks)
 	else:
 		print("FAILED  %d of %d checks" % [failures.size(), checks])
+		print(SuiteSeed.replay_line("pirate", run_seed))

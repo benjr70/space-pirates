@@ -40,6 +40,12 @@ func _initialize() -> void:
 	for f in _ship_failures:
 		failures.append("harness self-test on medium seed %d: %s" % [FIRST_SEED, f])
 	for ship_class in ShipGenerator.CLASSES:
+		_ship_failures.clear()
+		var dumped_report := ShipGenerator.generate_report(ship_class, FIRST_SEED)
+		_check_dumper(dumped_report.layout)
+		for f in _ship_failures:
+			failures.append("ShipDumper on %s seed %d: %s  [%s]" % [ship_class, FIRST_SEED, f, dumped_report.sentence])
+	for ship_class in ShipGenerator.CLASSES:
 		var sweep := Sweep.new()
 		var dumped := false
 		for seed in range(FIRST_SEED, FIRST_SEED + seeds_per_class):
@@ -257,6 +263,32 @@ func _check_harness_bites() -> void:
 	broken = ShipGenerator.generate_report(&"medium", FIRST_SEED)
 	broken.layout.ship_name = "The " + broken.layout.ship_name
 	_expect(_violates(broken, "article"), "a stored 'The' went unnoticed")
+
+
+## The debug dump a failing seed prints stays legible: the plan draws every
+## tile from its documented glyph set, with no '?' for an unknown prop or
+## Role, and the listing has one `room` line per Room and one `door` line
+## per Door.
+func _check_dumper(layout: ShipLayout) -> void:
+	var plan := ShipDumper.ascii(layout)
+	var allowed := {"#": true, ".": true, "+": true, "H": true, "x": true, " ": true, "\n": true}
+	for glyph: String in ShipDumper.PROP_GLYPH.values() + ShipDumper.ROLE_GLYPH.values():
+		allowed[glyph] = true
+	_expect(not plan.contains("?"), "ascii plan draws '?' for an unknown prop or role:\n%s" % plan)
+	var stray := {}
+	for glyph in plan:
+		if not allowed.has(glyph):
+			stray[glyph] = true
+	_expect(stray.is_empty(), "ascii plan draws glyphs outside its set: %s" % [stray.keys()])
+	var room_lines := 0
+	var door_lines := 0
+	for line in ShipDumper.listing(layout).split("\n"):
+		if line.begins_with("room "):
+			room_lines += 1
+		elif line.begins_with("door "):
+			door_lines += 1
+	_expect(room_lines == layout.rooms.size(), "listing has %d room lines for %d rooms" % [room_lines, layout.rooms.size()])
+	_expect(door_lines == layout.doors.size(), "listing has %d door lines for %d doors" % [door_lines, layout.doors.size()])
 
 
 ## Whether the ship's violations mention [param needle].

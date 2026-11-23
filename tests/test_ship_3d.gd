@@ -8,6 +8,8 @@ const UP := Vector3.UP
 
 var failures: Array[String] = []
 var checks := 0
+## The seed this run draws from (`-- seed=<n>` to replay one).
+var run_seed := 0
 
 var main: Node3D
 var player: CharacterBody3D
@@ -39,11 +41,16 @@ var hatch_leaf: Door3D
 var hatch_push := Vector3.ZERO
 var hatch_room := -1
 var built_sample: BuiltSampleChecks
+## The door-prompt phase: a Container to search and a Door across the ship.
+var prompt_box: Container3D
+var prompt_door: Door3D
+var prompt_door_was_open := false
 
 
 func _initialize() -> void:
+	run_seed = SuiteSeed.pick("ship_3d")
 	# Any Raid this suite ends banks into a throwaway profile, never the player's.
-	Profile.path = RaidChecks.TEST_PROFILE
+	Profile.path = RaidChecks.test_profile
 	RoomDataChecks.run(_expect)
 
 	var layout := PlayerShipLayout.create()
@@ -60,6 +67,7 @@ func _initialize() -> void:
 	_check_doors(layout)
 	_check_hatches(layout)
 	_check_connectivity(layout)
+	_check_hazard_stripes_material()
 
 	main = load("res://scenes/main_3d.tscn").instantiate()
 	# The reveal machinery stays under test even while the game runs fully lit.
@@ -80,6 +88,7 @@ func _physics_process(_delta: float) -> bool:
 		floors = built_layout.floor_tiles()
 		boarding_room = built_layout.hatches[main.entry_hatch].room
 		_check_boarding(built_layout)
+		GeneratedShipChecks.check_hazard_stripes(_expect, built_layout, main)
 		# The walks below start inside the ship, a step in from the boarding
 		# hatch, rather than out in the pod behind its shut leaf.
 		player.global_position = ShipBuilder3D.hatch_entry_world(built_layout, built_layout.hatches[main.entry_hatch])
@@ -96,9 +105,12 @@ func _physics_process(_delta: float) -> bool:
 		_check_physics_smoke()
 		return false
 
+	if phase == 8:
+		_physics_door_prompt()
+		return false
 	if phase == 7:
 		if built_sample.tick():
-			_finish()
+			_begin_door_prompt_phase()
 		return false
 	if phase == 6:
 		_physics_hatch_walk()
@@ -476,6 +488,98 @@ func _physics_hatch_walk() -> void:
 			phase = 7
 
 
+## A crew member at a Door across the ship must not take the interact key:
+## the Pirate facing a Container is offered the search and gets it, and a
+## Door's prompt is his only when he stands in that Door's reach himself.
+## Played on a generated ship (the pirate ship has no Containers), with the
+## hand-authored one taken out so only this ship's Doors are in the tree.
+func _begin_door_prompt_phase() -> void:
+	root.remove_child(main)
+	main.free()
+	main = load("res://scenes/main_3d.tscn").instantiate()
+	main.layout_override = ShipGenerator.generate(&"medium", 1)
+	main.explore_darkness = false
+	root.add_child(main)
+	player = main.get_node("Player")
+	player.set_physics_process(false)
+	phase = 8
+	frames = 0
+
+
+## Two frames for the built ship's physics to come live, then the Pirate at
+## the Container clearest of every Door and one crew member, held still, in
+## the reach of the Door furthest from it.
+func _setup_door_prompt() -> void:
+	var all_doors := main.get_tree().get_nodes_in_group(&"doors")
+	var best_clear := 0.0
+	for node in main.get_tree().get_nodes_in_group(&"containers"):
+		var box: Container3D = node
+		if box.is_open:
+			continue
+		var clear := INF
+		for door: Door3D in all_doors:
+			clear = minf(clear, box.global_position.distance_to(door.global_position))
+		if clear > best_clear:
+			best_clear = clear
+			prompt_box = box
+	var crew: Array = main.get_node("Ship/Crew").get_children()
+	_expect(prompt_box != null, "door prompt: no unopened Container on the ship")
+	_expect(not crew.is_empty(), "door prompt: no crew on the ship")
+	if prompt_box == null or crew.is_empty():
+		_finish()
+		return
+	var best_far := 0.0
+	for door: Door3D in main.get_node("Ship/Doors").get_children():
+		var far := door.global_position.distance_to(prompt_box.global_position)
+		if far > best_far and not door.locked:
+			best_far = far
+			prompt_door = door
+	_expect(best_far > 10.0, "door prompt: no Door 10 m from the Container (%.1f m)" % best_far)
+	prompt_door_was_open = prompt_door.is_open
+	# Every crew member stands down, out of the way; one stands at the Door.
+	for member: Crew3D in crew:
+		member.set_physics_process(false)
+		member.global_position = Vector3(0, -50, 0)
+	var stander: Crew3D = crew[0]
+	stander.global_position = prompt_door.global_position
+	var away := Vector3(1.2, 0, 0)
+	player.global_position = prompt_box.global_position + away
+	player.global_basis = Basis.looking_at(-away, Vector3.UP)
+	player.velocity = Vector3.ZERO
+
+
+func _physics_door_prompt() -> void:
+	frames += 1
+	match frames:
+		2:
+			_setup_door_prompt()
+		5:
+			for door: Door3D in main.get_tree().get_nodes_in_group(&"doors"):
+				_expect(not player in door.get_node("Trigger").get_overlapping_bodies(),
+						"door prompt: the Container chosen stands in a Door's reach")
+			_expect(prompt_door.in_reach(), "door prompt: the Door did not notice the crew member at it")
+			_expect(main._door_prompt() == "",
+					"door prompt: a crew member at a Door %.0f m away offers its prompt '%s'"
+					% [prompt_door.global_position.distance_to(player.global_position), main._door_prompt()])
+			_expect(main._prompt() == "E — Search",
+					"door prompt: facing a Container offers '%s', not the search" % main._prompt())
+			Input.action_press("interact")
+		6:
+			Input.action_release("interact")
+		7:
+			_expect(prompt_box.is_open, "door prompt: the interact key did not search the Container")
+			_expect(prompt_door.is_open == prompt_door_was_open,
+					"door prompt: the Pirate's interact key worked a Door across the ship")
+			# Now the Pirate himself steps into that Door's reach.
+			var across := Vector3(0, 0, 1) if prompt_door.data.horizontal else Vector3(1, 0, 0)
+			player.global_position = prompt_door.global_position + across * 1.4
+		10:
+			_expect(main._door_prompt() == prompt_door.prompt_text() and main._prompt() == prompt_door.prompt_text(),
+					"door prompt: standing in a Door's reach offers '%s', not '%s'"
+					% [main._prompt(), prompt_door.prompt_text()])
+			_finish()
+
+
 ## Cover must actually be cover: something solid between it and the target, and
 ## a clear walk to it.
 func _check_cover() -> void:
@@ -506,12 +610,27 @@ func _check_navigation() -> void:
 		_expect(gunman._path[gunman._path.size() - 1].is_equal_approx(bridge),
 				"route ends at %s, not the destination" % gunman._path[gunman._path.size() - 1])
 
+	# Back on patrol and unaware (it spotted the Pirate earlier in the phase),
+	# due its next Job: it sets off on a route that ends at that Job, which
+	# may bend round props (CrewPaths), so any number of points.
 	gunman._path.clear()
 	gunman._can_see = false
+	gunman.perception.awareness = 0.0
 	gunman._hold_timer = 0.0
 	gunman.state = Crew3D.State.PATROL
+	gunman.job_phase = Crew3D.JobPhase.WAITING
 	gunman._tick_patrol()
-	_expect(gunman._path.size() == 1, "patrolling crew did not pick somewhere to walk")
+	var job = gunman.routine.current() if gunman.routine != null else null
+	_expect(gunman.state == Crew3D.State.PATROL and job != null and gunman.job_phase == Crew3D.JobPhase.WALKING
+			and gunman._path.size() > 0, "patrolling crew did not pick somewhere to walk (state %d, %d points)"
+			% [gunman.state, gunman._path.size()])
+	if job != null and gunman._path.size() > 0:
+		# A work Job ends on its spot; a patrol stop whose centre is blocked
+		# ends anywhere in its Room.
+		var end: Vector3 = gunman._path[gunman._path.size() - 1]
+		_expect(end.is_equal_approx(job.at) or (job.patrol
+				and built_layout.room_at(ShipBuilder3D.world_to_tile(end)) == job.room),
+				"patrolling crew's route ends at %s, not at its Job (%s in Room %d)" % [end, job.at, job.room])
 
 	gunman._last_seen = bridge
 	gunman._enter(Crew3D.State.SEARCH)
@@ -725,6 +844,36 @@ func _check_boarding(layout: ShipLayout) -> void:
 	_expect(BoardingPod.fits(layout, hatch, false), "the boarding pod runs into the ship's own hull")
 
 
+## The stripe texture holds both its colours, and the material that carries
+## it is triplanar at the stripe density and matte, so nothing greys the
+## black bands out.
+func _check_hazard_stripes_material() -> void:
+	var image := HazardStripes.texture().get_image()
+	var yellow := false
+	var black := false
+	if image != null:
+		for x in image.get_width():
+			for y in image.get_height():
+				var pixel := image.get_pixel(x, y)
+				yellow = yellow or _near(pixel, HazardStripes.YELLOW)
+				black = black or _near(pixel, HazardStripes.BLACK)
+	_expect(image != null, "HazardStripes.texture() has no image to read")
+	_expect(yellow and black, "HazardStripes.texture() yellow pixels %s, black pixels %s; want both" % [yellow, black])
+	var m := HazardStripes.material()
+	var density := Vector3.ONE * HazardStripes.DENSITY
+	_expect(m.uv1_triplanar, "HazardStripes.material() is not triplanar")
+	_expect(m.uv1_scale.is_equal_approx(density), "HazardStripes.material() uv1_scale %s, want %s" % [m.uv1_scale, density])
+	_expect(is_equal_approx(m.roughness, 1.0), "HazardStripes.material() roughness %.2f, want 1.0" % m.roughness)
+	_expect(is_equal_approx(m.metallic, 0.0), "HazardStripes.material() metallic %.2f, want 0.0" % m.metallic)
+	_expect(m.albedo_texture == HazardStripes.texture(), "HazardStripes.material() does not use HazardStripes.texture()")
+
+
+## Equal to [param want] within one 8-bit step per channel.
+func _near(pixel: Color, want: Color) -> bool:
+	return absf(pixel.r - want.r) <= 1.0 / 255.0 and absf(pixel.g - want.g) <= 1.0 / 255.0 \
+			and absf(pixel.b - want.b) <= 1.0 / 255.0
+
+
 func _check_built_geometry(layout: ShipLayout) -> void:
 	var ship: Node3D = main.get_node("Ship")
 	var floor_map: GridMap = ship.get_node("Floor")
@@ -862,7 +1011,7 @@ func _check_built_geometry(layout: ShipLayout) -> void:
 
 
 func _finish() -> void:
-	DirAccess.remove_absolute(ProjectSettings.globalize_path(RaidChecks.TEST_PROFILE))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(RaidChecks.test_profile))
 	_report()
 	quit(1 if failures.size() > 0 else 0)
 
@@ -880,3 +1029,4 @@ func _report() -> void:
 		for f in failures:
 			print("FAIL  ", f)
 		print("FAILED  %d of %d checks" % [failures.size(), checks])
+		print(SuiteSeed.replay_line("ship_3d", run_seed))

@@ -4,7 +4,8 @@ extends RefCounted
 ## main scene takes it as an override, drops the pirate just inside the
 ## chosen Hatch (a different Room for Hatch 0 and Hatch 1), and the crew
 ## navigator can string a route from the Bridge to an Engine through open
-## doorways. Run from the headless 3D suite: `GeneratedShipChecks.run(_expect, root)`.
+## doorways, and its sealed Hatches and Boarding Pod collar wear the Hazard
+## stripes. Run from the headless 3D suite: `GeneratedShipChecks.run(_expect, root)`.
 
 const CLASS := &"large"
 ## The first of these seeds whose ship leaves a Room empty is built, so the
@@ -96,6 +97,7 @@ static func run(expect: Callable, root: Node) -> void:
 
 	_check_bridge_to_engine(expect, layout, main)
 	_check_crew(expect, layout, main)
+	check_hazard_stripes(expect, layout, main)
 
 	root.remove_child(main)
 	main.free()
@@ -162,6 +164,43 @@ static func _check_crew(expect: Callable, layout: ShipLayout, main: Node3D) -> v
 			empty_rooms += 1
 	expect.call(armory_crew > 0, "generated: no crew in the armory")
 	expect.call(empty_rooms > 0, "generated: every room is crewed")
+
+
+## Hazard stripes mark what is not an ordinary door: both leaves of every
+## sealed Hatch, and the Boarding Pod's collar (the deck strip and the two
+## side frames at the Hull's outer face). Also run on the hand-authored
+## ship from `test_ship_3d.gd`.
+static func check_hazard_stripes(expect: Callable, layout: ShipLayout, main: Node3D) -> void:
+	var ship := "%s seed %d" % [layout.ship_class if layout.ship_class != &"" else &"hand-authored", layout.gen_seed]
+	var sealed := 0
+	var leaves := main.get_node("Ship/Hatches").get_children()
+	for i in leaves.size():
+		var leaf: Door3D = leaves[i]
+		if not leaf.sealed:
+			continue
+		sealed += 1
+		expect.call(is_hazard_striped(leaf._leaf_a) and is_hazard_striped(leaf._leaf_b),
+				"%s: sealed hatch %d leaves are not both hazard striped (a %s, b %s)"
+				% [ship, i, is_hazard_striped(leaf._leaf_a), is_hazard_striped(leaf._leaf_b)])
+	expect.call(sealed > 0, "%s: no sealed hatch to carry hazard stripes" % ship)
+	var collar := 0
+	for child in main.get_node("Ship/BoardingPod").get_children():
+		var z: float = child.position.z if child is Node3D else -1.0
+		if child is MeshInstance3D and is_hazard_striped(child) \
+				and z >= BoardingPod.COLLAR_Z and z <= BoardingPod.COLLAR_Z + 0.5:
+			collar += 1
+	expect.call(collar == 3, "%s: boarding pod collar has %d hazard striped pieces, want 3 (deck strip, two side frames)" % [ship, collar])
+
+
+## Whether some surface of [param mesh] wears a [HazardStripes] material.
+static func is_hazard_striped(mesh: MeshInstance3D) -> bool:
+	if mesh == null or mesh.mesh == null:
+		return false
+	for s in mesh.mesh.get_surface_count():
+		var material := mesh.get_active_material(s) as StandardMaterial3D
+		if material != null and material.albedo_texture == HazardStripes.texture() and material.uv1_triplanar:
+			return true
+	return false
 
 
 ## The room behind whichever hatch the scene's Boarding Pod is docked at.

@@ -5,6 +5,8 @@ extends SceneTree
 
 var failures: Array[String] = []
 var checks := 0
+## The seed this run draws from (`-- seed=<n>` to replay one).
+var run_seed := 0
 
 var main: Node2D
 var player: CharacterBody2D
@@ -35,6 +37,7 @@ var boarding_room := -1
 
 
 func _initialize() -> void:
+	run_seed = SuiteSeed.pick("layouts")
 	RoomDataChecks.run(_expect)
 
 	var layout := PlayerShipLayout.create()
@@ -556,3 +559,4 @@ func _report() -> void:
 		for f in failures:
 			print("FAIL  ", f)
 		print("FAILED  %d of %d checks" % [failures.size(), checks])
+		print(SuiteSeed.replay_line("layouts", run_seed))

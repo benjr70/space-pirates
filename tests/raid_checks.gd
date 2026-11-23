@@ -10,19 +10,21 @@ extends RefCounted
 const SEED := 4242
 
 
-## Throwaway profile the checks bank into, never the player's own.
-const TEST_PROFILE := "user://test_profile.cfg"
+## Throwaway profile the checks bank into, never the player's own. Named
+## per process: every worktree of the project shares one user:// directory,
+## so two suites running at once must not bank into the same file.
+static var test_profile := "user://test_profile_%d.cfg" % OS.get_process_id()
 
 
 static func run(expect: Callable, root: Node) -> void:
-	Profile.path = TEST_PROFILE
-	DirAccess.remove_absolute(ProjectSettings.globalize_path(TEST_PROFILE))
+	Profile.path = test_profile
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(test_profile))
 	Profile.load_saved()
 	_check_levels(expect)
 	_check_ledger(expect)
 	_check_menu(expect, root)
 	_check_raid(expect, root)
-	DirAccess.remove_absolute(ProjectSettings.globalize_path(TEST_PROFILE))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(test_profile))
 	Profile.load_saved()
 
 

@@ -12,6 +12,8 @@ const CREW_AT := Vector3(4.0, 0.0, 19.5)
 
 var failures: Array[String] = []
 var checks := 0
+## The seed this run draws from (`-- seed=<n>` to replay one).
+var run_seed := 0
 var world: Node3D
 var player: CharacterBody3D
 var markers: AwarenessMarkers
@@ -25,12 +27,22 @@ var tri_layout: ShipLayout
 ## One Room with a Hatch in its north wall and the Pirate's pod docked on it.
 var hatch_layout: ShipLayout
 var hatch_ship: Node3D
+## One Room ten tiles square with a bar of props across its middle (a
+## crate, a console, a crate) and gaps at both ends.
+var cluttered_layout: ShipLayout
+## One Room ten tiles square with a row of crates across it, leaving a
+## one-wide gap at the west wall and a three-wide one at the east.
+var lane_layout: ShipLayout
+## One Room ten tiles by six with crates along its south side from the west
+## wall, leaving a one-wide lane under them that ends at the wall.
+var pocket_layout: ShipLayout
 ## The generated medium ship's crew, kept for the type checks.
 var routine_crew: Array[Crew3D] = []
 var routine_layout: ShipLayout
 
 
 func _initialize() -> void:
+	run_seed = SuiteSeed.pick("crew")
 	_check_pure()
 	world = Node3D.new()
 	root.add_child(world)
@@ -46,6 +58,9 @@ func _initialize() -> void:
 	_build_pair()
 	_build_tri()
 	_build_hatched()
+	_build_cluttered()
+	_build_lane()
+	_build_pocket()
 	var shots := Node3D.new()
 	shots.add_to_group(&"projectiles")
 	world.add_child(shots)
@@ -72,6 +87,15 @@ func _initialize() -> void:
 	_check_aim()
 	await _check_stagger()
 	_check_flank()
+	await _check_cover_blocked()
+	await _check_blocked_by_pirate()
+	await _check_muzzle_blocked()
+	await _check_round_props()
+	await _check_unstick()
+	await _check_head_on_doorway()
+	await _check_standing_in_gap()
+	await _check_working_in_lane()
+	await _check_shared_work_spot()
 	await _check_bodies()
 	await _check_alarm()
 	_check_reported_body()
@@ -222,6 +246,7 @@ func _report() -> void:
 		print("PASS  %d checks" % checks)
 	else:
 		print("FAILED  %d of %d checks" % [failures.size(), checks])
+		print(SuiteSeed.replay_line("crew", run_seed))
 
 
 ## Rooms 0 and 1, eight tiles square, side by side along X with one wall
@@ -658,6 +683,422 @@ func _check_flank() -> void:
 			"flank: the second Guard's route %s does not go round through the other door" % [flanker._path])
 	pinner.free()
 	flanker.free()
+
+
+## Physics ticks until [param done] answers true, or -1 after [param limit]
+## seconds.
+func _seconds_until(limit: float, done: Callable) -> float:
+	for i in int(limit / STEP):
+		await physics_frame
+		if done.call():
+			return (i + 1) * STEP
+	return -1.0
+
+
+## A crate dropped in the test Room that the layout knows nothing of, so no
+## route goes round it: a blocked path. Freed by the caller.
+func _stray_crate(at: Vector3) -> Node3D:
+	var crate: Node3D = load("res://scenes/props3d/prop_crate_3d.tscn").instantiate()
+	crate.position = at
+	world.add_child(crate)
+	return crate
+
+
+## A Guard ducking for cover whose way there is blocked (a crate across
+## it), with the Pirate still in view, gives up on getting there and leaves
+## COVER within Crew3D.COVER_GIVE_UP plus a tick, rather than holding it
+## forever.
+func _check_cover_blocked() -> void:
+	player.health.max_health = 100000
+	player.health.reset()
+	var guard := _crew()
+	var crate := _stray_crate(CREW_AT + Vector3.FORWARD * 1.2)
+	_place(6.0)
+	for i in 2:
+		await physics_frame
+	guard.perception.awareness = 1.0
+	guard._last_seen = player.global_position
+	guard._enter(Crew3D.State.COVER)
+	# Behind the crate, straight through it.
+	guard._path.assign([CREW_AT + Vector3.FORWARD * 2.4])
+	guard.set_physics_process(true)
+	var took := await _seconds_until(6.0, func() -> bool: return guard.state != Crew3D.State.COVER)
+	guard.set_physics_process(false)
+	_expect(took >= 0.0 and took <= Crew3D.COVER_GIVE_UP + 0.1 and guard.state == Crew3D.State.FIGHT,
+			"cover: a Guard whose way to cover is blocked left COVER after %.2f s (state %d), want FIGHT within %.1f s" % [took, guard.state, Crew3D.COVER_GIVE_UP + 0.1])
+	guard.free()
+	crate.free()
+	player.health.max_health = 5
+	player.health.reset()
+	for shot in get_first_node_in_group(&"projectiles").get_children():
+		shot.free()
+
+
+## A patrolling Guard facing 90° off its way, setting off into the standing
+## Pirate's body it is already pressed against (so it never gets moving):
+## it turns to its direction of travel within 0.5 s, and so spots him
+## within 1 s, rather than pressing on blind.
+func _check_blocked_by_pirate() -> void:
+	var guard := _crew()
+	guard.face_direction(Vector3.LEFT)
+	# Capsules touching (0.35 m each): blocked from its first step.
+	_place(0.7)
+	for i in 2:
+		await physics_frame
+	guard._path.assign([CREW_AT + Vector3.FORWARD * 4.0])
+	guard.set_physics_process(true)
+	var facing := await _seconds_until(2.0, func() -> bool: return guard.facing().dot(Vector3.FORWARD) > 0.9)
+	var spotted := await _seconds_until(2.0, func() -> bool: return guard.perception.awareness >= 1.0)
+	guard.set_physics_process(false)
+	_expect(facing >= 0.0 and facing <= 0.5, "blocked: a Guard walking into the Pirate turned to its way after %.2f s, want within 0.5 s" % facing)
+	_expect(spotted >= 0.0 and facing + spotted <= 1.0, "blocked: a Guard walking into the Pirate spotted him after %.2f s, want within 1 s" % (facing + spotted))
+	guard.free()
+
+
+## A Guard fighting the Pirate 6 m off whose eyes see him over or past
+## cover its bolts would hit: once with him stood just behind a crate (the
+## line from muzzle to torso dips into it), once with a locker at its
+## shoulder that its barrel pokes past by less than a bolt's width (a bolt
+## born touching it strikes it). In 6 s it puts no bolt into the cover from
+## where it stood, steps more than 0.5 m off, and hits him.
+func _check_muzzle_blocked() -> void:
+	for rig in [["crate", Vector3(0.0, 0.0, -5.3)], ["locker", Vector3(0.52, 0.0, -0.65)]]:
+		await _muzzle_rig(rig[0], CREW_AT + rig[1])
+
+
+func _muzzle_rig(prop: String, at: Vector3) -> void:
+	player.health.max_health = 100000
+	player.health.reset()
+	var guard := _crew()
+	var cover: Node3D = load("res://scenes/props3d/prop_%s_3d.tscn" % prop).instantiate()
+	cover.position = at
+	world.add_child(cover)
+	_place(6.0)
+	for i in 2:
+		await physics_frame
+	var eyes_clear := not guard._blocked(guard.global_position + Vector3.UP * Crew3D.EYE_HEIGHT,
+			player.global_position + Vector3.UP * Crew3D.EYE_HEIGHT)
+	var tally := {"prop": 0, "from_spot": 0, "pirate": 0, "other": 0}
+	var shots: Node = get_first_node_in_group(&"projectiles")
+	var watch := func(node: Node) -> void:
+		if node is Projectile3D:
+			(node as Projectile3D).hit.connect(func(body: Node3D) -> void:
+				tally["prop" if body == cover else "pirate" if body == player else "other"] += 1
+				if body == cover and guard.global_position.distance_to(CREW_AT) < 0.5:
+					tally.from_spot += 1)
+	shots.child_entered_tree.connect(watch)
+	guard.perception.awareness = 1.0
+	guard._last_seen = player.global_position
+	guard._enter(Crew3D.State.FIGHT)
+	guard.set_physics_process(true)
+	var moved := 0.0
+	for i in 360:
+		await physics_frame
+		moved = maxf(moved, guard.global_position.distance_to(CREW_AT))
+	guard.set_physics_process(false)
+	shots.child_entered_tree.disconnect(watch)
+	_expect(eyes_clear, "muzzle (%s): the rig is wrong, the eye line is blocked" % prop)
+	_expect(tally.from_spot == 0 and tally.pirate > 0 and moved > 0.5,
+			"muzzle (%s): a Guard whose muzzle line clips cover put %d bolts into it from where it stood (%d in all) and %d into the Pirate, stepping at most %.1f m off in 6 s" % [prop, tally.from_spot, tally.prop, tally.pirate, moved])
+	guard.free()
+	cover.free()
+	player.health.max_health = 5
+	player.health.reset()
+	for shot in shots.get_children():
+		shot.free()
+
+
+## Room 0 at x 400-409, y 0-9; the bar of props runs along y 4 from x 402
+## to 406 (crate, three-tile console, crate).
+func _build_cluttered() -> void:
+	cluttered_layout = ShipLayout.new()
+	var room := RoomData.new()
+	room.rects = [Rect2i(400, 0, 10, 10)]
+	room.props = [{"type": &"crate", "tile": Vector2i(402, 4)}, {"type": &"console", "tile": Vector2i(404, 4)},
+			{"type": &"crate", "tile": Vector2i(406, 4)}]
+	cluttered_layout.rooms = [room]
+	var ship := Node3D.new()
+	ship.name = "ClutteredShip"
+	world.add_child(ship)
+	ShipBuilder3D.build(cluttered_layout, ship)
+
+
+## Room 0 at x 420-429, y 0-9; crates along y 4 from x 421 to 426.
+func _build_lane() -> void:
+	lane_layout = ShipLayout.new()
+	var room := RoomData.new()
+	room.rects = [Rect2i(420, 0, 10, 10)]
+	for x in range(421, 427):
+		room.props.append({"type": &"crate", "tile": Vector2i(x, 4)})
+	lane_layout.rooms = [room]
+	var ship := Node3D.new()
+	ship.name = "LaneShip"
+	world.add_child(ship)
+	ShipBuilder3D.build(lane_layout, ship)
+
+
+## Room 0 at x 430-439, y 0-5; crates along y 4 from x 430 to 433, so the
+## lane is y 5 from the west wall to x 433.
+func _build_pocket() -> void:
+	pocket_layout = ShipLayout.new()
+	var room := RoomData.new()
+	room.rects = [Rect2i(430, 0, 10, 6)]
+	for x in range(430, 434):
+		room.props.append({"type": &"crate", "tile": Vector2i(x, 4)})
+	pocket_layout.rooms = [room]
+	var ship := Node3D.new()
+	ship.name = "PocketShip"
+	world.add_child(ship)
+	ShipBuilder3D.build(pocket_layout, ship)
+
+
+## A crew member walking to a point straight across a bar of props goes
+## round it and arrives within ROUND_PROPS_TIME, rather than pressing into
+## the console; from just beside the console (pressed against it) as well.
+const ROUND_PROPS_TIME := 8.0
+
+func _check_round_props() -> void:
+	for from in [Vector2(404.5, 1.5), Vector2(403.5, 3.4)]:
+		var walker := _crew()
+		walker.layout = cluttered_layout
+		walker.home_room = 0
+		walker.global_position = Vector3(from.x, 0.0, from.y)
+		walker._hold_timer = 60.0
+		player.global_position = Vector3(60.0, 0.0, 60.0)
+		var to := Vector3(404.5, 0.0, 7.5)
+		walker._repath_to(to)
+		walker.set_physics_process(true)
+		var took := await _seconds_until(ROUND_PROPS_TIME + 2.0, func() -> bool:
+				return walker._path.is_empty() and Vector2(walker.global_position.x - to.x, walker.global_position.z - to.z).length() < 0.6)
+		walker.set_physics_process(false)
+		_expect(took >= 0.0 and took <= ROUND_PROPS_TIME,
+				"steering: from %s across a bar of props took %.1f s (stood at %s), want within %.0f s" % [from, took, walker.global_position, ROUND_PROPS_TIME])
+		walker.free()
+
+
+## A crew member walking head-on into another standing in its way (a body
+## no route knows of) works its way round within UNSTICK_TIME.
+const UNSTICK_TIME := 6.0
+
+func _check_unstick() -> void:
+	var blocker := _crew()
+	blocker.global_position = CREW_AT + Vector3.FORWARD * 2.0
+	var walker := _crew()
+	player.global_position = Vector3(60.0, 0.0, 60.0)
+	var to := CREW_AT + Vector3.FORWARD * 5.0
+	walker._repath_to(to)
+	for i in 2:
+		await physics_frame
+	walker.set_physics_process(true)
+	var took := await _seconds_until(UNSTICK_TIME + 2.0, func() -> bool:
+			return walker._path.is_empty() and walker.global_position.distance_to(to) < 0.6)
+	walker.set_physics_process(false)
+	_expect(took >= 0.0 and took <= UNSTICK_TIME,
+			"steering: walking head-on into a crew member standing in its way took %.1f s (stood at %s), want within %.0f s" % [took, walker.global_position, UNSTICK_TIME])
+	walker.free()
+	blocker.free()
+
+
+## A crew member in the pair's Rooms at [param at], walking to [param to].
+func _pair_walker(at: Vector3, to: Vector3) -> Crew3D:
+	var walker := _crew()
+	walker.layout = pair_layout
+	walker.home_room = 0 if at.x < 108.0 else 1
+	walker.global_position = at
+	walker._hold_timer = 60.0
+	walker._repath_to(to)
+	return walker
+
+
+func _arrived(walker: Crew3D, to: Vector3) -> bool:
+	return walker._path.is_empty() and Vector2(walker.global_position.x - to.x, walker.global_position.z - to.z).length() < 0.6
+
+
+## Two crew walking head-on along the line through the pair's two-wide
+## doorway (they meet in it, neither able to pass the other there) both
+## reach their ends 10 m off within HEAD_ON_TIME: one gives way. At routine
+## pace (1.8 m/s) they take 9.2 s and 7.4 s.
+const HEAD_ON_TIME := 12.0
+
+func _check_head_on_doorway() -> void:
+	player.global_position = Vector3(60.0, 0.0, 60.0)
+	# Shut: crew open it themselves (one opened by hand is a trace they go to look at).
+	pair_door.close()
+	var west := Vector3(103.5, 0.0, 4.0)
+	var east := Vector3(113.5, 0.0, 4.0)
+	var a := _pair_walker(west, east)
+	var b := _pair_walker(east, west)
+	for i in 2:
+		await physics_frame
+	a.set_physics_process(true)
+	b.set_physics_process(true)
+	var took := {a: -1.0, b: -1.0}
+	for i in int((HEAD_ON_TIME + 2.0) / STEP):
+		await physics_frame
+		for pair in [[a, east], [b, west]]:
+			if took[pair[0]] < 0.0 and _arrived(pair[0], pair[1]):
+				took[pair[0]] = (i + 1) * STEP
+		if took[a] >= 0.0 and took[b] >= 0.0:
+			break
+	a.set_physics_process(false)
+	b.set_physics_process(false)
+	for pair in [[a, "west", east], [b, "east", west]]:
+		var t: float = took[pair[0]]
+		_expect(t >= 0.0 and t <= HEAD_ON_TIME,
+				"give way: the crew member from the %s, head-on in a two-wide doorway, took %.1f s to arrive (stood at %s), want within %.0f s" % [pair[1], t, pair[0].global_position, HEAD_ON_TIME])
+	a.free()
+	b.free()
+
+
+## A crew member standing still in the one-wide gap between the west wall
+## and a row of crates, square in the way of another walking straight
+## through it: there is no stepping aside in the gap, but the long way round
+## the row's other end is open, and the walker takes it, arriving within
+## STANDING_TIME: about 17 m at routine pace (1.8 m/s) and the 2 s it takes
+## to find itself stuck, 11.9 s.
+const STANDING_TIME := 15.0
+
+func _check_standing_in_gap() -> void:
+	player.global_position = Vector3(60.0, 0.0, 60.0)
+	var blocker := _crew()
+	blocker.layout = lane_layout
+	blocker.global_position = Vector3(420.5, 0.0, 4.5)
+	var walker := _crew()
+	walker.layout = lane_layout
+	walker.home_room = 0
+	walker.global_position = Vector3(420.5, 0.0, 1.5)
+	walker._hold_timer = 60.0
+	var to := Vector3(420.5, 0.0, 7.5)
+	walker._repath_to(to)
+	for i in 2:
+		await physics_frame
+	walker.set_physics_process(true)
+	var took := await _seconds_until(STANDING_TIME + 2.0, func() -> bool: return _arrived(walker, to))
+	walker.set_physics_process(false)
+	_expect(took >= 0.0 and took <= STANDING_TIME,
+			"give way: walking through a one-wide gap a crew member stands in, with a way round, took %.1f s (stood at %s), want within %.0f s" % [took, walker.global_position, STANDING_TIME])
+	walker.free()
+	blocker.free()
+
+
+## A crew member at the dead end of a one-wide lane, walking out, with a
+## Worker in the lane working at a crate for a minute: the Worker makes way
+## and the walker arrives within LANE_TIME (measured 8.6 s), and the Worker
+## goes back to work at its spot (within 1.5 m of the crate, facing it).
+const LANE_TIME := 11.0
+
+func _check_working_in_lane() -> void:
+	player.global_position = Vector3(60.0, 0.0, 60.0)
+	var worker := _crew(CrewTypes.Type.WORKER)
+	worker.layout = pocket_layout
+	worker.home_room = 0
+	worker.global_position = Vector3(431.5, 0.0, 5.5)
+	var job := CrewRoutine.Job.new()
+	job.room = 0
+	job.at = Vector3(431.5, 0.0, 5.5)
+	job.prop_at = Vector3(431.5, 0.0, 4.5)
+	job.face = job.prop_at - job.at
+	job.duration = 60.0
+	worker.routine = CrewRoutine.new()
+	worker.routine.jobs.append(job)
+	worker.job_phase = Crew3D.JobPhase.WORKING
+	worker._hold_timer = 60.0
+	var walker := _crew()
+	walker.layout = pocket_layout
+	walker.home_room = 0
+	walker.global_position = Vector3(430.5, 0.0, 5.5)
+	walker._hold_timer = 60.0
+	var to := Vector3(437.5, 0.0, 1.5)
+	walker._repath_to(to)
+	for i in 2:
+		await physics_frame
+	worker.set_physics_process(true)
+	walker.set_physics_process(true)
+	var took := await _seconds_until(LANE_TIME + 2.0, func() -> bool: return _arrived(walker, to))
+	var back := await _seconds_until(10.0, func() -> bool:
+			return worker.job_phase == Crew3D.JobPhase.WORKING and worker._hold_timer < job.duration - 0.6)
+	worker.set_physics_process(false)
+	walker.set_physics_process(false)
+	var to_prop := job.prop_at - worker.global_position
+	to_prop.y = 0.0
+	_expect(took >= 0.0 and took <= LANE_TIME,
+			"give way: walking out of a dead-end lane past a Worker working in it took %.1f s (stood at %s), want within %.0f s" % [took, walker.global_position, LANE_TIME])
+	_expect(back >= 0.0 and to_prop.length() <= 1.5 and worker.facing().dot(to_prop.normalized()) >= 0.8,
+			"give way: the Worker that made way is not back at work at its crate (%.2f m off it, facing %.2f)" % [to_prop.length(), worker.facing().dot(to_prop.normalized())])
+	walker.free()
+	worker.free()
+
+
+## Two Workers whose loops share one work Job (a console's single spot):
+## while one works it the other neither works there too nor stands pressed
+## against it for more than SHARED_PRESS seconds trying to get on the spot
+## (from there a nudge lands it working off the spot), and every work sample
+## of either is within the routines check's 1.5 m of its prop, facing it.
+const SHARED_PRESS := 1.0
+
+func _check_shared_work_spot() -> void:
+	player.global_position = Vector3(60.0, 0.0, 60.0)
+	var spots := CrewRoutine.work_spots(cluttered_layout)
+	var shared: CrewRoutine.Job = spots[0]
+	var stop := CrewRoutine._patrol_stop(cluttered_layout, 0)
+	stop.at = Vector3(401.5, 0.0, 8.5)
+	var crew: Array[Crew3D] = []
+	for at in [shared.at, Vector3(404.5, 0.0, 8.5)]:
+		var worker := _crew(CrewTypes.Type.WORKER)
+		worker.layout = cluttered_layout
+		worker.home_room = 0
+		worker.global_position = at
+		worker.routine = CrewRoutine.new()
+		for job in [shared, stop]:
+			var copy := CrewRoutine._copy(job)
+			copy.duration = 6.0 if job == shared else 1.0
+			worker.routine.jobs.append(copy)
+		crew.append(worker)
+	# The first is already at the console; the second sets off for it.
+	crew[0].job_phase = Crew3D.JobPhase.WORKING
+	crew[0]._hold_timer = 6.0
+	crew[1]._hold_timer = 0.0
+	crew[1].job_phase = Crew3D.JobPhase.WAITING
+	for i in 2:
+		await physics_frame
+	var bad := []
+	var shared_at_once := 0
+	var pressed := 0.0
+	var worked := 0
+	for member in crew:
+		member.set_physics_process(true)
+	for i in 600:
+		await physics_frame
+		var on_shared := 0
+		for member in crew:
+			var job: CrewRoutine.Job = member.routine.current()
+			if member.job_phase != Crew3D.JobPhase.WORKING or job.patrol:
+				continue
+			on_shared += 1
+			if member._hold_timer > job.duration - 0.6:
+				continue
+			worked += 1
+			var to_prop := job.prop_at - member.global_position
+			to_prop.y = 0.0
+			if to_prop.length() > 1.5 or member.facing().dot(to_prop.normalized()) < 0.8:
+				bad.append("%.2f m, facing %.2f" % [to_prop.length(), member.facing().dot(to_prop.normalized())])
+		if on_shared > 1:
+			shared_at_once += 1
+		for k in 2:
+			var worker := crew[k]
+			var other := crew[1 - k]
+			if other.job_phase == Crew3D.JobPhase.WORKING and not other.routine.current().patrol \
+					and worker.job_phase == Crew3D.JobPhase.WALKING and not worker.routine.current().patrol \
+					and worker.global_position.distance_to(other.global_position) < 0.8:
+				pressed += STEP
+	for member in crew:
+		member.set_physics_process(false)
+	_expect(worked > 0, "work spot: neither Worker was seen working the shared console")
+	_expect(shared_at_once == 0, "work spot: two Workers worked the one spot at the same time for %d frames" % shared_at_once)
+	_expect(pressed <= SHARED_PRESS, "work spot: a Worker stood pressed against the one working its spot for %.1f s, want at most %.0f s" % [pressed, SHARED_PRESS])
+	_expect(bad.is_empty(), "work spot: %d working samples away from or facing off the prop, e.g. %s" % [bad.size(), bad.slice(0, 3)])
+	for member in crew:
+		member.free()
 
 
 ## A dead crew member lying 6 m in front of [param observer], the Pirate
