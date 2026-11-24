@@ -11,9 +11,9 @@ extends SceneTree
 ##
 ## Presets (first argument after `--`):
 ##   viewmodel  hip, ads, low, tracer. wheel=<n> turns the weapon wheel n
-##              places first (wheel=1 is the Carbine); hip=x,y,z ads=x,y,z
+##              places first (wheel=1 is the Assault Rifle); hip=x,y,z ads=x,y,z
 ##              low=x,y,z lowrot=x,y,z override the Viewmodel's poses;
-##              pistol=1 scale=<f> rot=x,y,z pos=x,y,z hides the Sidearm and
+##              pistol=1 scale=<f> rot=x,y,z pos=x,y,z hides the Holder and
 ##              mounts a fresh pistol.glb at that transform instead.
 ##   ship       class=<small|medium|large> seed=<n>: one shot per Room from a
 ##              corner at eye height, room_<i>_<role>.png, plus overview.png.
@@ -99,10 +99,10 @@ func _viewmodel() -> void:
 	player.position = Vector3.ZERO
 	var weapon: Node3D = player.get_node("Head/Camera3D/Weapon")
 	if args.get("pistol", "") == "1":
-		weapon.get_node("Sidearm").visible = false
+		weapon.get_node("Holder").visible = false
 		var holder := Node3D.new()
 		holder.name = "PistolHolder"
-		holder.add_child(load("res://assets/models/sidearm/pistol.glb").instantiate())
+		holder.add_child(load("res://assets/models/pistol/pistol.glb").instantiate())
 		holder.scale = Vector3.ONE * float(args.get("scale", "0.02"))
 		holder.rotation_degrees = _v3(args.get("rot", "0,-90,0"))
 		holder.position = _v3(args.get("pos", "0,0,0"))

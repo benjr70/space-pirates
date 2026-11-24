@@ -77,14 +77,17 @@ func _initialize() -> void:
 	_check_decay()
 	await _check_investigate()
 	_check_shot()
+	_check_health_and_damage()
 	_check_died_unaware()
 	_check_sting()
 	await _check_hearing()
 	_check_doorway()
+	_check_loudness()
 	await _check_worker()
 	_check_on_edge()
 	await _check_share()
 	_check_aim()
+	_check_gunnery()
 	await _check_stagger()
 	_check_flank()
 	await _check_cover_blocked()
@@ -102,6 +105,12 @@ func _initialize() -> void:
 	await _check_container_and_door()
 	await _check_hatch()
 	_check_panel_spots()
+	await _check_shotgun_one_kill()
+	await _check_shotgun_range()
+	await _check_headshots()
+	await _check_marksman_rifle_kills()
+	await _check_head_follows_pose()
+	await _check_pirate_has_no_head()
 	await _check_routines()
 	_check_types()
 	_report()
@@ -219,6 +228,38 @@ func _check_shot() -> void:
 	crew.free()
 
 
+## Health and damage at the times-25 scale: a crew member takes four Pistol
+## or Assault Rifle hits, the Pirate six crew shots, and three or five do not.
+func _check_health_and_damage() -> void:
+	for path in ["res://resources/weapons/pistol.tres", "res://resources/weapons/assault_rifle.tres"]:
+		var profile: WeaponProfile = load(path)
+		var crew := _crew()
+		_expect(crew.health.max_health == 100, "crew Health is %d, not 100" % crew.health.max_health)
+		_expect(profile.damage == 25, "%s does %d damage, not 25" % [path.get_file(), profile.damage])
+		for i in 3:
+			crew.take_damage(profile.damage, player)
+		_expect(crew.is_alive(), "three %s hits killed a crew member" % path.get_file())
+		crew.take_damage(profile.damage, player)
+		_expect(not crew.is_alive(), "four %s hits left a crew member on %d" % [path.get_file(), crew.health.current])
+		crew.free()
+	# Crew fire the Pistol, so a crew shot does its damage.
+	var crew_damage: int = (load("res://resources/weapons/pistol.tres") as WeaponProfile).damage
+	_expect(crew_damage == 25, "a crew shot does %d damage, not 25" % crew_damage)
+	# A second Pirate to kill, so the one the other checks use stays up.
+	var pirate: CharacterBody3D = load("res://scenes/player_3d.tscn").instantiate()
+	pirate.auto_respawn = false
+	pirate.position = CREW_AT + Vector3(0.0, 0.0, 30.0)
+	world.add_child(pirate)
+	pirate.set_physics_process(false)
+	_expect(pirate.health.max_health == 150, "Pirate Health is %d, not 150" % pirate.health.max_health)
+	for i in 5:
+		pirate.take_damage(crew_damage)
+	_expect(pirate.is_alive(), "five crew shots killed the Pirate")
+	pirate.take_damage(crew_damage)
+	_expect(not pirate.is_alive(), "six crew shots left the Pirate on %d" % pirate.health.current)
+	pirate.free()
+
+
 func _check_sting() -> void:
 	var crew := _crew()
 	_place(5.0)
@@ -299,7 +340,7 @@ func _check_hearing() -> void:
 	_expect(crew.state == Crew3D.State.INVESTIGATE, "a crew member that heard a step is in state %d, not investigating" % crew.state)
 	_expect(crew.global_position.distance_to(at) < start - 0.8, "a crew member that heard a step did not walk toward it")
 	for i in 20:
-		CrewNoise.make(self, player.global_position, CrewNoise.Kind.GUNSHOT, CrewNoise.GUNSHOT, player)
+		CrewNoise.make(self, player.global_position, CrewNoise.Kind.GUNSHOT, player.weapon.loudness, player)
 	_expect(crew.perception.awareness < 1.0 and crew.state != Crew3D.State.HUNT, "noise alone spotted the pirate")
 	crew.perception.awareness = 0.98
 	CrewNoise.make(self, player.global_position, CrewNoise.Kind.DOOR, CrewNoise.DOOR * 99.0, player)
@@ -318,13 +359,65 @@ func _check_doorway() -> void:
 	crew.set_physics_process(false)
 	var shot := ShipBuilder3D.tile_to_world(Vector2i(103, 4))
 	pair_door.close()
-	CrewNoise.make(self, shot, CrewNoise.Kind.GUNSHOT, CrewNoise.GUNSHOT, player)
+	CrewNoise.make(self, shot, CrewNoise.Kind.GUNSHOT, player.weapon.loudness, player)
 	_expect(crew.perception.awareness == 0.0, "a gunshot carried through a shut door")
 	pair_door.open()
 	crew.perception.awareness = 0.0
-	CrewNoise.make(self, shot, CrewNoise.Kind.GUNSHOT, CrewNoise.GUNSHOT, player)
+	CrewNoise.make(self, shot, CrewNoise.Kind.GUNSHOT, player.weapon.loudness, player)
 	_expect(crew.perception.band() == CrewPerception.Band.SUSPICIOUS, "a gunshot did not carry through an open door")
 	crew.free()
+
+
+## A shot reaches crew as far as the weapon's loudness: the Pistol's 24 m
+## stirs a crew member 20 m off and not one 28 m off, and raising it in the
+## Sandbox sheet stirs the further one too, for the Pirate's shots and the
+## crew's own alike.
+func _check_loudness() -> void:
+	var pistol: WeaponProfile = player.weapon
+	_expect(is_equal_approx(pistol.loudness, 24.0), "the Pistol is %.1f m loud, not 24" % pistol.loudness)
+	var sheet := SandboxSheet.build([pistol], load(Sandbox.PATH))
+	var weapons := sheet.table(SandboxSheet.WEAPONS)
+	_expect(weapons.is_editable(&"loudness"), "loudness is not an editable sheet row")
+	var at := Vector3(200.0, 0.0, 200.0)
+	player.global_position = at
+	player.state = player.State.WALK
+	var near := _crew()
+	var far := _crew()
+	for crew in [near, far]:
+		crew.layout = null
+		crew.target = null
+	near.global_position = at + Vector3.RIGHT * 20.0
+	far.global_position = at + Vector3.RIGHT * 28.0
+	var shots: Array[Projectile3D] = []
+	for loudness in [24.0, 32.0]:
+		weapons.set_value(&"loudness", 0, loudness)
+		near.perception.awareness = 0.0
+		far.perception.awareness = 0.0
+		player._cooldown = 0.0
+		player.ammo = pistol.magazine_size
+		var shot: Projectile3D = player.fire()
+		_expect(shot != null, "the Pirate did not fire at loudness %.0f" % loudness)
+		shots.append(shot)
+		_expect(near.perception.band() == CrewPerception.Band.SUSPICIOUS, "a shot at loudness %.0f missed the crew 20 m off" % loudness)
+		var heard := far.perception.band() == CrewPerception.Band.SUSPICIOUS
+		_expect(heard == (loudness > 28.0), "a shot at loudness %.0f: the crew 28 m off heard it %s" % [loudness, heard])
+	# A crew member's own shot carries as far as the same Pistol's loudness.
+	far.global_position = near.global_position + Vector3.RIGHT * 10.0
+	for loudness in [8.0, 12.0]:
+		weapons.set_value(&"loudness", 0, loudness)
+		far.perception.awareness = 0.0
+		near.target = player
+		near._aim = Vector3.LEFT
+		shots.append(near._fire())
+		var heard := far.perception.band() == CrewPerception.Band.SUSPICIOUS
+		_expect(heard == (loudness > 10.0), "a crew shot at loudness %.0f: the crew 10 m off heard it %s" % [loudness, heard])
+	sheet.revert()
+	_expect(is_equal_approx(pistol.loudness, 24.0), "Revert left the Pistol %.1f m loud" % pistol.loudness)
+	for shot in shots:
+		if shot != null:
+			shot.free()
+	near.free()
+	far.free()
 
 
 ## A generated medium ship left alone for 60 simulated seconds, the Pirate
@@ -412,11 +505,11 @@ func _check_routines() -> void:
 ## A shot leaves the magazine: a bolt at 2.5 m lands and is gone before it
 ## could be counted.
 func _has_fired(crew: Crew3D) -> bool:
-	return crew._shots_left < crew.burst_size or crew._reload_timer > 0.0
+	return crew._shots_left < crew.burst_length or crew._reload_timer > 0.0
 
 
 ## A Worker that spots the Pirate 8 m off runs for the Guard behind it and
-## does not shoot; cornered at 2.5 m it fires its sidearm. Workers wear
+## does not shoot; cornered at 2.5 m it fires its pistol. Workers wear
 ## the Engineer, Guards the Soldier.
 func _check_worker() -> void:
 	var guard := _crew(CrewTypes.Type.GUARD)
@@ -619,10 +712,10 @@ func _check_aim() -> void:
 	var guard := _crew()
 	guard.state = Crew3D.State.FIGHT
 	_place(5.0)
-	var opening := CrewCombat.spread(guard.spread_degrees, guard._exposed_for)
+	var opening := CrewCombat.spread(guard.base_cone_degrees(), guard._exposed_for)
 	for i in 185:
 		guard._update_perception(STEP)
-	var tight := CrewCombat.spread(guard.spread_degrees, guard._exposed_for)
+	var tight := CrewCombat.spread(guard.base_cone_degrees(), guard._exposed_for)
 	_expect(tight <= opening / 2.0, "aim: after 3 s exposed the spread is %.1f°, opening %.1f°" % [tight, opening])
 	player.global_position = CREW_AT + Vector3.FORWARD * 40.0
 	guard._update_perception(STEP)
@@ -630,9 +723,71 @@ func _check_aim() -> void:
 	guard.free()
 
 
+## Crew fire the Pistol, handled with their type's Gunnery: a shot carries
+## the Pistol's damage, speed and lifetime, live; the cone is the Pistol's
+## base plus the Gunnery's aim error; burst, pause and engage range are the
+## Gunnery's, give or take spawn jitter.
+func _check_gunnery() -> void:
+	var pistol: WeaponProfile = load("res://resources/weapons/pistol.tres")
+	var guard_gunnery: Gunnery = load("res://resources/gunnery/guard.tres")
+	var worker_gunnery: Gunnery = load("res://resources/gunnery/worker.tres")
+	_expect(guard_gunnery != null and worker_gunnery != null, "gunnery: the Guard or Worker Gunnery resource is missing")
+	if guard_gunnery == null or worker_gunnery == null:
+		return
+	_expect(is_equal_approx(guard_gunnery.aim_error_degrees, 6.0) and guard_gunnery.burst_length == 3
+			and is_equal_approx(guard_gunnery.pause_between_bursts, 1.1) and is_equal_approx(guard_gunnery.engage_range, 10.6),
+			"gunnery: the Guard's is not 6 degrees, 3 rounds, 1.1 s, 10.6 m")
+	_expect(is_equal_approx(worker_gunnery.aim_error_degrees, 11.0) and worker_gunnery.burst_length == 2
+			and is_equal_approx(worker_gunnery.pause_between_bursts, 1.1) and is_equal_approx(worker_gunnery.engage_range, 10.6),
+			"gunnery: the Worker's is not 11 degrees, 2 rounds, 1.1 s, 10.6 m")
+
+	var guard := _crew()
+	var worker := _crew(CrewTypes.Type.WORKER)
+	_expect(guard.weapon == pistol and worker.weapon == pistol, "gunnery: crew do not hold the Pirate's Pistol")
+	_expect(guard.gunnery == guard_gunnery and worker.gunnery == worker_gunnery, "gunnery: crew do not hold their type's Gunnery")
+	_expect(is_equal_approx(guard.base_cone_degrees(), 7.0), "gunnery: a Guard's cone is %.1f degrees, want 1 + 6" % guard.base_cone_degrees())
+	_expect(is_equal_approx(worker.base_cone_degrees(), 12.0), "gunnery: a Worker's cone is %.1f degrees, want 1 + 11" % worker.base_cone_degrees())
+	_expect(worker.burst_length == 2, "gunnery: a Worker fires %d-round bursts, want 2" % worker.burst_length)
+	_expect(absi(guard.burst_length - 3) <= 1, "gunnery: a Guard fires %d-round bursts, want 3 give or take 1" % guard.burst_length)
+	_expect(guard.engage_range() == guard_gunnery.engage_range, "gunnery: a Guard's engage range is not its Gunnery's")
+
+	_place(5.0)
+	guard.face_direction(Vector3.FORWARD)
+	guard._aim = Vector3.FORWARD
+	var shot := guard._fire()
+	_expect(shot != null and shot.damage == 25 and is_equal_approx(shot.speed, 80.0) and is_equal_approx(shot.lifetime, 0.5),
+			"gunnery: a crew shot is not the Pistol's 25 damage at 80 m/s for 0.5 s")
+	_expect(guard._shot_timer > pistol.fire_interval * CrewCombat.JITTER.x - 0.001
+			and guard._shot_timer < pistol.fire_interval * CrewCombat.JITTER.y + 0.001,
+			"gunnery: %.3f s to the next shot is not the Pistol's %.2f s, jittered" % [guard._shot_timer, pistol.fire_interval])
+	pistol.damage = 40
+	pistol.projectile_speed = 60.0
+	var edited := guard._fire()
+	_expect(edited != null and edited.damage == 40 and is_equal_approx(edited.speed, 60.0),
+			"gunnery: a crew shot after editing the Pistol did not follow it")
+	pistol.damage = 25
+	pistol.projectile_speed = 80.0
+	while guard._shots_left > 0:
+		guard._fire()
+	var pause := guard_gunnery.pause_between_bursts
+	_expect(guard._reload_timer > pause * CrewCombat.JITTER.x - 0.001 and guard._reload_timer < pause * CrewCombat.JITTER.y + 0.001,
+			"gunnery: a spent burst pauses %.2f s, not the Gunnery's %.1f s, jittered" % [guard._reload_timer, pause])
+	guard_gunnery.engage_range = 4.0
+	_expect(guard.engage_range() == 4.0, "gunnery: dialling the Guard Gunnery's engage range did not reach the Guard")
+	guard_gunnery.engage_range = 10.6
+	guard_gunnery.aim_error_degrees = 2.0
+	_expect(is_equal_approx(guard.base_cone_degrees(), 3.0), "gunnery: dialling the Guard's aim error did not reach its cone")
+	guard_gunnery.aim_error_degrees = 6.0
+	guard.free()
+	worker.free()
+	for bolt in get_first_node_in_group(&"projectiles").get_children():
+		bolt.free()
+
+
 ## Two Guards fighting the Pirate for 10 s never start a burst on the same
 ## frame, or within the stagger of each other.
 func _check_stagger() -> void:
+	var pirate_health: int = player.health.max_health
 	player.health.max_health = 100000
 	player.health.reset()
 	var a := _crew()
@@ -659,7 +814,7 @@ func _check_stagger() -> void:
 	_expect(closest >= CrewCombat.BURST_STAGGER_FRAMES, "stagger: two bursts started %d frames apart" % closest)
 	a.free()
 	b.free()
-	player.health.max_health = 5
+	player.health.max_health = pirate_health
 	player.health.reset()
 	for shot in get_first_node_in_group(&"projectiles").get_children():
 		shot.free()
@@ -782,7 +937,7 @@ func _muzzle_rig(prop: String, at: Vector3) -> void:
 	var shots: Node = get_first_node_in_group(&"projectiles")
 	var watch := func(node: Node) -> void:
 		if node is Projectile3D:
-			(node as Projectile3D).hit.connect(func(body: Node3D) -> void:
+			(node as Projectile3D).hit.connect(func(body: Node3D, _head: bool) -> void:
 				tally["prop" if body == cover else "pirate" if body == player else "other"] += 1
 				if body == cover and guard.global_position.distance_to(CREW_AT) < 0.5:
 					tally.from_spot += 1)
@@ -1269,6 +1424,358 @@ func _check_hatch() -> void:
 			and hunter._path.any(func(p: Vector3) -> bool: return p.distance_to(gap) < 0.1),
 			"traces: a Guard hunting the pirate in his pod does not route in through the Hatch: %s" % [hunter._path])
 	hunter.free()
+
+
+## --- the Shotgun against crew ---
+
+## The Pirate, holding [param profile], [param distance] m in front of
+## [param crew], aimed at its chest, or at [param at] when given.
+func _aim_at_crew(crew: Crew3D, distance: float, profile: WeaponProfile, at := Vector3.INF) -> void:
+	player.weapon = profile
+	player.ammo = profile.magazine_size
+	player.global_position = crew.global_position + Vector3.FORWARD * distance
+	player.state = player.State.WALK
+	player.rotation.y = PI
+	var eye: Vector3 = player.head.global_position
+	var chest: Vector3 = crew.global_position + Vector3.UP * 0.95 if at == Vector3.INF else at
+	player.head.rotation.x = atan2(chest.y - eye.y, Vector2(chest.x - eye.x, chest.z - eye.z).length())
+	# The Viewmodel's swap beat, and the bodies live in physics.
+	for i in 40:
+		await physics_frame
+
+
+## One trigger pull, waited out until every pellet has struck or died and
+## the volley has reported.
+func _shotgun_shot() -> void:
+	player._cooldown = 0.0
+	player.fire()
+	while player.last_pellets.any(func(p) -> bool: return is_instance_valid(p)):
+		await physics_frame
+	for i in 3:
+		await physics_frame
+
+
+## A Shotgun shot that kills one crew member reports one hit and one kill,
+## however many of its 12 pellets land; two crew side by side each report
+## once.
+func _check_shotgun_one_kill() -> void:
+	var pistol: WeaponProfile = player.weapon
+	var shotgun: WeaponProfile = load("res://resources/weapons/shotgun.tres")
+	var hits: Array = []
+	var record := func(target: Node3D, killed: bool, _headshot: bool) -> void: hits.append([target, killed])
+	player.hit_landed.connect(record)
+	var crew := _crew()
+	await _aim_at_crew(crew, 3.0, shotgun)
+	await _shotgun_shot()
+	_expect(not crew.is_alive(), "a centred Shotgun shot 3 m off left crew on %d" % crew.health.current)
+	_expect(hits == [[crew, true]], "a Shotgun kill reported %s, want one kill" % [hits])
+	crew.free()
+
+	hits.clear()
+	var left := _crew()
+	var right := _crew()
+	# Shoulder to shoulder, the crosshair between them, so the pellets split.
+	left.global_position = CREW_AT + Vector3.LEFT * 0.3
+	right.global_position = CREW_AT + Vector3.RIGHT * 0.3
+	await _aim_at_crew(left, 3.0, shotgun)
+	player.global_position = CREW_AT + Vector3.FORWARD * 3.0
+	await _shotgun_shot()
+	var reported := hits.map(func(h: Array) -> Node3D: return h[0])
+	_expect(reported.size() == 2 and left in reported and right in reported,
+			"a Shotgun shot between two crew reported %s, want each once" % [hits])
+	left.free()
+	right.free()
+	player.hit_landed.disconnect(record)
+	player.head.rotation.x = 0.0
+	player.weapon = pistol
+	player.ammo = pistol.magazine_size
+
+
+## The Shotgun's range band, fired for real at a crew member stood still,
+## as a loose guard on what the picked numbers gave when it was built
+## (100 shots each: one shot killed 100% at 3 to 6 m, 89% at 8 m, 50% at
+## 10 m and 20% at 12 m; two shots 100% to 10 m and 96% at 12 m). The band
+## is tuned in the balance pass; this only catches a gun that stops killing
+## up close or starts killing far off. Crew Health is pinned high so every
+## pellet lands on the body, and a shot counts as a kill when its pellets
+## add up to the Sandbox's crew Health. The scatter is seeded, so the run
+## repeats.
+func _check_shotgun_range() -> void:
+	const SHOTS := 40
+	var pistol: WeaponProfile = player.weapon
+	var shotgun: WeaponProfile = load("res://resources/weapons/shotgun.tres")
+	var crew_health: int = (load(Sandbox.PATH) as Sandbox).crew_health
+	var crew := _crew()
+	crew.health.max_health = 1000000
+	player._rng.seed = 22
+	var rates := {}
+	for distance: float in [3.0, 4.0, 8.0, 12.0]:
+		await _aim_at_crew(crew, distance, shotgun)
+		var damage: Array[int] = []
+		for i in SHOTS:
+			crew.health.current = crew.health.max_health
+			player.ammo = shotgun.magazine_size
+			await _shotgun_shot()
+			damage.append(crew.health.max_health - crew.health.current)
+		var one := damage.filter(func(d: int) -> bool: return d >= crew_health).size()
+		var two := 0
+		for i in damage.size() - 1:
+			two += int(damage[i] + damage[i + 1] >= crew_health)
+		rates[distance] = [float(one) / damage.size(), float(two) / (damage.size() - 1)]
+		print("  Shotgun at %.0f m: one shot kills %.0f%%, two shots %.0f%% (%d shots)" % [distance,
+				rates[distance][0] * 100.0, rates[distance][1] * 100.0, SHOTS])
+	_expect(rates[3.0][0] >= 0.95, "a centred Shotgun shot 3 m off killed only %.0f%% of the time" % (rates[3.0][0] * 100.0))
+	_expect(rates[12.0][0] <= 0.45, "a Shotgun shot 12 m off killed %.0f%% of the time" % (rates[12.0][0] * 100.0))
+	_expect(rates[8.0][1] >= 0.95, "two Shotgun shots 8 m off killed only %.0f%% of the time" % (rates[8.0][1] * 100.0))
+	crew.free()
+	player.head.rotation.x = 0.0
+	player.weapon = pistol
+	player.ammo = pistol.magazine_size
+
+
+## --- Headshots ---
+
+## A Roll a beat in, the head down at about crouch height: a stand-in for a
+## crouch, which the crew rigs have no clip for.
+const LOW_ROLL_SECONDS := 0.2
+
+
+func _type_name(crew: Crew3D) -> String:
+	return "Worker" if crew.is_worker() else "Guard"
+
+
+## One Pistol or Assault Rifle shot at [param at] on [param crew] from
+## [param distance] m, waited out until it has reported.
+func _single_shot(crew: Crew3D, profile: WeaponProfile, at: Vector3, distance := 3.0) -> void:
+	await _aim_at_crew(crew, distance, profile, at)
+	player._bloom = 0.0
+	player._cooldown = 0.0
+	player.fire()
+	while player.last_pellets.any(func(p) -> bool: return is_instance_valid(p)):
+		await physics_frame
+	for i in 3:
+		await physics_frame
+
+
+## A Pistol shot on a crew member's head does 38 and flashes the marker
+## gold with the Headshot tick, on the body 25 and white; three Headshots
+## kill and the kill is red. The Assault Rifle does 25 on either and its
+## head hit reads as a body hit. A Shotgun shot whose pellets split between
+## head and body does plain damage per pellet and reports once.
+func _check_headshots() -> void:
+	var pistol: WeaponProfile = load("res://resources/weapons/pistol.tres")
+	var rifle: WeaponProfile = load("res://resources/weapons/assault_rifle.tres")
+	var shotgun: WeaponProfile = load("res://resources/weapons/shotgun.tres")
+	_expect(is_equal_approx(pistol.headshot_multiplier, 1.5) and is_equal_approx(rifle.headshot_multiplier, 1.0)
+			and is_equal_approx(shotgun.headshot_multiplier, 1.0) and is_equal_approx(WeaponProfile.new().headshot_multiplier, 1.0),
+			"headshot multipliers are %s, %s, %s, want 1.5, 1, 1 and 1 by default"
+			% [pistol.headshot_multiplier, rifle.headshot_multiplier, shotgun.headshot_multiplier])
+	var hud: Node = load("res://scenes/ui/hud.tscn").instantiate()
+	root.add_child(hud)
+	await process_frame
+	hud.watch(player)
+	var sounds: Array[StringName] = []
+	var audio: Node = player.get_node("Audio")
+	var listen := func(kind: StringName, _stream: AudioStream) -> void: sounds.append(kind)
+	audio.played.connect(listen)
+	var hits: Array = []
+	var record := func(target: Node3D, killed: bool, headshot: bool) -> void: hits.append([target, killed, headshot])
+	player.hit_landed.connect(record)
+	const GOLD := Color(1.0, 0.8, 0.25)
+
+	for type in [CrewTypes.Type.GUARD, CrewTypes.Type.WORKER]:
+		var crew := _crew(type)
+		await physics_frame
+		var head: Vector3 = crew.head_zone.global_position
+		_expect(head.y > 1.6 and head.y < 2.0, "the %s's head zone sits at %.2f m" % [_type_name(crew), head.y])
+		var chest := crew.global_position + Vector3.UP * 0.95
+		hits.clear()
+		sounds.clear()
+		await _single_shot(crew, pistol, head)
+		_expect(crew.health.current == 62, "a Pistol Headshot on a %s left %d, want 62 (38 damage)" % [_type_name(crew), crew.health.current])
+		_expect(hits == [[crew, false, true]], "a Pistol Headshot reported %s" % [hits])
+		_expect(hud.hitmarker_color().is_equal_approx(GOLD), "a Headshot flashed %s, want gold" % hud.hitmarker_color())
+		_expect(sounds.count(&"headshot") == 1 and sounds.count(&"hitmark") == 0, "a Headshot played %s" % [sounds])
+		hits.clear()
+		sounds.clear()
+		await _single_shot(crew, pistol, chest)
+		_expect(crew.health.current == 37, "a Pistol body hit on a %s left %d, want 37 (25 damage)" % [_type_name(crew), crew.health.current])
+		_expect(hits == [[crew, false, false]], "a Pistol body hit reported %s" % [hits])
+		_expect(hud.hitmarker_color().is_equal_approx(Color.WHITE), "a body hit flashed %s, want white" % hud.hitmarker_color())
+		_expect(sounds.count(&"hitmark") == 1 and sounds.count(&"headshot") == 0, "a body hit played %s" % [sounds])
+		crew.free()
+
+	# Three Pistol Headshots kill; the last is a red kill marker.
+	var target := _crew()
+	await physics_frame
+	hits.clear()
+	for i in 3:
+		await _single_shot(target, pistol, target.head_zone.global_position)
+	_expect(not target.is_alive(), "three Pistol Headshots left a crew member on %d" % target.health.current)
+	_expect(hits.size() == 3 and hits[2][1] == true and hits[2][2] == true, "three Headshots reported %s" % [hits])
+	_expect(hud.hitmarker_is_kill() and hud.hitmarker_color().is_equal_approx(Color(1.0, 0.25, 0.2)),
+			"a killing Headshot flashed %s, want red" % hud.hitmarker_color())
+	target.free()
+
+	# The Assault Rifle: 25 on either, and a head hit is a body hit to the eye.
+	var rifle_target := _crew()
+	await physics_frame
+	hits.clear()
+	await _single_shot(rifle_target, rifle, rifle_target.head_zone.global_position)
+	_expect(rifle_target.health.current == 75, "an Assault Rifle head hit left %d, want 75" % rifle_target.health.current)
+	_expect(hits == [[rifle_target, false, false]], "an Assault Rifle head hit reported %s, want a plain hit" % [hits])
+	_expect(hud.hitmarker_color().is_equal_approx(Color.WHITE), "an Assault Rifle head hit flashed %s, want white" % hud.hitmarker_color())
+	await _single_shot(rifle_target, rifle, rifle_target.global_position + Vector3.UP * 0.95)
+	_expect(rifle_target.health.current == 50, "an Assault Rifle body hit left %d, want 50" % rifle_target.health.current)
+	rifle_target.free()
+
+	# The Shotgun aimed at the neck from 3 m: some pellets on the head, some
+	# on the body, plain damage for each, one report.
+	var split := _crew()
+	await physics_frame
+	split.health.max_health = 1000
+	var mixed := false
+	player._rng.seed = 5
+	for attempt in 6:
+		split.health.current = 1000
+		hits.clear()
+		var neck: Vector3 = split.head_zone.global_position + Vector3.DOWN * 0.2
+		await _aim_at_crew(split, 3.0, shotgun, neck)
+		player._cooldown = 0.0
+		player.fire()
+		var on_head := [0, 0]
+		for pellet in player.last_pellets:
+			pellet.hit.connect(func(body: Node3D, head: bool) -> void:
+				if body == split:
+					on_head[int(head)] += 1)
+		while player.last_pellets.any(func(p) -> bool: return is_instance_valid(p)):
+			await physics_frame
+		for i in 3:
+			await physics_frame
+		if on_head[0] > 0 and on_head[1] > 0:
+			mixed = true
+			_expect(1000 - split.health.current == shotgun.damage * (on_head[0] + on_head[1]),
+					"Shotgun pellets did %d for %d body and %d head pellets, want %d each"
+					% [1000 - split.health.current, on_head[0], on_head[1], shotgun.damage])
+			_expect(hits == [[split, false, false]], "a Shotgun shot split between head and body reported %s" % [hits])
+			break
+	_expect(mixed, "no Shotgun shot at the neck split its pellets between head and body")
+	# A split shot that kills reports one kill.
+	split.health.max_health = 100
+	split.health.current = 100
+	hits.clear()
+	await _aim_at_crew(split, 2.0, shotgun, split.head_zone.global_position + Vector3.DOWN * 0.2)
+	await _shotgun_shot()
+	_expect(not split.is_alive() and hits == [[split, true, false]], "a split Shotgun kill reported %s" % [hits])
+	split.free()
+
+	player.hit_landed.disconnect(record)
+	audio.played.disconnect(listen)
+	hud.free()
+	player.head.rotation.x = 0.0
+	player.weapon = pistol
+	player.ammo = pistol.magazine_size
+
+
+## The Marksman Rifle does 50 on the body and 100 on the head: one Headshot
+## kills a crew member of 100 Health, two body shots kill, one does not.
+func _check_marksman_rifle_kills() -> void:
+	var marksman: WeaponProfile = load("res://resources/weapons/marksman_rifle.tres")
+	var pistol: WeaponProfile = load("res://resources/weapons/pistol.tres")
+	_expect(marksman != null and marksman.damage == 50 and marksman.headshot_damage() == 100,
+			"the Marksman Rifle does %s body and %s head, want 50 and 100"
+			% ([marksman.damage, marksman.headshot_damage()] if marksman else ["none", "none"]))
+	if marksman == null:
+		return
+	var hits: Array = []
+	var record := func(target: Node3D, killed: bool, headshot: bool) -> void: hits.append([target, killed, headshot])
+	player.hit_landed.connect(record)
+	for type in [CrewTypes.Type.GUARD, CrewTypes.Type.WORKER]:
+		var crew := _crew(type)
+		await physics_frame
+		await _single_shot(crew, marksman, crew.head_zone.global_position)
+		_expect(not crew.is_alive() and hits == [[crew, true, true]],
+				"one Marksman Rifle Headshot on a %s left %d Health and reported %s" % [_type_name(crew), crew.health.current, hits])
+		crew.free()
+		hits.clear()
+		crew = _crew(type)
+		await physics_frame
+		var chest := crew.global_position + Vector3.UP * 0.95
+		await _single_shot(crew, marksman, chest)
+		_expect(crew.is_alive() and crew.health.current == 50,
+				"one Marksman Rifle body shot on a %s left %d, want 50" % [_type_name(crew), crew.health.current])
+		await _single_shot(crew, marksman, chest)
+		_expect(not crew.is_alive(), "two Marksman Rifle body shots left a %s on %d" % [_type_name(crew), crew.health.current])
+		_expect(hits == [[crew, false, false], [crew, true, false]], "two body shots reported %s" % [hits])
+		crew.free()
+		hits.clear()
+	player.hit_landed.disconnect(record)
+	player.head.rotation.x = 0.0
+	player.weapon = pistol
+	player.ammo = pistol.magazine_size
+
+
+## The head zone rides the head bone: when a clip carries the head low,
+## the zone goes with it, and a Pistol shot at the head where it now is
+## is a Headshot. Crew have no crouch clip, so the Roll stands in for one.
+func _check_head_follows_pose() -> void:
+	var pistol: WeaponProfile = load("res://resources/weapons/pistol.tres")
+	for type in [CrewTypes.Type.GUARD, CrewTypes.Type.WORKER]:
+		var crew := _crew(type)
+		await physics_frame
+		var standing: Vector3 = crew.head_zone.global_position
+		var anim := crew._anim
+		anim.play(&"CharacterArmature|Roll")
+		anim.seek(LOW_ROLL_SECONDS, true)
+		anim.pause()
+		for i in 3:
+			await physics_frame
+		var low: Vector3 = crew.head_zone.global_position
+		var skeleton: Skeleton3D = crew.find_children("*", "Skeleton3D", true, false)[0]
+		var bone: Vector3 = (skeleton.global_transform * skeleton.get_bone_global_pose(skeleton.find_bone(&"Head"))).origin
+		_expect(standing.y - low.y > 0.4, "the %s's head zone went from %.2f to %.2f m in the Roll, want at least 0.4 lower"
+				% [_type_name(crew), standing.y, low.y])
+		_expect(low.distance_to(bone) < 0.3, "the %s's head zone is %.2f m off its head bone" % [_type_name(crew), low.distance_to(bone)])
+		var hits: Array = []
+		var record := func(target: Node3D, killed: bool, headshot: bool) -> void: hits.append([target, killed, headshot])
+		player.hit_landed.connect(record)
+		await _single_shot(crew, pistol, low)
+		_expect(hits == [[crew, false, true]], "a Pistol shot at the %s's lowered head reported %s, want a Headshot"
+				% [_type_name(crew), hits])
+		player.hit_landed.disconnect(record)
+		crew.free()
+	player.head.rotation.x = 0.0
+
+
+## Nothing that strikes the Pirate is a Headshot: a crew shot at his head
+## height does the Pistol's plain 25, though the bolt carries 1.5.
+func _check_pirate_has_no_head() -> void:
+	var crew := _crew()
+	var shot := crew._fire()
+	_expect(shot != null and is_equal_approx(shot.headshot_multiplier, 1.5),
+			"a crew shot carries headshot multiplier %s, want the Pistol's 1.5" % (shot.headshot_multiplier if shot else -1.0))
+	if shot != null:
+		shot.free()
+	var pirate: CharacterBody3D = load("res://scenes/player_3d.tscn").instantiate()
+	pirate.auto_respawn = false
+	pirate.position = CREW_AT + Vector3(0.0, 0.0, 30.0)
+	world.add_child(pirate)
+	pirate.set_physics_process(false)
+	var high: Vector3 = pirate.head.global_position
+	var bolt: Projectile3D = load("res://scenes/projectile_3d.tscn").instantiate()
+	bolt.damage = crew.weapon.damage
+	bolt.headshot_multiplier = crew.weapon.headshot_multiplier
+	bolt.speed = 80.0
+	bolt.launch(high + Vector3.FORWARD * 3.0, Vector3.BACK, crew, Crew3D.TEAM)
+	var struck: Array = []
+	bolt.hit.connect(func(body: Node3D, head: bool) -> void: struck.append([body, head]))
+	get_first_node_in_group(&"projectiles").add_child(bolt)
+	while is_instance_valid(bolt):
+		await physics_frame
+	_expect(struck == [[pirate, false]], "a crew shot at the Pirate's head struck %s" % [struck])
+	_expect(pirate.health.current == 125, "a crew shot at the Pirate's head left him on %d, want 125" % pirate.health.current)
+	pirate.free()
+	crew.free()
 
 
 ## A crew member killed before it spotted the Pirate died unaware; one

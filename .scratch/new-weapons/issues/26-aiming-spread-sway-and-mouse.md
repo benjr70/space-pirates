@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: resolved
 Blocked by: 19
 
 # Aiming: aimed-and-moving spread, sway and a mouse slowed by zoom
@@ -19,10 +19,13 @@ Both new fields join the sheet.
 
 ## Acceptance criteria
 
-- [ ] The Pistol's and Assault Rifle's cones are unchanged in every stance, aimed or not.
-- [ ] A Profile with a small `ads_spread` and a larger aimed-and-moving spread is pinpoint aimed and still and looser aimed and walking.
-- [ ] With sway set, the aim drifts while aimed and stops when the sights drop.
-- [ ] Aimed with a 1.6 zoom, the same hand movement turns the view 1.6 times less.
-- [ ] `tests/run_all.sh` passes.
+- [x] The Pistol's and Assault Rifle's cones are unchanged in every stance, aimed or not.
+- [x] A Profile with a small `ads_spread` and a larger aimed-and-moving spread is pinpoint aimed and still and looser aimed and walking.
+- [x] With sway set, the aim drifts while aimed and stops when the sights drop.
+- [x] Aimed with a 1.6 zoom, the same hand movement turns the view 1.6 times less.
+- [x] `tests/run_all.sh` passes.
 
 ## Comments
+
+Built. `WeaponProfile` gains `ads_moving_spread` (Pistol 0.6, Assault Rifle 0.585, Shotgun 0.8; each its `ads_spread` times its `spread_walking`) and `ads_sway_degrees` (0 for all three, the default); both are rows on the Sandbox sheet. Aimed cone per stance: still `(base + bloom) * spread_still * ads_spread`; walking `(base + bloom) * ads_moving_spread`; crouched `(base + bloom) * spread_crouch * ads_spread`; air `(base + bloom) * spread_air * ads_spread`. The crouch multiplier still applies aimed (the spec's wording would drop it), so the Pistol and Assault Rifle cones are unchanged in every stance. Sway is the prototype's figure of eight, applied each physics frame as the change since last frame and taken back whole when the sights drop (`Pirate._sway_aim`). Mouse look moved into `Pirate.look(relative)`, which divides by the held gun's `ads_zoom` on the aimed flag, not the easing camera zoom. Tested with `tests/weapons/steady_rifle.tres`; 35 new checks in `tests/test_pirate.gd`.
+

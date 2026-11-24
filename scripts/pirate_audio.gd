@@ -1,7 +1,8 @@
 class_name PirateAudio
 extends Node
-## What the Pirate hears of himself: the Sidearm's shot and dry click, the
-## reload's magazine and rack, a landed Melee, his footsteps and landings,
+## What the Pirate hears of himself: the shot, reload and action sounds of
+## the Weapon Profile he holds (a shell-by-shell reload's shell and closing
+## pump among them), the dry click and the rack, a landed Melee, his footsteps and landings,
 ## and the hit he takes. Driven by the Pirate's signals alone, plus his
 ## speed over the floor for the stride, so it never reaches into his state.
 ##
@@ -16,16 +17,9 @@ extends Node
 ## A sound went off: [param kind] names the event, [param stream] what played.
 signal played(kind: StringName, stream: AudioStream)
 
-@export_group("Sidearm")
-@export var shot_streams: Array[AudioStream] = [
-	preload("res://assets/audio/kurt_gunshots/shot_1.ogg"),
-	preload("res://assets/audio/kurt_gunshots/shot_2.ogg"),
-	preload("res://assets/audio/kurt_gunshots/shot_3.ogg"),
-	preload("res://assets/audio/kurt_gunshots/shot_4.ogg"),
-]
+@export_group("Gun")
+## The shot, reload and action sounds are the held Weapon Profile's.
 @export var dry_stream: AudioStream = preload("res://assets/audio/oga_reload/dry_click.ogg")
-@export var mag_out_stream: AudioStream = preload("res://assets/audio/oga_reload/clipload1.ogg")
-@export var mag_in_stream: AudioStream = preload("res://assets/audio/oga_reload/clipload2.ogg")
 @export var rack_stream: AudioStream = preload("res://assets/audio/kenney_impact/impactMetal_light_001.ogg")
 ## Where in the reload the magazine seats, as a fraction of the swap.
 @export var mag_in_at := 0.6
@@ -35,6 +29,8 @@ signal played(kind: StringName, stream: AudioStream)
 ## ear); a kill drops its pitch.
 @export var hitmark_stream: AudioStream = preload("res://assets/audio/hitmark/hitmark.ogg")
 @export var hitmark_volume_db := -4.0
+## A Headshot's tick: the hit tick until its own sound is picked.
+@export var headshot_stream: AudioStream = preload("res://assets/audio/hitmark/hitmark.ogg")
 
 @export_group("Melee")
 @export var melee_streams: Array[AudioStream] = [
@@ -79,6 +75,7 @@ var _walked := 0.0
 ## state is a landing and not a respawn.
 var _airborne := false
 var _reload_sequence: Tween
+var _action_sequence: Tween
 var _rng := RandomNumberGenerator.new()
 
 
@@ -93,6 +90,8 @@ func _ready() -> void:
 	_pirate.dry_fired.connect(_on_dry_fired)
 	_pirate.reload_started.connect(_on_reload_started)
 	_pirate.reload_cancelled.connect(_stop_reload_sequence)
+	_pirate.shell_loaded.connect(_on_shell_loaded)
+	_pirate.closing_pump_started.connect(_on_closing_pump_started)
 	_pirate.melee_swung.connect(_on_melee_swung)
 	_pirate.hit_landed.connect(_on_hit_landed)
 	_pirate.state_changed.connect(_on_state_changed)
@@ -112,6 +111,7 @@ func _player(player_name: String, volume_db: float) -> AudioStreamPlayer:
 ## Silence, and nothing owed: what a respawn wants.
 func reset() -> void:
 	_stop_reload_sequence()
+	_stop_action()
 	_walked = stride * 0.5
 	_airborne = false
 	for player in [_shot, _gun, _body, _melee, _hitmark]:
@@ -136,27 +136,54 @@ func _process(delta: float) -> void:
 	_walked = stride * 0.5
 
 
+## One of the held Profile's shot takes, and its action sound, if it has
+## one, its delay later.
 func _on_fired() -> void:
-	_play(_shot, &"shot", shot_streams.pick_random())
+	var profile: WeaponProfile = _pirate.weapon
+	if not profile.shot_sounds.is_empty():
+		_play(_shot, &"shot", profile.shot_sounds.pick_random())
+	_stop_action()
+	if profile.action_sound != null:
+		_action_sequence = create_tween()
+		_action_sequence.tween_interval(profile.action_sound_delay)
+		_action_sequence.tween_callback(_play.bind(_gun, &"action", profile.action_sound))
+
+
+func _stop_action() -> void:
+	if _action_sequence != null and _action_sequence.is_valid():
+		_action_sequence.kill()
+	_action_sequence = null
 
 
 func _on_dry_fired() -> void:
 	_play(_gun, &"dry", dry_stream)
 
 
-## Magazine out now, in partway through, and on an empty reload the rack in
+## The Profile's reload sounds: magazine out now, in partway through, and on an empty reload the rack in
 ## its last beat. A cancel kills whatever has not sounded yet.
 func _on_reload_started(from_empty: bool) -> void:
 	_stop_reload_sequence()
 	var profile: WeaponProfile = _pirate.weapon
 	var swap := profile.swap_time(from_empty)
-	_play(_gun, &"mag_out", mag_out_stream)
+	var reload := profile.reload_sounds
+	_play(_gun, &"mag_out", reload[0] if reload.size() > 0 else null)
 	_reload_sequence = create_tween()
 	_reload_sequence.tween_interval(swap * mag_in_at)
-	_reload_sequence.tween_callback(_play.bind(_gun, &"mag_in", mag_in_stream))
+	_reload_sequence.tween_callback(_play.bind(_gun, &"mag_in", reload[1] if reload.size() > 1 else null))
 	if profile.racks_after(from_empty):
 		_reload_sequence.tween_interval(swap * (1.0 - mag_in_at))
 		_reload_sequence.tween_callback(_play.bind(_gun, &"rack", rack_stream))
+
+
+## A shell-by-shell reload sounds the Profile's first reload sound as each
+## shell seats, and its action sound on the closing pump.
+func _on_shell_loaded() -> void:
+	var reload: Array[AudioStream] = _pirate.weapon.reload_sounds
+	_play(_gun, &"shell_in", reload[0] if reload.size() > 0 else null)
+
+
+func _on_closing_pump_started() -> void:
+	_play(_gun, &"pump", _pirate.weapon.action_sound)
 
 
 func _stop_reload_sequence() -> void:
@@ -172,8 +199,11 @@ func _on_melee_swung(target: Node3D, _killed: bool) -> void:
 
 ## A landing: back on the floor after being off it, not a respawn's reset
 ## to WALK, and not the start of a clamber.
-func _on_hit_landed(_target: Node3D, killed: bool) -> void:
-	_play(_hitmark, &"hitmark", hitmark_stream)
+func _on_hit_landed(_target: Node3D, killed: bool, headshot: bool) -> void:
+	if headshot:
+		_play(_hitmark, &"headshot", headshot_stream)
+	else:
+		_play(_hitmark, &"hitmark", hitmark_stream)
 	if killed:
 		_hitmark.pitch_scale *= 0.8
 

@@ -10,10 +10,10 @@ extends RefCounted
 enum Kind { STEP, GUNSHOT, DOOR }
 
 ## Reach of one footstep by the Pirate's stance, in metres. Crouched or
-## sliding feet make no noise at all.
+## sliding feet make no noise at all. A gunshot reaches as far as its
+## weapon's loudness.
 const SPRINT_STEP := 9.0
 const WALK_STEP := 3.0
-const GUNSHOT := 24.0
 const DOOR := 6.0
 
 

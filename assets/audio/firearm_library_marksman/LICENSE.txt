@@ -1,0 +1,11 @@
+"The Free Firearm Sound Library", published on OpenGameArt under CC0 (no
+attribution needed): https://opengameart.org/content/the-free-firearm-sound-library
+
+shot.ogg  the Marksman Rifle's shot: a Tikka T3 .30-06 at mid distance
+          ("Tikka/W_24P.wav"), the first event of the file, mono 44.1 kHz,
+          1.6 s with a 0.12 s fade, peak-normalised to -1.5 dB. Cut by the
+          sound booth's cut.py (branch prototype/new-gun-sounds, where it is
+          audition_picks/marksman_rifle_shot.ogg). One shot: silencedetect
+          at -30 dB finds only the tail from 1.03 s, and its loudness falls
+          away from a single onset with no second rise above -22 dB. Picked
+          by ear in the sound booth (new-weapons decision 12).

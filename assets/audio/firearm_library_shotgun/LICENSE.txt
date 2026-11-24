@@ -1,0 +1,14 @@
+"The Free Firearm Sound Library", published on OpenGameArt under CC0 (no
+attribution needed): https://opengameart.org/content/the-free-firearm-sound-library
+
+shot.ogg  the Shotgun's shot: a Winchester Model 12 at mid distance
+          ("Model 12/K_17P.wav"), the first event of the file, mono 44.1 kHz,
+          1.6 s with a 0.12 s fade, peak-normalised to -1.5 dB, then raised
+          12 dB into a limiter at 0.84 (ffmpeg
+          volume=12dB,alimiter=limit=0.84:attack=1:release=80). Cut by the
+          sound booth's cut.py (branch prototype/new-gun-sounds, where it is
+          audition_picks/shotgun_shot.ogg). One shot: no gap of silence in
+          it, its loudness falls away from a single onset, and the two
+          later blips (0.67 s, 1.00 s) last 10 ms each, reflections rather
+          than shots. Picked by ear in the sound booth (new-weapons
+          decision 12).

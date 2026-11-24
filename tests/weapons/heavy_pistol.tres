@@ -6,7 +6,7 @@
 script = ExtResource("1")
 fire_interval = 0.4
 magazine_size = 6
-damage = 3
+damage = 75
 projectile_speed = 50.0
 projectile_lifetime = 1.0
 reload_tactical = 2.0

@@ -22,4 +22,3 @@ transform = Transform3D(-1, 0, 0, 0, 1, 0, 0, 0, -1, 0, 0, 0)
 
 [node name="Health" type="Node" parent="."]
 script = ExtResource("2")
-max_health = 4

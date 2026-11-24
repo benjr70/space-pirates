@@ -35,12 +35,12 @@ extends SceneTree
 ##
 ## Three scripts per ship. Each is what the bot tries; the verdict does not
 ## ask it to win (see "The verdict" below):
-## - **Quiet**: Carbine out, crouch-walks in, shuts the boarding Hatch behind
+## - **Quiet**: Assault Rifle out, crouch-walks in, shuts the boarding Hatch behind
 ##   him, loots one Container, comes back, extracts. He fires only at crew
 ##   that have noticed him (suspicious, or HUNT, FIGHT, COVER, or a Worker
 ##   fleeing to raise the Alarm), standing to do it. Plays for a Ghost
 ##   Extraction.
-## - **Loud**: Carbine out, walks to the first occupied Room and fires there,
+## - **Loud**: Assault Rifle out, walks to the first occupied Room and fires there,
 ##   falls back to the pod mouth shooting whoever follows and holds it until
 ##   nobody has been in sight for 8 s; with nobody down yet, stalks the
 ##   nearest Worker (else Guard), crouched until crew are after him, until
@@ -749,7 +749,7 @@ func _on_shot(node: Node) -> void:
 	if shot == null or not shot.shooter is Crew3D:
 		return
 	var member: Crew3D = shot.shooter
-	shot.hit.connect(func(body: Node3D) -> void:
+	shot.hit.connect(func(body: Node3D, _head: bool) -> void:
 		if body is CharacterBody3D:
 			_wasted[member] = 0
 			return
@@ -796,7 +796,7 @@ func _quiet() -> bool:
 	return await _extract(budget, Fire.THREATS)
 
 
-## Carbine out, into the first occupied Room, a shot there, then back to the
+## Assault Rifle out, into the first occupied Room, a shot there, then back to the
 ## pod mouth shooting whoever follows, until nobody has been in sight for a
 ## spell; if nobody is down yet, after the nearest Worker (else Guard),
 ## crouched while nobody is after him, until one is; then a Container,

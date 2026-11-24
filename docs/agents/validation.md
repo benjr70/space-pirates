@@ -266,7 +266,7 @@ the Gate and not in `tests/run_all.sh`.
 
 ```sh
 tests/shots.sh viewmodel                     # hip, ads, low, tracer
-tests/shots.sh viewmodel wheel=1             # the same for the next weapon (Carbine)
+tests/shots.sh viewmodel wheel=1             # the same for the next weapon (Assault Rifle)
 tests/shots.sh ship class=medium seed=1      # room_<i>_<role>.png per Room, overview.png
 tests/shots.sh crew                          # front.png, side.png: Guard left, Worker right
 tests/shots.sh hud                           # hud.png, hud_busy.png

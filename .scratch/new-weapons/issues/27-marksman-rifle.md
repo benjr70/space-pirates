@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: resolved
 Blocked by: 21, 25, 26
 
 # The Marksman Rifle, and a wheel of four
@@ -19,11 +19,20 @@ Weapon Wheel: the order is Pistol, Assault Rifle, Shotgun, Marksman Rifle, and k
 
 ## Acceptance criteria
 
-- [ ] One Marksman Rifle Headshot kills a crew member; two body shots kill.
-- [ ] Aimed and still, shots land on the front sight at 20 m; from the hip they scatter.
-- [ ] A hit while aimed Descopes it like any gun.
-- [ ] The bolt cycles on each shot and the magazine drops and seats on a reload.
-- [ ] Keys 1 to 4 and the wheel reach all four weapons in order; a swap by key takes the swap time.
-- [ ] `tests/run_all.sh` passes.
+- [x] One Marksman Rifle Headshot kills a crew member; two body shots kill.
+- [x] Aimed and still, shots land on the front sight at 20 m; from the hip they scatter.
+- [x] A hit while aimed Descopes it like any gun.
+- [x] The bolt cycles on each shot and the magazine drops and seats on a reload.
+- [x] Keys 1 to 4 and the wheel reach all four weapons in order; a swap by key takes the swap time.
+- [x] `tests/run_all.sh` passes.
 
 ## Comments
+
+Built 2026-11-22 on `new-weapons`.
+
+- `resources/weapons/marksman_rifle.tres` holds the spec's numbers exactly. `ads_spread` is 0.0166667 (3 deg x 0.0167 = 0.05 deg aimed and still; 0.04 crouched) and `ads_moving_spread` 0.4 (1.2 deg). The spec gives no aimed kick, so `ads_recoil_kick_degrees` is 0, as on the Assault Rifle: the gun is braced in the shoulder. The hip push is the default 0.05. Lowered pose is (0.21, -0.32, -0.36).
+- Model: `tools/blender/marksman_rifle.py`, the bullpup only, design unchanged. The finishing pass gave it a rounded fore-end with a nose cap and coil rings behind the vents, a shell with bigger bevels, panel lines, pins, a selector, a magazine release, a magazine-well lip, a right-hand ejection port with a liner and a brass deflector, a left-hand charging handle track, a cheek riser under the brass plate, a grooved butt pad, a sling slot, a closed trigger guard (the prototype's guard was an open bar) and a muzzle brake. Baked at 2048. Bones Body, Bolt (the bolt in the port plus the charging handle, which cycles on the left where the Viewmodel can see it) and Magazine. Clips: `fire` (bolt 4.5 cm back and home over 0.15 s), `reload` (the magazine drops 36 cm along its rake below the butt and a fresh one seats at 0.6 of the clip) and `rack`. Imported to `assets/models/marksman_rifle/`, scene `scenes/weapons/marksman_rifle_model.tscn`.
+- Sounds: `assets/audio/firearm_library_marksman/shot.ogg` is the Tikka cut as picked; it holds one shot (silencedetect finds only the tail). The magazine take is split at its 0.4 s gap into `oga_gun_reload_sounds/rifle_magazine_out.ogg` (the release click) and `rifle_magazine_in.ogg` (the magazine going in and the slap home), so the second half plays as the magazine seats.
+- Weapon Wheel: the Marksman Rifle is fourth. Input actions `weapon_1` to `weapon_4` sit on keys 1 to 4 and call `select_weapon(index)`, which goes through `switch_weapon`, so they have the same swap time and refusals. The key for the weapon already in hand does nothing.
+- Checks: `test_pirate.gd` covers the wheel of four, the keys, the model, poses, sights and 3x zoom, the rig and reload sounds, the cones, aimed shots landing within 3 cm at 20 m while hip shots scatter, and the Descope. `test_crew.gd` checks that one Headshot or two body shots kill. `test_sandbox.gd` checks the fourth column. `bash tests/run_all.sh` passes: pirate 967, crew 181, sandbox 107.
+- Not checked by eye or ear: how the model looks in first person at the hip, aimed and lowered; how the bolt and magazine clips look; how the split magazine sound lands against the clip. These are for the playtest.

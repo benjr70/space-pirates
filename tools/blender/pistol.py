@@ -1,4 +1,4 @@
-"""Sidearm: a full-size service pistol with a steel slide and frame.
+"""Pistol: a full-size service pistol with a steel slide and frame.
 
     flatpak run org.blender.Blender -b --python $PWD/tools/blender/pistol.py [-- draft]
 """

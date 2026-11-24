@@ -1,7 +1,7 @@
 [gd_resource type="AnimationLibrary" format=3]
 
 ; The Viewmodel clips, authored from the prototype keys (issue #36): they move
-; the Sidearm node under the Viewmodel. Edit in the editor: the Clips
+; the Holder node under the Viewmodel. Edit in the editor: the Clips
 ; AnimationPlayer on the player scene loads this library.
 ;
 ; The Viewmodel is turned round to face down the camera, so in the holder's
@@ -13,7 +13,7 @@ length = 0.12
 tracks/0/type = "value"
 tracks/0/imported = false
 tracks/0/enabled = true
-tracks/0/path = NodePath("Sidearm:position")
+tracks/0/path = NodePath("Holder:position")
 tracks/0/interp = 1
 tracks/0/loop_wrap = true
 tracks/0/keys = {
@@ -25,7 +25,7 @@ tracks/0/keys = {
 tracks/1/type = "value"
 tracks/1/imported = false
 tracks/1/enabled = true
-tracks/1/path = NodePath("Sidearm:rotation_degrees")
+tracks/1/path = NodePath("Holder:rotation_degrees")
 tracks/1/interp = 1
 tracks/1/loop_wrap = true
 tracks/1/keys = {
@@ -40,7 +40,7 @@ length = 0.55
 tracks/0/type = "value"
 tracks/0/imported = false
 tracks/0/enabled = true
-tracks/0/path = NodePath("Sidearm:position")
+tracks/0/path = NodePath("Holder:position")
 tracks/0/interp = 1
 tracks/0/loop_wrap = true
 tracks/0/keys = {
@@ -52,7 +52,7 @@ tracks/0/keys = {
 tracks/1/type = "value"
 tracks/1/imported = false
 tracks/1/enabled = true
-tracks/1/path = NodePath("Sidearm:rotation_degrees")
+tracks/1/path = NodePath("Holder:rotation_degrees")
 tracks/1/interp = 1
 tracks/1/loop_wrap = true
 tracks/1/keys = {
@@ -67,7 +67,7 @@ length = 1.6
 tracks/0/type = "value"
 tracks/0/imported = false
 tracks/0/enabled = true
-tracks/0/path = NodePath("Sidearm:position")
+tracks/0/path = NodePath("Holder:position")
 tracks/0/interp = 1
 tracks/0/loop_wrap = true
 tracks/0/keys = {
@@ -79,7 +79,7 @@ tracks/0/keys = {
 tracks/1/type = "value"
 tracks/1/imported = false
 tracks/1/enabled = true
-tracks/1/path = NodePath("Sidearm:rotation_degrees")
+tracks/1/path = NodePath("Holder:rotation_degrees")
 tracks/1/interp = 1
 tracks/1/loop_wrap = true
 tracks/1/keys = {
@@ -94,7 +94,7 @@ length = 1.2
 tracks/0/type = "value"
 tracks/0/imported = false
 tracks/0/enabled = true
-tracks/0/path = NodePath("Sidearm:position")
+tracks/0/path = NodePath("Holder:position")
 tracks/0/interp = 1
 tracks/0/loop_wrap = true
 tracks/0/keys = {
@@ -106,7 +106,7 @@ tracks/0/keys = {
 tracks/1/type = "value"
 tracks/1/imported = false
 tracks/1/enabled = true
-tracks/1/path = NodePath("Sidearm:rotation_degrees")
+tracks/1/path = NodePath("Holder:rotation_degrees")
 tracks/1/interp = 1
 tracks/1/loop_wrap = true
 tracks/1/keys = {

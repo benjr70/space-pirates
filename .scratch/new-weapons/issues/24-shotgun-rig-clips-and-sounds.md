@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: resolved
 Blocked by: 23
 
 # Shotgun rig, clips and sounds
@@ -19,10 +19,12 @@ Blender runs headless: `flatpak run --filesystem=$PWD org.blender.Blender -b --p
 
 ## Acceptance criteria
 
-- [ ] The fore-end racks after every shot and the pump sound follows the shot.
-- [ ] Each shell loaded plays the shell clip and sound once, in time with the counter.
-- [ ] A reload from empty ends with the pump clip and sound; a top-up does not.
-- [ ] Breaking the reload with a shot stops the clip cleanly.
-- [ ] `tests/run_all.sh` passes.
+- [x] The fore-end racks after every shot and the pump sound follows the shot.
+- [x] Each shell loaded plays the shell clip and sound once, in time with the counter.
+- [x] A reload from empty ends with the pump clip and sound; a top-up does not.
+- [x] Breaking the reload with a shot stops the clip cleanly.
+- [x] `tests/run_all.sh` passes.
 
 ## Comments
+
+**Build note (2026-11-22).** `tools/blender/shotgun.py` now rigs the gun with bones `Body`, `Pump` (the fore-end) and `Shell`, a separate shell mesh that rests hidden in the magazine tube. Clips, keyed at 60 fps: `fire` 0.55 s (fore-end rests to 0.15 s, 7.5 cm back by 0.30 s, home by 0.52 s), `shell` 0.45 s (the shell rises from below the gun into the loading port and vanishes inside just before the clip ends), `pump` 0.45 s (the same stroke at once). The Profile reuses existing fields, none added: `model_reload_clip = shell` plays once per shell over that shell's time (`shell_reload_started`, then `shell_loaded` while not full); `model_rack_clip = pump` plays over `closing_pump_time` on `closing_pump_started`; `shell_reload_ended(broken=true)` stops the clip and resets the bones. `fire_cycle_time` is 0.55. Sounds: `reload_sounds[0]` = `assets/audio/oga_shotgun_reload/shell_in.ogg` plays (kind `shell_in`) on each `shell_loaded`; `action_sound` = `assets/audio/oga_gun_reload_sounds/shotgun_pump.ogg` plays 0.2 s after each shot and (kind `pump`) on `closing_pump_started`. Covered headlessly in `tests/test_pirate.gd` `_check_shotgun_rig`. Not seen or heard: how the shell's travel and the pump read in first person, and whether the sounds sit well against the clips. Starting a reload inside 0.55 s of a shot replaces the pump clip with the shell clip (one AnimationPlayer), though the pump sound still plays.

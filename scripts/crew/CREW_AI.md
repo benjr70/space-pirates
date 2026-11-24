@@ -10,8 +10,10 @@ being built toward is spec #52 (tickets #53–#63).
 | File | What it owns |
 |---|---|
 | `crew.gd` (`Crew3D`) | The body: movement, health, animation, door handling, gunnery, cover search, and the state machine that ties them together. |
+| `head_zone.gd` (`HeadZone`) | The head: a 0.16 m ball on physics layer 4, riding the rig's `Head` bone through a `BoneAttachment3D`, so a bolt that strikes it is a Headshot. The capsule stays the body. |
 | `crew_perception.gd` (`CrewPerception`) | Awareness: the sight cone, how fast Awareness fills and drains, and its bands. Pure arithmetic, tested without physics. |
 | `crew_types.gd` (`CrewTypes`) | Guard or Worker, from the Post Room's Role. |
+| `gunnery.gd` (`Gunnery`) | How a crew type handles its weapon: aim error, burst length, pause between bursts, engage range. One `.tres` per type under `resources/gunnery/`, edited in the Sandbox sheet. |
 | `crew_routine.gd` (`CrewRoutine`) | Routines: a crew member's Post and its loop of Jobs, planned from the layout's props and Rooms. Pure planning; the body walks it. |
 | `crew_traces.gd` (`CrewTraces`) | What the Pirate leaves behind that crew find: bodies, the open boarding Hatch, emptied Containers, Doors left open. |
 | `crew_combat.gd` (`CrewCombat`) | Guard teamwork: sharing the Pirate's position, aim that tightens, staggered bursts, flank routes. |
@@ -30,7 +32,7 @@ two crew head-on in a two-wide doorway (both arrive within 12 s), one
 standing in a one-wide gap with a way round (passed within 15 s), a Worker
 working in a dead-end lane making way for one walking out (out within 11 s,
 the Worker back at its spot), two Workers sharing one work spot,
-bodies and other traces, routes into the pod, the Alarm and its panels, and 60 simulated seconds of routines
+bodies and other traces, routes into the pod, the Alarm and its panels, Headshots, and 60 simulated seconds of routines
 on a generated medium ship ending in the Alarm), plus the crew fight in
 `tests/test_ship_3d.gd` and whole Raids in `tests/test_raid_smoke.gd`.
 
@@ -56,8 +58,8 @@ its Post Room's Role (`CrewTypes.for_role`):
   on the way it runs on to the next, without a second roll to hide. A cowering Worker returns to its
   routine after 15 s with nothing in sight, at Awareness 0.15.
 - A Worker fights only when **cornered**: the Pirate in sight within 3 m.
-  Then it fires a sidearm (12° spread, 2-round bursts, against a Guard's 7°
-  and 3) and goes back to fleeing once he is more than 5 m off. A Worker that
+  Then it fires the Pistol with the Worker Gunnery (1° + 11° aim error,
+  2-round bursts, against a Guard's 1° + 6° and 3) and goes back to fleeing once he is more than 5 m off. A Worker that
   loses him hides (COWER) where a Guard would search.
 - Guards wear the dark Quaternius Soldier; Workers wear the Engineer, the
   Soldier's body and skeleton re-dressed in Blender in orange coveralls with
@@ -102,10 +104,10 @@ PATROL / INVESTIGATE ──spotted──▶ FLEE ──reached its Guard──�
   (the spot may be inside a prop). Back on PATROL it picks up the Job it was on.
 - **HUNT / FIGHT / COVER / SEARCH**: the combat loop. HUNT paths to the
   last-seen position (or flanks, see Guard combat); FIGHT fires bursts inside
-  10.6 m after a 0.05–0.35 s beat; a spent burst goes to COVER to reload and
-  hold; 3 s out of sight sends any of them to SEARCH, which walks to the
-  last-seen spot and waits 2.5 s. Base numbers, before each Guard's jitter:
-  3-round bursts 0.14 s apart, 7° spread, 1.1 s reload, 1.2 s cover hold.
+  its Gunnery's engage range after a 0.05–0.35 s beat; a spent burst goes to
+  COVER to pause and hold; 3 s out of sight sends any of them to SEARCH,
+  which walks to the last-seen spot and waits 2.5 s. See Guns below for the
+  numbers; cover hold is 1.2 s before jitter.
 - **A clear shot**: FIGHT fires only while its muzzle line is clear as well
   as its eye line. The muzzle line is a ball 0.1 m across (a bolt's overlap
   sphere is 0.09 m) swept from the body's axis at muzzle height (1.3 m) to
@@ -118,8 +120,31 @@ PATROL / INVESTIGATE ──spotted──▶ FLEE ──reached its Guard──�
 - **Cover it cannot reach**: a crew member that has run for its cover point
   for 3 s without getting there (the way blocked by the Pirate, another body
   or a prop) holds where it is instead, and leaves COVER as soon as its hold
-  and reload are done, at most 3 s after ducking.
+  and pause are done, at most 3 s after ducking.
 - **DEAD**: collision off, death clip or tip-over.
+
+### Guns: the Pistol and a Gunnery
+
+Crew fire the **Pistol** Weapon Profile (`resources/weapons/pistol.tres`),
+the same live Resource the Pirate holds (`Crew3D.weapon`). From it a crew
+shot takes its damage, bolt speed and lifetime, and the time between shots
+in a burst. Crew ignore its magazine, reloads, bloom, Aim Down Sights,
+recoil and Viewmodel: they fire a burst and pause, and never count rounds.
+How a crew type handles it is its **Gunnery** (`Crew3D.gunnery`, picked by
+crew type at spawn from `resources/gunnery/`):
+
+| | Guard | Worker |
+|---|---|---|
+| aim error, degrees, added to the Pistol's base cone | 6 | 11 |
+| burst length | 3 | 2 |
+| pause between bursts, s | 1.1 | 1.1 |
+| engage range, m | 10.6 | 10.6 |
+
+Both are read at the moment of use, so a Sandbox sheet edit reaches crew
+already in the Raid. The shot sound and how far it carries are the Pistol's
+(`shot_sounds`, `loudness`), so crew sound like the Pirate's Pistol.
+With the Pistol's 80 m/s, 0.5 s bolt, crew fire is far harder to sidestep
+than the old 23.75 m/s bolt; the balance pass retunes Gunnery.
 
 The body turns toward where it is looking at 6 rad/s rather than snapping;
 shots leave along the aim direction regardless of where the body has got to.
@@ -287,10 +312,11 @@ him in.
 - **Aim**: spread is `base × 1.5` on first sight, closing linearly to
   `base × 0.5` after 3 s of continuous sight, and back to 1.5× the moment the
   Pirate breaks line of sight. A Guard's first shots mostly warn; staying
-  exposed is what gets him hit. Workers' sidearms follow the same curve from
-  their wider base.
-- **Rhythm**: each crew member draws its own multipliers (0.75–1.35×) on burst
-  gap, reload and cover hold, and each Guard's burst is 2–4 rounds. No crew
+  exposed is what gets him hit. Base is the Pistol's base cone plus the
+  Gunnery's aim error; Workers follow the same curve from their wider base.
+- **Rhythm**: each crew member draws its own multipliers (0.75–1.35×) at
+  spawn on the Pistol's time between shots, its Gunnery's pause and its cover
+  hold, and each Guard's burst is its Gunnery's give or take one round. No crew
   member starts a burst within 18 physics frames (0.3 s) of another's; it waits.
 - **Pin and flank**: a Guard entering HUNT while another Guard is already
   fighting (FIGHT or COVER), and no Guard is already flanking, tries to go
@@ -323,7 +349,7 @@ cowers. Once raised it stays up for the rest of the Raid:
 **Breaking a panel**: the Pirate's shot breaks a panel (screen goes dark); crew
 shots do not. A broken panel raises nothing: a Worker running to it when it
 breaks re-picks the nearest working panel, then a Guard. Breaking one is a
-gunshot like any other, heard 24 m off.
+gunshot like any other, heard as far as the weapon's loudness (24 m).
 
 **On Edge**: a crew member that has lost the Pirate (entered SEARCH), crept
 back from hiding, or heard the Alarm is On Edge for the rest of the Raid: every
@@ -380,7 +406,7 @@ crew member that can hear it. A noise reaches a crew member when both:
 | Sprinting step | STEP | 9 m | the Pirate, once per stride (the step he hears in `PirateAudio`) |
 | Walking step | STEP | 3 m | the Pirate |
 | Crouched or sliding step | — | silent | the Pirate |
-| Gunshot | GUNSHOT | 24 m | the Pirate and crew, every shot |
+| Gunshot | GUNSHOT | the weapon's `loudness` (24 m) | the Pirate and crew, every shot |
 | Door opening or closing | DOOR | 6 m | whoever works it |
 
 A crew member that hears a noise (`Crew3D.hear`):
@@ -413,7 +439,7 @@ and `crew.gd` (`SEARCH_AWARENESS`, `INVESTIGATE_SPEED`, `INVESTIGATE_LINGER`,
 `GLANCE_DEGREES`, `TURN_RATE`, `INVESTIGATE_GIVE_UP`, `ROUTINE_SPEED`,
 `WALK_ANIM_SPEED`, `DOOR_CLOSE_AFTER`, `DOOR_FORGET`, `DOOR_ADOPT`, `CHAT_*`,
 `JOB_GIVE_UP`, `CORNERED_RANGE`, `CORNER_RELEASE`, `HIDE_CHANCE`,
-`GUARD_REACH`, `COWER_CALM`, `WORKER_SPREAD`, `WORKER_BURST`, `PANEL_REACH`,
+`GUARD_REACH`, `COWER_CALM`, `PANEL_REACH`,
 `ON_EDGE_PAUSE`, `SWEEP_PAUSE`, `COVER_GIVE_UP`, `MUZZLE_BALL`,
 `MUZZLE_TARGET_GAP`, `MUZZLE_NEAR`, `FIRING_STEP`, `UNSTICK_AFTER`,
 `UNSTICK_MOVE`, `SIDESTEP`, `GIVE_WAY_NEAR`, `GIVE_WAY_PASSED`,
@@ -425,8 +451,9 @@ and `crew.gd` (`SEARCH_AWARENESS`, `INVESTIGATE_SPEED`, `INVESTIGATE_LINGER`,
 `ship_alarm.gd` (`RED`, `PULSE_*`), `alarm_panel.gd` (`ROLES`, `SIZE`, `HEIGHT`),
 `crew_types.gd` (`GUARD_ROLES`, `WORKER_ROLES`), `HEARD_NOISE`, `HEARD_GUNSHOT`, `HEARD_CAP`) and
 `crew_routine.gd` (`WORK_PROPS`, `JOBS_MIN`/`MAX`, `WORK_TIME`,
-`PATROL_PAUSE`, `AWAY_CHANCE`) and `crew_noise.gd` (`SPRINT_STEP`, `WALK_STEP`, `GUNSHOT`, `DOOR`). They are starting values to be tuned by
-playtest.
+`PATROL_PAUSE`, `AWAY_CHANCE`) and `crew_noise.gd` (`SPRINT_STEP`, `WALK_STEP`, `DOOR`). They are starting values to be tuned by
+playtest. Gun numbers are not here: they are the Pistol's and each crew
+type's Gunnery, edited in the Sandbox sheet (`docs/sandbox.md`).
 
 ## Stealth XP
 

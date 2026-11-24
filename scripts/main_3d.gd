@@ -75,6 +75,8 @@ func _ready() -> void:
 	_wire_raid_end()
 	if ship.has_node("BoardingPod"):
 		_wire_extraction(ship.get_node("BoardingPod"))
+	# F1: the Sandbox sheet, in debug builds only.
+	SandboxSheetView.attach(self)
 
 
 ## The hand-authored ship, or a generated target when `--seed=N` (and
@@ -106,7 +108,7 @@ func _wire_hud() -> void:
 		hud.flash_damage())
 	player.health.died.connect(func(_from: Node) -> void: hud.set_health(0))
 	player.died.connect(func() -> void: hud.show_prompt(""))
-	player.hit_landed.connect(func(target: Node3D, killed: bool) -> void:
+	player.hit_landed.connect(func(target: Node3D, killed: bool, _headshot: bool) -> void:
 		if killed:
 			var unaware: bool = target.get("died_unaware") == true
 			ledger.record_kill(unaware)

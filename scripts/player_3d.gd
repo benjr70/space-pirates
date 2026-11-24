@@ -2,7 +2,8 @@ extends CharacterBody3D
 ## The pirate, in first person. WASD to move, mouse to look, left click to
 ## shoot, right click to aim. Shift sprints, Ctrl or C crouches, Space jumps
 ## and clambers, R reloads, V or the mouse's side button melees, E works
-## doors, and the mouse wheel turns through the weapons he carries.
+## doors, the mouse wheel turns through the weapons he carries and keys 1 to
+## 4 pick one.
 ##
 ## Movement is a six-state machine in the feel of Halo Infinite:
 ##   WALK     default on the floor
@@ -20,11 +21,17 @@ extends CharacterBody3D
 ## `ads` and `flat_speed()` for the weapon's pose and lends this camera work
 ## its Descope roll.
 ##
-## The Sidearm is a Weapon Profile: every number the gun has lives on the
+## The Pistol is a Weapon Profile: every number the gun has lives on the
 ## resource, and the Pirate only pulls the trigger. Semi-auto, one shot per
 ## press; a dry magazine reloads on the next pull, not the last shot; the
 ## reload runs on through every move. Spread is a cone that blooms per shot
 ## and widens or tightens with what he is doing.
+##
+## A Profile with `shell_reload` loads one shell at a time instead: one tap
+## loads until full, each shell counting when its time is up, with a closing
+## pump when loading began from empty. A Melee or a swap breaks it keeping the
+## shells already in; so does a shot with a shell in the gun, which then
+## fires by itself after the break-out time. A shot cannot break the pump.
 ##
 ## Aim Down Sights is a flag beside the state, valid in WALK, CROUCH and AIR:
 ## hold aim for the Profile's zoom, slowdown and tighter cone. A sprint,
@@ -46,8 +53,18 @@ signal fired
 ## A trigger pull on an empty magazine: the one click before the reload.
 signal dry_fired
 signal reloading_changed(reloading: bool)
+## A magazine reload begins, and is dropped with nothing gained.
 signal reload_started(from_empty: bool)
 signal reload_cancelled
+## A shell-by-shell reload begins.
+signal shell_reload_started(from_empty: bool)
+## A shell is seated: the magazine has just risen by one.
+signal shell_loaded
+## The last shell of a reload from empty is in and the closing pump begins.
+signal closing_pump_started
+## The shell reload is over: full, or [param broken] off by a shot, a Melee
+## or a swap with the shell in hand lost.
+signal shell_reload_ended(broken: bool)
 ## He has a different weapon in hand: a turn of the wheel, or a Profile set
 ## from outside.
 signal weapon_changed(profile: WeaponProfile)
@@ -63,7 +80,12 @@ signal descoped
 ## finished them.
 signal melee_swung(target: Node3D, killed: bool)
 ## A shot or a swing hurt something that can be hurt: the hit marker's cue.
-signal hit_landed(target: Node3D, killed: bool)
+## A shot reports each target once, however many of its pellets land, a
+## beat after the first strikes it so the rest of the volley lands first.
+## [param headshot] when a bolt of a gun with a headshot multiplier above 1
+## struck its head zone: a Shotgun pellet on the head is a body hit to the
+## eye, and a swing is never a Headshot.
+signal hit_landed(target: Node3D, killed: bool, headshot: bool)
 
 enum State { WALK, SPRINT, CROUCH, SLIDE, AIR, CLAMBER }
 
@@ -121,11 +143,15 @@ const TEAM := &"pirate"
 @export var melee_lunge_time: float = 0.15
 ## Movement input ignored after the lunge lands.
 @export var melee_input_lock: float = 0.2
-@export var melee_damage: int = 3
 ## A strike from inside this cone behind the target's facing kills outright.
 @export var melee_back_cone_degrees: float = 120.0
 ## Seconds before the next swing, shot or reload.
 @export var melee_cycle: float = 0.55
+
+@export_group("Sandbox")
+## Health at spawn and Melee damage, shared with the crew and the Sandbox
+## sheet. Melee reads it live; Health is taken at spawn ([method apply_sandbox]).
+@export var sandbox: Sandbox = preload("res://resources/sandbox.tres")
 
 @export_group("Look")
 ## Radians of turn per pixel of mouse travel.
@@ -134,17 +160,20 @@ const TEAM := &"pirate"
 
 @export_group("Gunnery")
 ## What he is holding. Swap the resource and every number follows.
-@export var weapon: WeaponProfile = preload("res://resources/weapons/sidearm.tres"):
+@export var weapon: WeaponProfile = preload("res://resources/weapons/pistol.tres"):
 	set(value):
 		if value == weapon:
 			return
 		weapon = value
 		if is_node_ready():
 			weapon_changed.emit(weapon)
-## What he carries, in the order the mouse wheel turns through them.
+## What he carries, in the order the mouse wheel turns through them and
+## the number keys pick them.
 @export var weapons: Array[WeaponProfile] = [
-	preload("res://resources/weapons/sidearm.tres"),
-	preload("res://resources/weapons/carbine.tres"),
+	preload("res://resources/weapons/pistol.tres"),
+	preload("res://resources/weapons/assault_rifle.tres"),
+	preload("res://resources/weapons/shotgun.tres"),
+	preload("res://resources/weapons/marksman_rifle.tres"),
 ]
 ## Seconds a weapon swap keeps the trigger, the sights and the reload busy.
 @export var swap_time := 0.4
@@ -164,6 +193,12 @@ const FALL_LIMIT := -10.0
 const CAMERA_LERP := 12.0
 ## How far short of a wall a bolt starts when the barrel is through it.
 const MUZZLE_WALL_GAP := 0.05
+## Seconds a shell-reload or break-out timer may sit above zero and still
+## count as up, so 0.55 s is 33 physics steps and not 34.
+const TIMER_SLOP := 0.0001
+## Seconds from a shot's first strike on a target to reporting it: a step
+## and a half, so pellets a step behind still count toward the kill.
+const SHOT_REPORT_DELAY := 1.5 / 60.0
 ## The ship's walls, floors and props: what a crouch or clamber probes.
 const WORLD_LAYER := 1
 ## Bodies that can be hit: the crew and the pirate himself.
@@ -188,6 +223,13 @@ var ammo := 0
 var _cooldown := 0.0
 var _reload_timer := 0.0
 var _reload_from_empty := false
+## What a shell-by-shell reload is doing, and the seconds left on it.
+enum Shell { NONE, LOADING, PUMPING }
+var _shell := Shell.NONE
+var _shell_left := 0.0
+## A shot that broke the shell reload, waiting out the break-out to fire.
+var _break_out_queued := false
+var _break_out_left := 0.0
 var _swap_left := 0.0
 ## Rounds left in the magazine of each weapon he is not holding.
 var _stowed_ammo := {}
@@ -195,6 +237,8 @@ var _stowed_ammo := {}
 var _bloom := 0.0
 var _last_spread := -1.0
 var _rng := RandomNumberGenerator.new()
+## The projectiles of the last shot: one, or a Shotgun's pellets.
+var last_pellets: Array[Projectile3D] = []
 var _gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)
 
 var _capsule: CapsuleShape3D
@@ -212,6 +256,10 @@ var _ads_raise_left := 0.0
 ## Seconds of Descope still keeping held aim down.
 var _descope_left := 0.0
 var _hip_fov := 75.0
+## Seconds the current aimed sway has run, and the view offset it last laid
+## on, which the next frame takes back.
+var _sway_time := 0.0
+var _sway_offset := Vector2.ZERO
 var _melee_cycle_left := 0.0
 ## Seconds the lunge still owns his movement.
 var _melee_lock_left := 0.0
@@ -222,6 +270,7 @@ func _ready() -> void:
 	health.died.connect(_on_died)
 	# Seeded off the global RNG (randomized at launch) so a test can replay it.
 	_rng.seed = randi()
+	apply_sandbox()
 	ammo = weapon.magazine_size
 	# Each pirate gets his own capsule so a crouch never resizes the scene's.
 	_capsule = collider.shape.duplicate()
@@ -234,6 +283,13 @@ func _ready() -> void:
 
 func get_team() -> StringName:
 	return TEAM
+
+
+## Takes Health from the Sandbox, full: at spawn, and when the Sandbox sheet
+## changes it mid-Raid.
+func apply_sandbox() -> void:
+	health.max_health = sandbox.pirate_health
+	health.reset()
 
 
 ## Low enough that crew take longer to spot him: crouched, or sliding.
@@ -274,10 +330,7 @@ func can_interact() -> bool:
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		var motion := event as InputEventMouseMotion
-		rotate_y(-motion.relative.x * mouse_sensitivity)
-		head.rotate_x(-motion.relative.y * mouse_sensitivity)
-		var limit := deg_to_rad(pitch_limit_degrees)
-		head.rotation.x = clampf(head.rotation.x, -limit, limit)
+		look(motion.relative)
 	elif event.is_action_pressed("ui_cancel"):
 		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	elif event is InputEventMouseButton and event.is_pressed() \
@@ -289,6 +342,22 @@ func _unhandled_input(event: InputEvent) -> void:
 		switch_weapon(1)
 	elif event.is_action_pressed("weapon_prev"):
 		switch_weapon(-1)
+	else:
+		for i in weapons.size():
+			if event.is_action_pressed(StringName("weapon_%d" % (i + 1))):
+				select_weapon(i)
+				break
+
+
+## Turns the view by a mouse movement of [param relative] pixels. Aimed, the
+## turn is divided by the held weapon's zoom from the moment the sights are
+## up, so a hand movement covers the same distance on screen.
+func look(relative: Vector2) -> void:
+	var sensitivity := mouse_sensitivity / (weapon.ads_zoom if ads else 1.0)
+	rotate_y(-relative.x * sensitivity)
+	head.rotate_x(-relative.y * sensitivity)
+	var limit := deg_to_rad(pitch_limit_degrees)
+	head.rotation.x = clampf(head.rotation.x, -limit, limit)
 
 
 func _physics_process(delta: float) -> void:
@@ -300,6 +369,7 @@ func _physics_process(delta: float) -> void:
 	if state == State.CLAMBER:
 		# The tween owns the body; nothing else is read until it lets go.
 		_lower_sights()
+		_sway_aim(delta)
 		_animate_camera(delta)
 		_report_spread()
 		return
@@ -329,6 +399,7 @@ func _physics_process(delta: float) -> void:
 			return
 
 	_update_ads(delta)
+	_sway_aim(delta)
 	_move(delta, direction)
 
 	if Input.is_action_just_pressed("melee"):
@@ -519,14 +590,17 @@ func _world_ray(from: Vector3, to: Vector3) -> Dictionary:
 
 
 ## The first thing on [param mask] along the crosshair, out to [param reach].
-func _view_ray(reach: float, mask: int) -> Dictionary:
+func _view_ray(reach: float, mask: int, areas := false) -> Dictionary:
 	var from := camera.global_position
-	return _ray(from, from - camera.global_transform.basis.z * reach, mask)
+	return _ray(from, from - camera.global_transform.basis.z * reach, mask, areas)
 
 
-func _ray(from: Vector3, to: Vector3, mask: int) -> Dictionary:
+## With [param areas], it looks for areas on [param mask] and not bodies.
+func _ray(from: Vector3, to: Vector3, mask: int, areas := false) -> Dictionary:
 	var params := PhysicsRayQueryParameters3D.create(from, to, mask)
 	params.exclude = [get_rid()]
+	params.collide_with_areas = areas
+	params.collide_with_bodies = not areas
 	return get_world_3d().direct_space_state.intersect_ray(params)
 
 
@@ -590,6 +664,21 @@ func _finish_clamber(crouched: bool) -> void:
 	move_and_slide()
 
 
+## Aimed sway: a slow figure of eight laid over wherever he looks, applied
+## as the change since last frame so it never fights the mouse, and taken
+## back whole the frame the sights drop.
+func _sway_aim(delta: float) -> void:
+	var offset := Vector2.ZERO
+	if ads and weapon.ads_sway_degrees > 0.0:
+		_sway_time += delta
+		offset = Vector2(sin(_sway_time * 1.3), sin(_sway_time * 2.6) * 0.5) * deg_to_rad(weapon.ads_sway_degrees)
+	else:
+		_sway_time = 0.0
+	rotate_y(offset.x - _sway_offset.x)
+	head.rotate_x(offset.y - _sway_offset.y)
+	_sway_offset = offset
+
+
 func _animate_camera(delta: float) -> void:
 	var zoom := weapon.ads_zoom if ads else 1.0
 	var fov := rad_to_deg(2.0 * atan(tan(deg_to_rad(_hip_fov) / 2.0) / zoom))
@@ -615,21 +704,74 @@ func _tick_gunnery_timers(delta: float) -> void:
 			ammo = weapon.magazine_size
 			ammo_changed.emit(ammo)
 			reloading_changed.emit(false)
+	if _shell != Shell.NONE:
+		_tick_shell_reload(delta)
+	if _break_out_queued:
+		_tick_break_out(delta)
+
+
+## A shell counts when its time is up; the next one's time starts from there,
+## so float slop never stretches the reload.
+func _tick_shell_reload(delta: float) -> void:
+	_shell_left -= delta
+	if _shell_left > TIMER_SLOP:
+		return
+	if _shell == Shell.PUMPING:
+		_end_shell_reload(false)
+		return
+	ammo += 1
+	ammo_changed.emit(ammo)
+	shell_loaded.emit()
+	if ammo < weapon.magazine_size:
+		_shell_left += weapon.shell_time
+	elif _reload_from_empty and weapon.closing_pump_time > 0.0:
+		_shell = Shell.PUMPING
+		_shell_left += weapon.closing_pump_time
+		closing_pump_started.emit()
+	else:
+		_end_shell_reload(false)
+
+
+## The press that broke the reload fires once the break-out is up and the
+## gun's own interval has run out; a clamber holds it, a sprint gives way.
+func _tick_break_out(delta: float) -> void:
+	_break_out_left -= delta
+	if _break_out_left > TIMER_SLOP or _cooldown > 0.0 or state == State.CLAMBER:
+		return
+	_break_out_queued = false
+	if state == State.SPRINT:
+		_end_sprint_latched()
+	fire()
+
+
+func _end_shell_reload(broken: bool) -> void:
+	_shell = Shell.NONE
+	_shell_left = 0.0
+	reloading_changed.emit(false)
+	shell_reload_ended.emit(broken)
 
 
 func is_reloading() -> bool:
-	return _reload_timer > 0.0
+	return _reload_timer > 0.0 or _shell != Shell.NONE
 
 
 ## Begins a magazine swap unless one is running, the magazine is full, or the
 ## weapon is busy with a clamber or a swing. A dry magazine takes the longer,
-## racked reload.
+## racked reload. A shell-by-shell Profile starts loading its first shell
+## instead; a shot waiting out its break-out refuses the reload.
 func start_reload() -> void:
-	if is_reloading() or ammo == weapon.magazine_size or state == State.CLAMBER or is_meleeing() or is_swapping():
+	if is_reloading() or ammo == weapon.magazine_size or state == State.CLAMBER or is_meleeing() or is_swapping() \
+			or _break_out_queued:
 		return
 	_reload_from_empty = ammo == 0
-	_reload_timer = weapon.reload_empty if _reload_from_empty else weapon.reload_tactical
 	_lower_sights()
+	if weapon.shell_reload:
+		_shell = Shell.LOADING
+		_shell_left = weapon.first_shell_time
+		reloading_changed.emit(true)
+		shell_reload_started.emit(_reload_from_empty)
+		return
+	_reload_timer = weapon.reload_empty if _reload_from_empty else weapon.reload_tactical
 	reloading_changed.emit(true)
 	reload_started.emit(_reload_from_empty)
 
@@ -657,9 +799,23 @@ func switch_weapon(step: int) -> void:
 	ammo_changed.emit(ammo)
 
 
-## Drops a running reload with nothing gained: the hook a melee and a weapon
-## swap use.
+## The weapon at [param index] in the order he carries them, straight from
+## a number key: the same swap as the wheel, with its time and refusals.
+## The weapon already in hand stays put.
+func select_weapon(index: int) -> void:
+	if index < 0 or index >= weapons.size():
+		return
+	switch_weapon(index - weapons.find(weapon))
+
+
+## Drops a running reload: the hook a melee and a weapon swap use. A
+## magazine reload gains nothing; a shell reload keeps the shells already in
+## and loses the one in hand. A shot waiting out its break-out is dropped too.
 func cancel_reload() -> void:
+	_break_out_queued = false
+	if _shell != Shell.NONE:
+		_end_shell_reload(true)
+		return
 	if not is_reloading():
 		return
 	_reload_timer = 0.0
@@ -678,7 +834,14 @@ func spread_degrees() -> float:
 		State.AIR:
 			multiplier = weapon.spread_air
 		_:
-			multiplier = weapon.spread_walking if flat_speed() > 0.5 else weapon.spread_still
+			if flat_speed() <= 0.5:
+				multiplier = weapon.spread_still
+			elif ads:
+				# Aimed and walking has a multiplier of its own, in place of
+				# the aimed one times the walking one.
+				return (weapon.spread_base_degrees + _bloom) * weapon.ads_moving_spread
+			else:
+				multiplier = weapon.spread_walking
 	if ads:
 		multiplier *= weapon.ads_spread
 	return (weapon.spread_base_degrees + _bloom) * multiplier
@@ -691,26 +854,41 @@ func _report_spread() -> void:
 		spread_changed.emit(spread)
 
 
-## The world point under the crosshair: whatever the camera ray hits, or a spot
-## far along the view axis when it hits nothing.
+## The world point under the crosshair: whatever the camera ray hits, a crew
+## member's head zone included, or a spot far along the view axis when it
+## hits nothing. A head above a body capsule is aimed at like the body.
 func aim_point() -> Vector3:
 	var hit := _view_ray(aim_distance, WORLD_LAYER | BODY_LAYER)
+	var head := _view_ray(aim_distance, HeadZone.LAYER, true)
+	var eye := camera.global_position
+	if not head.is_empty() and (hit.is_empty() or eye.distance_to(head.position) < eye.distance_to(hit.position)):
+		return head.position
 	if not hit.is_empty():
 		return hit.position
 	return camera.global_position - camera.global_transform.basis.z * aim_distance
 
 
-## One trigger pull. Returns the shot, or null when the pull did something
-## else or nothing: a clamber ignores it, a sprint is ended by it, a reload,
-## a swing or the interval swallows it, and a dry magazine spends it on the
-## reload.
+## One trigger pull. Returns the shot's first projectile, the whole shot in
+## `last_pellets`, or null when the pull did something else or nothing: a
+## clamber ignores it, a sprint is ended by it, a reload, a swing or the
+## interval swallows it, and a dry magazine spends it on the reload. Mid
+## shell reload with a shell in, it breaks the reload and is queued to fire
+## after the break-out.
 func fire() -> Projectile3D:
 	if state == State.CLAMBER:
 		return null
 	if state == State.SPRINT:
 		_end_sprint_latched()
 		return null
-	if _cooldown > 0.0 or projectile_scene == null or is_reloading() or is_meleeing() or is_swapping():
+	if _shell == Shell.LOADING and ammo > 0 and not is_meleeing() and not is_swapping():
+		# Breaks in: the shells in stay, the one in hand is lost, and this
+		# press fires by itself once the break-out is up.
+		_end_shell_reload(true)
+		_break_out_queued = true
+		_break_out_left = weapon.break_out_time
+		return null
+	if _cooldown > 0.0 or projectile_scene == null or is_reloading() or is_meleeing() or is_swapping() \
+			or _break_out_queued:
 		return null
 	if ammo <= 0:
 		dry_fired.emit()
@@ -721,18 +899,24 @@ func fire() -> Projectile3D:
 	ammo_changed.emit(ammo)
 
 	var origin := _shot_origin()
-	var direction := _scatter((aim_point() - origin).normalized())
-	var shot: Projectile3D = projectile_scene.instantiate()
-	shot.speed = weapon.projectile_speed
-	shot.lifetime = weapon.projectile_lifetime
-	shot.damage = weapon.damage
-	shot.launch(origin, direction, self, TEAM)
-	shot.hit.connect(_on_shot_hit)
-	_shot_parent().add_child(shot)
+	var aim := (aim_point() - origin).normalized()
+	# What this shot has struck so far, so its pellets report each target once.
+	var struck := {}
+	last_pellets.clear()
+	for i in maxi(weapon.pellet_count, 1):
+		var shot: Projectile3D = projectile_scene.instantiate()
+		shot.speed = weapon.projectile_speed
+		shot.lifetime = weapon.projectile_lifetime
+		shot.damage = weapon.damage
+		shot.headshot_multiplier = weapon.headshot_multiplier
+		shot.launch(origin, _scatter(aim), self, TEAM)
+		shot.hit.connect(_on_shot_hit.bind(struck, weapon.headshot_multiplier > 1.0))
+		_shot_parent().add_child(shot)
+		last_pellets.append(shot)
 	_bloom += weapon.bloom_per_shot_degrees
 	fired.emit()
-	CrewNoise.make(get_tree(), global_position, CrewNoise.Kind.GUNSHOT, CrewNoise.GUNSHOT, self)
-	return shot
+	CrewNoise.make(get_tree(), global_position, CrewNoise.Kind.GUNSHOT, weapon.loudness, self)
+	return last_pellets[0]
 
 
 ## Where a bolt starts: the tip of the barrel as it is drawn. A barrel poked
@@ -746,22 +930,49 @@ func _shot_origin() -> Vector3:
 	return origin
 
 
-## The bolt struck [param target]: a hit if it could be hurt, and a kill if
-## that finished it.
-func _on_shot_hit(target: Node3D) -> void:
+## A bolt of a shot struck [param target], on its head when [param on_head];
+## [param struck] is what that shot has struck so far, and [param bonus]
+## whether the gun's head hits count as Headshots. The first strike on a
+## target that can be hurt reports it a beat later, a kill if the shot
+## finished it by then and a Headshot if any bolt reaching it by then was
+## one: a Shotgun's pellets land over a physics step or two, and the shot is
+## one hit marker and one kill however many of them hit, on head or body. A
+## pellet that kills after the report reports the kill; nothing reports a
+## target twice as killed.
+func _on_shot_hit(target: Node3D, on_head: bool, struck: Dictionary, bonus: bool) -> void:
 	if target == null or not target.has_method("take_damage"):
 		return
-	var killed: bool = target.has_method("is_alive") and not target.is_alive()
-	hit_landed.emit(target, killed)
+	if not struck.has(target):
+		struck[target] = {state = &"pending", headshot = false}
+		get_tree().create_timer(SHOT_REPORT_DELAY, true, true).timeout.connect(_report_shot_hit.bind(target, struck))
+	var report: Dictionary = struck[target]
+	if report.state == &"pending":
+		report.headshot = report.headshot or (on_head and bonus)
+	elif report.state == &"hit" and _is_dead(target):
+		report.state = &"killed"
+		hit_landed.emit(target, true, report.headshot)
 
 
-## A random yaw and pitch inside the live cone, applied to the aim.
+func _report_shot_hit(target: Node3D, struck: Dictionary) -> void:
+	if not is_instance_valid(target):
+		return
+	var report: Dictionary = struck[target]
+	var killed := _is_dead(target)
+	report.state = &"killed" if killed else &"hit"
+	hit_landed.emit(target, killed, report.headshot)
+
+
+static func _is_dead(target: Node3D) -> bool:
+	return target.has_method("is_alive") and not target.is_alive()
+
+
+## A random direction inside the live cone around the aim, evenly over the
+## cone's area.
 func _scatter(direction: Vector3) -> Vector3:
-	var cone := deg_to_rad(spread_degrees())
-	var yaw := _rng.randf_range(-cone, cone)
-	var pitch := _rng.randf_range(-cone, cone)
-	return direction.rotated(Vector3.UP, yaw) \
-			.rotated(camera.global_transform.basis.x, pitch).normalized()
+	var up := camera.global_transform.basis.x.cross(direction).normalized()
+	var right := direction.cross(up)
+	var offset := Vector2.from_angle(_rng.randf() * TAU) * sqrt(_rng.randf()) * tan(deg_to_rad(spread_degrees()))
+	return (direction + right * offset.x + up * offset.y).normalized()
 
 
 ## --- Melee ---
@@ -794,6 +1005,8 @@ func melee() -> void:
 	to.y = 0.0
 	var direction := _flat(to)
 	rotation.y = atan2(-direction.x, -direction.z)
+	# The lunge sets the yaw outright, so no sway is left on it to take back.
+	_sway_offset.x = 0.0
 	var stop := global_position + direction * maxf(to.length() - melee_lunge_stop, 0.0)
 	velocity.x = 0.0
 	velocity.z = 0.0
@@ -809,19 +1022,20 @@ func _land_lunge(target: Node3D) -> void:
 	_strike(target)
 
 
-## The blow: 3 from the front, a kill from inside the cone behind the target.
+## The blow: the Sandbox's Melee damage from the front, a kill from inside
+## the cone behind the target.
 func _strike(target: Node3D) -> void:
 	if not is_instance_valid(target):
 		melee_swung.emit(null, false)
 		return
-	var amount := melee_damage
+	var amount := sandbox.melee_damage
 	if _is_behind(target):
 		var target_health := target.get_node_or_null("Health") as Health
 		if target_health != null:
 			amount = maxi(target_health.current, amount)
 	target.take_damage(amount, self)
 	var killed: bool = target.has_method("is_alive") and not target.is_alive()
-	hit_landed.emit(target, killed)
+	hit_landed.emit(target, killed, false)
 	melee_swung.emit(target, killed)
 
 
@@ -913,6 +1127,10 @@ func respawn() -> void:
 	_stowed_ammo.clear()
 	_swap_left = 0.0
 	_reload_timer = 0.0
+	_shell = Shell.NONE
+	_shell_left = 0.0
+	_break_out_queued = false
+	_break_out_left = 0.0
 	_cooldown = 0.0
 	_bloom = 0.0
 	_sprint_latched = false
@@ -922,6 +1140,7 @@ func respawn() -> void:
 	_melee_cycle_left = 0.0
 	_melee_lock_left = 0.0
 	_lower_sights()
+	_sway_aim(0.0)
 	# Silence first: the state reset below must not sound like a landing.
 	audio.reset()
 	_set_state(State.WALK)

@@ -1,0 +1,11 @@
+"Shotgun Reload Sound effects", published on OpenGameArt under CC0 (no
+attribution needed): https://opengameart.org/content/shotgun-reload-sound-effects
+
+shell_in.ogg  one shell going into the Shotgun ("ShotgunSounds/First
+              Shell.mp3"), the first 0.7 s from its first onset, mono
+              44.1 kHz, peak-normalised to -1.5 dB with a 0.12 s fade. Cut
+              by the sound booth's cut.py (branch prototype/new-gun-sounds,
+              where it is audition_picks/shotgun_shell_in.ogg). One shell:
+              a run of small clicks with no gap longer than 0.05 s at
+              -30 dB before its tail. Plays as each shell seats. Picked by
+              ear in the sound booth (new-weapons decision 12).

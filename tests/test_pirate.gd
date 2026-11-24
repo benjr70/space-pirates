@@ -1,7 +1,7 @@
 extends SceneTree
 ## Headless checks on the pirate: the movement state machine (clamber ledge
 ## band, sprint grace and latch, slide-jump, crouch headroom, the CLAMBER
-## input lock) and the Sidearm (semi-auto trigger, dry-pull reload, reload
+## input lock) and the Pistol (semi-auto trigger, dry-pull reload, reload
 ## carrying through moves, spread and bloom, a swapped Weapon Profile) and
 ## Aim Down Sights (where it is allowed, what ends it, the raise out of a
 ## sprint, its zoom, slowdown and tighter cone) and the Melee (the cone, the
@@ -21,7 +21,12 @@ extends SceneTree
 const UP := Vector3.UP
 const PLAYER_SCENE: PackedScene = preload("res://scenes/player_3d.tscn")
 const HEAVY_PISTOL: WeaponProfile = preload("res://tests/weapons/heavy_pistol.tres")
-const CARBINE: WeaponProfile = preload("res://resources/weapons/carbine.tres")
+const ASSAULT_RIFLE: WeaponProfile = preload("res://resources/weapons/assault_rifle.tres")
+const SHOTGUN: WeaponProfile = preload("res://resources/weapons/shotgun.tres")
+const MARKSMAN_RIFLE: WeaponProfile = preload("res://resources/weapons/marksman_rifle.tres")
+## Pinpoint aimed and still, looser aimed and walking, with sway: the shape
+## of an aimed long gun without being one.
+const STEADY_RIFLE: WeaponProfile = preload("res://tests/weapons/steady_rifle.tres")
 const FRAME := 1.0 / 60.0
 ## Course blocks, one per height, spaced along X with their near face at Z -2.5.
 const BLOCK_HEIGHTS := [0.3, 0.5, 0.7, 0.9, 1.1, 1.3, 1.5, 1.7, 1.9, 2.1]
@@ -124,12 +129,27 @@ func _run() -> void:
 	await _check_profile_swap()
 	await _check_weapon_wheel()
 	await _check_swap_is_busy()
-	await _check_carbine_full_auto()
-	await _check_carbine_model()
+	await _check_weapon_keys()
+	await _check_assault_rifle_full_auto()
+	await _check_assault_rifle_model()
+	await _check_shotgun_pellets()
+	await _check_shotgun_hit_marker()
+	await _check_shotgun_model()
+	await _check_shell_reload()
+	await _check_shotgun_rig()
+	await _check_marksman_rifle_model()
+	await _check_marksman_rifle_rig()
+	await _check_marksman_rifle_cones()
+	await _check_marksman_rifle_on_the_sight()
+	await _check_marksman_rifle_descopes()
 	await _check_ads_states()
 	await _check_ads_ends()
 	await _check_ads_raise()
 	await _check_ads_numbers()
+	await _check_cones_unchanged()
+	await _check_aimed_moving_spread()
+	await _check_aimed_sway()
+	await _check_mouse_slowed_by_zoom()
 	await _check_descope_recovery()
 	await _check_melee_cone()
 	await _check_melee_lunge()
@@ -146,12 +166,14 @@ func _run() -> void:
 	_check_clips_exist()
 	await _check_clips_play()
 	await _check_clips_follow_profile()
-	await _check_sidearm_model()
-	await _check_sidearm_clips()
+	await _check_holder_model()
+	await _check_pistol_clips()
 	await _check_hud_crosshair()
 	await _check_hud_ammo()
+	_check_hud_health()
 	await _check_hud_dry_click()
 	await _check_audio_events()
+	_check_shot_sounds_only_in_profiles()
 	await _check_audio_reload()
 	await _check_audio_footsteps()
 	await _check_audio_impact_and_respawn()
@@ -220,7 +242,7 @@ func _build_course() -> void:
 	player.ads_changed.connect(func(on: bool) -> void: ads_seen.append(on))
 	player.descoped.connect(func() -> void: descopes += 1)
 	player.melee_swung.connect(func(target: Node3D, killed: bool) -> void: swings.append([target, killed]))
-	player.hit_landed.connect(func(target: Node3D, killed: bool) -> void: hits_landed.append([target, killed]))
+	player.hit_landed.connect(func(target: Node3D, killed: bool, _headshot: bool) -> void: hits_landed.append([target, killed]))
 
 
 func _block_x(i: int) -> float:
@@ -510,7 +532,7 @@ func _check_clamber_lockout() -> void:
 	_expect(door.is_open, "interact after the clamber did not open the door")
 
 
-## --- the Sidearm ---
+## --- the Pistol ---
 
 func _pull_trigger(frames_held: int = 1) -> void:
 	Input.action_press("shoot")
@@ -540,7 +562,7 @@ func _check_reload_lasts(seconds: float, label: String) -> void:
 func _check_semi_auto() -> void:
 	await _place(RUNWAY)
 	var profile: WeaponProfile = player.weapon
-	_expect(profile.magazine_size == 12, "the Sidearm holds %d rounds, expected 12" % profile.magazine_size)
+	_expect(profile.magazine_size == 12, "the Pistol holds %d rounds, expected 12" % profile.magazine_size)
 	_expect(player.ammo == 12, "the pirate started with %d rounds" % player.ammo)
 	await _pull_trigger(60)
 	await _frames(2)
@@ -696,7 +718,7 @@ func _check_spread() -> void:
 
 ## A different .tres changes the numbers with no code change.
 func _check_profile_swap() -> void:
-	var sidearm: WeaponProfile = player.weapon
+	var pistol: WeaponProfile = player.weapon
 	player.weapon = HEAVY_PISTOL
 	await _place(RUNWAY)
 	_expect(player.ammo == HEAVY_PISTOL.magazine_size,
@@ -714,7 +736,7 @@ func _check_profile_swap() -> void:
 	_expect(is_equal_approx(player.spread_degrees(),
 			(HEAVY_PISTOL.spread_base_degrees + HEAVY_PISTOL.bloom_per_shot_degrees) * HEAVY_PISTOL.spread_still),
 			"heavy pistol spread after a shot is %.2f deg" % player.spread_degrees())
-	player.weapon = sidearm
+	player.weapon = pistol
 	_clear_shots()
 
 
@@ -734,41 +756,51 @@ func _wheel(action: StringName) -> void:
 	await _frames(2)
 
 
-## The wheel turns Sidearm to Carbine and back, either way round, and each
-## keeps the rounds it had.
+## The wheel turns Pistol, Assault Rifle, Shotgun, Marksman Rifle and back
+## round, either way, and each keeps the rounds it had.
 func _check_weapon_wheel() -> void:
-	var sidearm: WeaponProfile = player.weapon
+	var pistol: WeaponProfile = player.weapon
 	await _place(RUNWAY)
-	_expect(player.weapons.size() == 2 and player.weapons[0] == sidearm and player.weapons[1] == CARBINE,
-			"he does not carry the Sidearm and the Carbine")
-	_expect(_fire_and_drop(), "no shot from the Sidearm before the swap")
+	_expect(player.weapons == [pistol, ASSAULT_RIFLE, SHOTGUN, MARKSMAN_RIFLE],
+			"he does not carry the Pistol, the Assault Rifle, the Shotgun and the Marksman Rifle in that order")
+	_expect(_fire_and_drop(), "no shot from the Pistol before the swap")
 	await _wheel(&"weapon_next")
-	_expect(player.weapon == CARBINE, "wheel down did not bring up the Carbine")
-	_expect(player.ammo == CARBINE.magazine_size, "the Carbine came up with %d rounds, not a full %d" % [player.ammo, CARBINE.magazine_size])
+	_expect(player.weapon == ASSAULT_RIFLE, "wheel down did not bring up the Assault Rifle")
+	_expect(player.ammo == ASSAULT_RIFLE.magazine_size, "the Assault Rifle came up with %d rounds, not a full %d" % [player.ammo, ASSAULT_RIFLE.magazine_size])
 	await _seconds(player.swap_time + 0.05)
-	_expect(_fire_and_drop(), "no shot from the Carbine after the swap")
+	_expect(_fire_and_drop(), "no shot from the Assault Rifle after the swap")
 	await _wheel(&"weapon_next")
-	_expect(player.weapon == sidearm, "a second turn did not come back to the Sidearm")
-	_expect(player.ammo == sidearm.magazine_size - 1, "the Sidearm came back with %d rounds, it was stowed with %d" % [player.ammo, sidearm.magazine_size - 1])
+	_expect(player.weapon == SHOTGUN, "a second turn did not bring up the Shotgun")
+	_expect(player.ammo == SHOTGUN.magazine_size, "the Shotgun came up with %d shells, not a full %d" % [player.ammo, SHOTGUN.magazine_size])
+	await _wheel(&"weapon_next")
+	_expect(player.weapon == MARKSMAN_RIFLE, "a third turn did not bring up the Marksman Rifle")
+	_expect(player.ammo == MARKSMAN_RIFLE.magazine_size, "the Marksman Rifle came up with %d rounds, not a full %d" % [player.ammo, MARKSMAN_RIFLE.magazine_size])
+	await _wheel(&"weapon_next")
+	_expect(player.weapon == pistol, "a fourth turn did not come back to the Pistol")
+	_expect(player.ammo == pistol.magazine_size - 1, "the Pistol came back with %d rounds, it was stowed with %d" % [player.ammo, pistol.magazine_size - 1])
 	await _wheel(&"weapon_prev")
-	_expect(player.weapon == CARBINE, "wheel up did not bring up the Carbine")
-	_expect(player.ammo == CARBINE.magazine_size - 1, "the Carbine came back with %d rounds, it was stowed with %d" % [player.ammo, CARBINE.magazine_size - 1])
+	_expect(player.weapon == MARKSMAN_RIFLE, "wheel up did not bring up the Marksman Rifle")
 	await _wheel(&"weapon_prev")
-	_expect(player.weapon == sidearm, "the wheel did not end on the Sidearm")
+	_expect(player.weapon == SHOTGUN, "wheel up twice did not bring up the Shotgun")
+	await _wheel(&"weapon_prev")
+	_expect(player.weapon == ASSAULT_RIFLE, "wheel up three times did not bring up the Assault Rifle")
+	_expect(player.ammo == ASSAULT_RIFLE.magazine_size - 1, "the Assault Rifle came back with %d rounds, it was stowed with %d" % [player.ammo, ASSAULT_RIFLE.magazine_size - 1])
+	await _wheel(&"weapon_prev")
+	_expect(player.weapon == pistol, "the wheel did not end on the Pistol")
 	await _place(RUNWAY)
-	_expect(player.weapon == sidearm and player.ammo == sidearm.magazine_size, "a respawn did not leave him a full Sidearm")
+	_expect(player.weapon == pistol and player.ammo == pistol.magazine_size, "a respawn did not leave him a full Pistol")
 	player.switch_weapon(1)
-	_expect(player.ammo == CARBINE.magazine_size, "a respawn did not refill the stowed Carbine")
-	player.switch_weapon(1)
+	_expect(player.ammo == ASSAULT_RIFLE.magazine_size, "a respawn did not refill the stowed Assault Rifle")
+	player.switch_weapon(-1)
 	await _place(RUNWAY)
 
 
 ## A swap holds the trigger and the sights for its time, and drops a reload.
 func _check_swap_is_busy() -> void:
-	var sidearm: WeaponProfile = player.weapon
+	var pistol: WeaponProfile = player.weapon
 	await _place(RUNWAY)
 	_expect(_fire_and_drop(), "no shot to start a reload from")
-	await _seconds(sidearm.fire_interval + 0.05)
+	await _seconds(pistol.fire_interval + 0.05)
 	player.start_reload()
 	_expect(player.is_reloading(), "no reload to swap out of")
 	await _aim(true)
@@ -784,78 +816,110 @@ func _check_swap_is_busy() -> void:
 	_expect(_fire_and_drop(), "no shot after the swap")
 	await _aim(false)
 	player.switch_weapon(-1)
-	_expect(player.ammo == sidearm.magazine_size - 1, "the dropped reload still filled the Sidearm")
+	_expect(player.ammo == pistol.magazine_size - 1, "the dropped reload still filled the Pistol")
 	await _place(RUNWAY)
 
 
-## The Carbine is fully automatic: a held trigger keeps firing at its
-## interval, where the Sidearm fires once.
-func _check_carbine_full_auto() -> void:
-	var sidearm: WeaponProfile = player.weapon
+## Keys 1 to 4 pick the Pistol, Assault Rifle, Shotgun and Marksman Rifle
+## directly, each through the same swap as the wheel: it takes the swap
+## time and is refused mid-swing. The key of the weapon in hand does nothing.
+func _check_weapon_keys() -> void:
+	var pistol: WeaponProfile = player.weapon
+	await _place(RUNWAY)
+	var wanted := [pistol, ASSAULT_RIFLE, SHOTGUN, MARKSMAN_RIFLE]
+	for i in 4:
+		var action := StringName("weapon_%d" % (i + 1))
+		var bound := InputMap.has_action(action) and InputMap.action_get_events(action).any(
+				func(e: InputEvent) -> bool: return e is InputEventKey and (e as InputEventKey).physical_keycode == KEY_1 + i)
+		_expect(bound, "no %s action on the %d key" % [action, i + 1])
+	if not InputMap.has_action(&"weapon_1"):
+		return
+	await _wheel(&"weapon_1")
+	_expect(player.weapon == pistol and not player.is_swapping(), "the Pistol's key swapped the Pistol in hand")
+	for i in [3, 1, 2, 0]:
+		await _wheel(StringName("weapon_%d" % (i + 1)))
+		_expect(player.weapon == wanted[i], "key %d brought up %s" % [i + 1, player.weapon.resource_path.get_file()])
+		_expect(player.is_swapping() and player.fire() == null, "the swap to key %d was not busy" % (i + 1))
+		await _seconds(player.swap_time - 0.1)
+		_expect(player.is_swapping(), "the swap to key %d ended before %.1f s" % [i + 1, player.swap_time])
+		await _seconds(0.15)
+		_expect(not player.is_swapping(), "the swap to key %d outlasted %.1f s" % [i + 1, player.swap_time])
+	await _dummy(100, 6.0)
+	await _swing()
+	await _wheel(&"weapon_4")
+	_expect(player.weapon == pistol, "a key swapped weapons mid-swing")
+	await _cycle()
+	await _clear_dummy()
+	await _place(RUNWAY)
+
+## The Assault Rifle is fully automatic: a held trigger keeps firing at its
+## interval, where the Pistol fires once.
+func _check_assault_rifle_full_auto() -> void:
+	var pistol: WeaponProfile = player.weapon
 	await _place(RUNWAY)
 	player.switch_weapon(1)
 	await _seconds(player.swap_time + 0.05)
-	_expect(not CARBINE.semi_auto, "the Carbine's Profile is semi-automatic")
+	_expect(not ASSAULT_RIFLE.semi_auto, "the Assault Rifle's Profile is semi-automatic")
 	shots_fired = 0
 	Input.action_press("shoot")
 	await _seconds(1.0)
 	Input.action_release("shoot")
-	var wanted := int(1.0 / CARBINE.fire_interval)
+	var wanted := int(1.0 / ASSAULT_RIFLE.fire_interval)
 	_expect(absi(shots_fired - wanted) <= 2, "a second of held trigger fired %d shots, about %d expected" % [shots_fired, wanted])
-	_expect(player.ammo == CARBINE.magazine_size - shots_fired, "the Carbine spent %d rounds on %d shots" % [CARBINE.magazine_size - player.ammo, shots_fired])
+	_expect(player.ammo == ASSAULT_RIFLE.magazine_size - shots_fired, "the Assault Rifle spent %d rounds on %d shots" % [ASSAULT_RIFLE.magazine_size - player.ammo, shots_fired])
 	await _frames(2)
 	_clear_shots()
-	player.switch_weapon(1)
-	_expect(player.weapon == sidearm, "the wheel did not end on the Sidearm")
+	player.switch_weapon(-1)
+	_expect(player.weapon == pistol, "the wheel did not end on the Pistol")
 	await _place(RUNWAY)
 
 
-## The Viewmodel swaps the mesh: the Carbine's own clips, muzzle and sights,
+## The Viewmodel swaps the mesh: the Assault Rifle's own clips, muzzle and sights,
 ## its front sight on the camera axis in ADS, and the pistol back afterwards.
-func _check_carbine_model() -> void:
-	var sidearm: WeaponProfile = player.weapon
+func _check_assault_rifle_model() -> void:
+	var pistol: WeaponProfile = player.weapon
 	await _place(RUNWAY)
-	var pistol_clips: AnimationPlayer = weapon.sidearm_clips
+	var pistol_clips: AnimationPlayer = weapon.model_clips
 	var pistol_muzzle: Vector3 = player.muzzle.position
 	player.switch_weapon(1)
 	await _seconds(player.swap_time + 0.3)
-	var anim: AnimationPlayer = weapon.sidearm_clips
-	_expect(anim != null and anim != pistol_clips, "the Carbine did not bring its own clips")
+	var anim: AnimationPlayer = weapon.model_clips
+	_expect(anim != null and anim != pistol_clips, "the Assault Rifle did not bring its own clips")
 	if anim != null:
-		for clip_name in [CARBINE.model_fire_clip, CARBINE.model_reload_clip, CARBINE.model_rack_clip]:
-			_expect(anim.has_animation(clip_name), "the Carbine mesh lacks the %s clip" % clip_name)
-	_expect(player.muzzle.position.z > pistol_muzzle.z + 0.2, "the Carbine's muzzle is at %s, no further out than the pistol's" % player.muzzle.position)
-	_at_pose(CARBINE.pose_hip, "Carbine at the hip")
+		for clip_name in [ASSAULT_RIFLE.model_fire_clip, ASSAULT_RIFLE.model_reload_clip, ASSAULT_RIFLE.model_rack_clip]:
+			_expect(anim.has_animation(clip_name), "the Assault Rifle mesh lacks the %s clip" % clip_name)
+	_expect(player.muzzle.position.z > pistol_muzzle.z + 0.2, "the Assault Rifle's muzzle is at %s, no further out than the pistol's" % player.muzzle.position)
+	_at_pose(ASSAULT_RIFLE.pose_hip, "Assault Rifle at the hip")
 	var shown := 0
-	for model in weapon.sidearm.get_children():
+	for model in weapon.holder.get_children():
 		if (model as Node3D).visible:
 			shown += 1
 	_expect(shown == 1, "%d weapon meshes are showing" % shown)
-	_expect(_fire_and_drop(), "no shot for the Carbine fire clip")
+	_expect(_fire_and_drop(), "no shot for the Assault Rifle fire clip")
 	await _frames(1)
-	_expect(anim.current_animation == CARBINE.model_fire_clip and anim.is_playing(), "a shot played %s on the Carbine" % anim.current_animation)
+	_expect(anim.current_animation == ASSAULT_RIFLE.model_fire_clip and anim.is_playing(), "a shot played %s on the Assault Rifle" % anim.current_animation)
 	await _aim(true)
 	await _seconds(0.5)
 	var sight: Node3D = weapon.get_node("SightTip")
 	var in_camera: Vector3 = player.camera.to_local(sight.global_position)
 	_expect(absf(in_camera.x) < 0.005 and absf(in_camera.y) < 0.005,
-			"in ADS the Carbine's front sight sits at (%.3f, %.3f) m off the camera axis" % [in_camera.x, in_camera.y])
-	_expect(in_camera.z < 0.0, "the Carbine's front sight is behind the camera in ADS")
+			"in ADS the Assault Rifle's front sight sits at (%.3f, %.3f) m off the camera axis" % [in_camera.x, in_camera.y])
+	_expect(in_camera.z < 0.0, "the Assault Rifle's front sight is behind the camera in ADS")
 	# The rear ring sits on the same line, nearer the eye, so he looks
 	# through it at the post.
-	var rear: Node3D = weapon.sidearm.find_child("SightRear", true, false)
-	_expect(rear != null, "the Carbine mesh has no SightRear marker")
+	var rear: Node3D = weapon.holder.find_child("SightRear", true, false)
+	_expect(rear != null, "the Assault Rifle mesh has no SightRear marker")
 	if rear != null:
 		var ring: Vector3 = player.camera.to_local(rear.global_position)
 		_expect(absf(ring.x) < 0.003 and absf(ring.y) < 0.003,
-				"in ADS the Carbine's rear ring sits at (%.3f, %.3f) m off the camera axis" % [ring.x, ring.y])
+				"in ADS the Assault Rifle's rear ring sits at (%.3f, %.3f) m off the camera axis" % [ring.x, ring.y])
 		_expect(ring.z < -0.06 and ring.z > in_camera.z + 0.3,
 				"the rear ring is %.2f m out and the post %.2f m: not a sight line to look down" % [-ring.z, -in_camera.z])
 	# Braced in the shoulder: an aimed shot comes straight back, the muzzle
 	# does not climb and the sights stay on the line.
 	var rest_pitch: float = weapon.rotation_degrees.x
 	var rest_z: float = weapon.position.z
-	_expect(_fire_and_drop(), "no aimed shot from the Carbine")
+	_expect(_fire_and_drop(), "no aimed shot from the Assault Rifle")
 	var climb := 0.0
 	var push := 0.0
 	var drift := 0.0
@@ -865,15 +929,639 @@ func _check_carbine_model() -> void:
 		push = maxf(push, weapon.position.z - rest_z)
 		var tip: Vector3 = player.camera.to_local(sight.global_position)
 		drift = maxf(drift, Vector2(tip.x, tip.y).length())
-	_expect(climb < 0.2, "an aimed Carbine shot tipped the weapon %.1f deg" % climb)
-	_expect(push > 0.01, "an aimed Carbine shot pushed it back only %.3f m" % push)
-	_expect(drift < 0.005, "an aimed Carbine shot threw the front sight %.3f m off the line" % drift)
+	_expect(climb < 0.2, "an aimed Assault Rifle shot tipped the weapon %.1f deg" % climb)
+	_expect(push > 0.01, "an aimed Assault Rifle shot pushed it back only %.3f m" % push)
+	_expect(drift < 0.005, "an aimed Assault Rifle shot threw the front sight %.3f m off the line" % drift)
 	await _aim(false)
 	_clear_shots()
-	player.switch_weapon(1)
+	player.switch_weapon(-1)
 	await _seconds(player.swap_time + 0.3)
-	_expect(player.weapon == sidearm and weapon.sidearm_clips == pistol_clips, "the pistol's mesh did not come back")
+	_expect(player.weapon == pistol and weapon.model_clips == pistol_clips, "the pistol's mesh did not come back")
 	_expect(player.muzzle.position.is_equal_approx(pistol_muzzle), "the muzzle did not go back to the pistol's")
+	await _place(RUNWAY)
+
+
+
+## The skeleton of the model showing in the holder.
+func _mounted_skeleton() -> Skeleton3D:
+	for model in weapon.holder.get_children():
+		if (model as Node3D).visible:
+			return model.find_child("Skeleton3D", true, false)
+	return null
+
+
+## How far [param bone] on the mounted model's skeleton sits from its rest.
+func _bone_offset(bone: String) -> float:
+	var skeleton := _mounted_skeleton()
+	var i := skeleton.find_bone(bone)
+	return (skeleton.get_bone_pose_position(i) - skeleton.get_bone_rest(i).origin).length()
+
+
+## The Shotgun's rig: the fore-end racks 7.5 cm after every shot, starting
+## 0.15 s in and back by 0.55 s, with the pump sound 0.2 s after the shot.
+## Each shell loaded plays the shell clip and the shell sound once, the
+## sound with the counter; a reload from empty ends with the pump clip and
+## sound, a top-up does not; a shot breaking in stops the clip and puts the
+## bones back at rest.
+func _check_shotgun_rig() -> void:
+	# Read through variables: the Profile is a constant, and a field still
+	# blank would not parse.
+	var pump_sound: AudioStream = SHOTGUN.action_sound
+	var shell_sound: AudioStream = SHOTGUN.reload_sounds[0] if not SHOTGUN.reload_sounds.is_empty() else null
+	await _place(RUNWAY)
+	await _hold(SHOTGUN)
+	var anim: AnimationPlayer = weapon.model_clips
+	var skeleton := _mounted_skeleton()
+	for bone in ["Pump", "Shell"]:
+		_expect(skeleton != null and skeleton.find_bone(bone) >= 0, "the Shotgun's skeleton has no %s bone" % bone)
+	for clip_name in [SHOTGUN.model_fire_clip, SHOTGUN.model_reload_clip, SHOTGUN.model_rack_clip]:
+		_expect(clip_name != &"" and anim.has_animation(clip_name), "the Shotgun mesh lacks the '%s' clip" % clip_name)
+	if skeleton == null or skeleton.find_bone("Pump") < 0 or not anim.has_animation(SHOTGUN.model_rack_clip) \
+			or not anim.has_animation(SHOTGUN.model_reload_clip):
+		await _hold(player.weapons[0])
+		return
+	_expect(is_equal_approx(anim.get_animation(SHOTGUN.model_fire_clip).length, 0.55)
+			and is_equal_approx(SHOTGUN.fire_cycle_time, 0.55),
+			"the Shotgun's pump clip is %.2f s played over %.2f s, not 0.55" % [anim.get_animation(SHOTGUN.model_fire_clip).length, SHOTGUN.fire_cycle_time])
+	_expect(pump_sound != null and pump_sound.resource_path.ends_with("shotgun_pump.ogg")
+			and is_equal_approx(SHOTGUN.action_sound_delay, 0.2),
+			"the Shotgun's action sound is %s after %.2f s, not the pump after 0.2 s" % [pump_sound, SHOTGUN.action_sound_delay])
+
+	# The pump after a shot.
+	sounds.clear()
+	_expect(_fire_and_drop(), "no Shotgun shot for the pump")
+	await _seconds(0.1)
+	_expect(_bone_offset("Pump") < 0.003, "the fore-end moved %.3f m before 0.15 s" % _bone_offset("Pump"))
+	_expect(not sounds.any(func(s: Array) -> bool: return s[0] == &"action"), "the pump sounded before 0.2 s")
+	await _seconds(0.2)
+	_expect(absf(_bone_offset("Pump") - 0.075) < 0.006, "0.3 s after the shot the fore-end is %.3f m back, not 0.075" % _bone_offset("Pump"))
+	var pumps := sounds.filter(func(s: Array) -> bool: return s[0] == &"action")
+	_expect(pumps.size() == 1 and pumps[0][1] == pump_sound, "the pump after the shot sounded %s" % [sounds])
+	await _seconds(0.3)
+	_expect(_bone_offset("Pump") < 0.003 and not anim.is_playing(), "0.6 s after the shot the fore-end is still %.3f m back" % _bone_offset("Pump"))
+	_clear_shots()
+
+	# Empty to full: one shell clip and one shell sound per shell, then the pump.
+	var started: Array = []
+	var on_clip := func(clip: StringName) -> void: started.append(clip)
+	anim.animation_started.connect(on_clip)
+	var out_of_step: Array = []
+	var on_shell := func() -> void:
+		var shell_sounds := sounds.filter(func(s: Array) -> bool: return s[0] == &"shell_in").size()
+		if shell_sounds != player.ammo:
+			out_of_step.append([player.ammo, shell_sounds])
+	player.shell_loaded.connect(on_shell)
+	sounds.clear()
+	player.ammo = 0
+	player.start_reload()
+	await _frames(1)
+	_expect(anim.current_animation == SHOTGUN.model_reload_clip, "loading the first shell plays '%s'" % anim.current_animation)
+	await _seconds(SHOTGUN.seconds_empty_to_full() + 0.2)
+	_expect(player.ammo == 6 and not player.is_reloading(), "the Shotgun did not fill from empty (%d)" % player.ammo)
+	var shells := started.count(SHOTGUN.model_reload_clip)
+	_expect(shells == 6, "six shells played the shell clip %d times" % shells)
+	_expect(started.back() == SHOTGUN.model_rack_clip and started.count(SHOTGUN.model_rack_clip) == 1,
+			"a reload from empty did not end on one pump clip: %s" % [started])
+	var shell_in := sounds.filter(func(s: Array) -> bool: return s[0] == &"shell_in")
+	_expect(shell_in.size() == 6 and shell_in.all(func(s: Array) -> bool: return s[1] == shell_sound),
+			"six shells sounded %d shell sounds" % shell_in.size())
+	_expect(shell_sound != null and shell_sound.resource_path.ends_with("shell_in.ogg"), "the Shotgun's shell sound is %s" % shell_sound)
+	_expect(out_of_step.is_empty(), "the shell sound fell out of step with the counter: [shells, sounds] %s" % [out_of_step])
+	var closing := sounds.filter(func(s: Array) -> bool: return s[0] == &"pump")
+	_expect(closing.size() == 1 and closing[0][1] == pump_sound, "the closing pump sounded %s" % [closing])
+	_expect(_bone_offset("Pump") < 0.003 and _bone_offset("Shell") < 0.003, "the bones did not come to rest after the reload")
+
+	# A top-up from 4: two shells, no pump.
+	started.clear()
+	sounds.clear()
+	player.ammo = 4
+	player.start_reload()
+	await _seconds(SHOTGUN.first_shell_time + SHOTGUN.shell_time + 0.2)
+	_expect(player.ammo == 6 and not player.is_reloading(), "the top-up from 4 left %d shells" % player.ammo)
+	_expect(started.count(SHOTGUN.model_reload_clip) == 2 and not started.has(SHOTGUN.model_rack_clip),
+			"a top-up of two played %s" % [started])
+	_expect(sounds.filter(func(s: Array) -> bool: return s[0] == &"shell_in").size() == 2
+			and not sounds.any(func(s: Array) -> bool: return s[0] == &"pump"),
+			"a top-up of two sounded %s" % [sounds])
+
+	# A shot breaking in stops the shell clip with the bones at rest.
+	player.ammo = 1
+	player.start_reload()
+	await _seconds(SHOTGUN.first_shell_time + 0.2)
+	_expect(anim.current_animation == SHOTGUN.model_reload_clip and _bone_offset("Shell") > 0.003,
+			"the second shell is not on its way in (%s)" % anim.current_animation)
+	player.fire()
+	await _frames(1)
+	_expect(not anim.is_playing() and _bone_offset("Shell") < 0.001 and _bone_offset("Pump") < 0.001,
+			"a shot breaking in left '%s' playing, the shell %.3f m out" % [anim.current_animation, _bone_offset("Shell")])
+	await _seconds(SHOTGUN.break_out_time + 0.05)
+	_expect(anim.current_animation == SHOTGUN.model_fire_clip, "the break-out shot played '%s'" % anim.current_animation)
+	await _seconds(0.6)
+
+	anim.animation_started.disconnect(on_clip)
+	player.shell_loaded.disconnect(on_shell)
+	_clear_shots()
+	await _hold(player.weapons[0])
+	await _place(RUNWAY)
+
+## --- the Marksman Rifle ---
+
+## The Marksman Rifle comes up as the black bullpup at its picked poses,
+## with its own clips, its own shot sound and 3x over sights that line up.
+func _check_marksman_rifle_model() -> void:
+	await _place(RUNWAY)
+	var pistol_clips: AnimationPlayer = weapon.model_clips
+	var hip_fov: float = player.camera.fov
+	await _hold(MARKSMAN_RIFLE)
+	var anim: AnimationPlayer = weapon.model_clips
+	_expect(anim != null and anim != pistol_clips, "the Marksman Rifle did not bring its own clips")
+	if anim != null:
+		for clip_name in [MARKSMAN_RIFLE.model_fire_clip, MARKSMAN_RIFLE.model_reload_clip, MARKSMAN_RIFLE.model_rack_clip]:
+			_expect(anim.has_animation(clip_name), "the Marksman Rifle mesh lacks the %s clip" % clip_name)
+	var bones := _mounted_skeleton()
+	for bone in ["Bolt", "Magazine"]:
+		_expect(bones != null and bones.find_bone(bone) >= 0, "the mounted Marksman Rifle has no %s bone" % bone)
+	var shown := 0
+	for model in weapon.holder.get_children():
+		if (model as Node3D).visible:
+			shown += 1
+	_expect(shown == 1, "%d weapon meshes are showing" % shown)
+	_expect(MARKSMAN_RIFLE.pose_hip.is_equal_approx(Vector3(0.15, -0.2, -0.36)) and is_equal_approx(MARKSMAN_RIFLE.ads_distance, 0.36),
+			"the Marksman Rifle's hip pose is %s and aimed distance %.2f, not the picked (0.15, -0.2, -0.36) and 0.36" % [MARKSMAN_RIFLE.pose_hip, MARKSMAN_RIFLE.ads_distance])
+	_expect(MARKSMAN_RIFLE.pose_low.y < MARKSMAN_RIFLE.pose_hip.y - 0.08, "the Marksman Rifle's lowered pose %s is not clearly below its hip pose" % MARKSMAN_RIFLE.pose_low)
+	_at_pose(MARKSMAN_RIFLE.pose_hip, "Marksman Rifle at the hip")
+	sounds.clear()
+	_expect(_fire_and_drop(), "no Marksman Rifle shot")
+	var shot_streams := sounds.filter(func(s: Array) -> bool: return s[0] == &"shot")
+	_expect(shot_streams.size() == 1 and (shot_streams[0][1] as AudioStream).resource_path.contains("firearm_library_marksman/shot"),
+			"a Marksman Rifle shot sounded %s, not its own shot" % [sounds])
+	_expect(is_equal_approx(MARKSMAN_RIFLE.loudness, 24.0), "the Marksman Rifle is %.1f m loud, not 24" % MARKSMAN_RIFLE.loudness)
+	_expect(player.fire() == null, "the Marksman Rifle fired again inside its 0.4 s")
+	await _seconds(0.45)
+	_expect(_fire_and_drop(), "the Marksman Rifle did not fire again after 0.4 s")
+	await _aim(true)
+	await _seconds(0.5)
+	var zoomed_fov := rad_to_deg(2.0 * atan(tan(deg_to_rad(hip_fov) / 2.0) / 3.0))
+	_expect(absf(player.camera.fov - zoomed_fov) < 0.5, "the Marksman Rifle's aimed FOV is %.1f, not %.1f for 3x" % [player.camera.fov, zoomed_fov])
+	var tip: Vector3 = player.camera.to_local((weapon.get_node("SightTip") as Node3D).global_position)
+	_expect(absf(tip.x) < 0.005 and absf(tip.y) < 0.005 and tip.z < 0.0,
+			"in ADS the Marksman Rifle's front sight sits at (%.3f, %.3f) m off the camera axis" % [tip.x, tip.y])
+	# The holder keeps every model mounted so far: look in the one showing.
+	var rear: Node3D = null
+	for model in weapon.holder.get_children():
+		if (model as Node3D).visible:
+			rear = model.find_child("SightRear", true, false)
+	_expect(rear != null, "the Marksman Rifle mesh has no SightRear marker")
+	if rear != null:
+		var ring: Vector3 = player.camera.to_local(rear.global_position)
+		_expect(absf(ring.x) < 0.003 and absf(ring.y) < 0.003,
+				"in ADS the Marksman Rifle's rear ring sits at (%.3f, %.3f) m off the camera axis" % [ring.x, ring.y])
+		_expect(ring.z < -0.06 and ring.z > tip.z + 0.3,
+				"the rear ring is %.2f m out and the post %.2f m: not a sight line to look down" % [-ring.z, -tip.z])
+	await _aim(false)
+	Input.action_press("move_up")
+	Input.action_press("sprint")
+	await _seconds(0.4)
+	_expect(player.state == player.State.SPRINT, "no Sprint for the Marksman Rifle's lowered pose")
+	_at_pose(MARKSMAN_RIFLE.pose_low, "Marksman Rifle lowered in a Sprint")
+	Input.action_release("sprint")
+	Input.action_release("move_up")
+	_clear_shots()
+	await _hold(player.weapons[0])
+	await _place(RUNWAY)
+
+
+## The Marksman Rifle's rig: the bolt runs back and home on every shot; a
+## reload drops the magazine out below the butt and seats a fresh one, with
+## the magazine sound's two halves as it comes out and as it goes in; a
+## reload from empty racks the bolt after.
+func _check_marksman_rifle_rig() -> void:
+	await _place(RUNWAY)
+	await _hold(MARKSMAN_RIFLE)
+	var anim: AnimationPlayer = weapon.model_clips
+	var skeleton := _mounted_skeleton()
+	if skeleton == null or skeleton.find_bone("Bolt") < 0 or skeleton.find_bone("Magazine") < 0:
+		_expect(false, "no Marksman Rifle skeleton to watch")
+		await _hold(player.weapons[0])
+		return
+	var mag := skeleton.find_bone("Magazine")
+	for shot in 2:
+		_expect(_fire_and_drop(), "no Marksman Rifle shot %d for the bolt" % (shot + 1))
+		var travel := 0.0
+		for i in 12:
+			await physics_frame
+			travel = maxf(travel, _bone_offset("Bolt"))
+		_expect(travel > 0.03, "shot %d moved the bolt %.3f m, not a cycle" % [shot + 1, travel])
+		_expect(_bone_offset("Bolt") < 0.002, "after shot %d the bolt is still %.3f m back" % [shot + 1, _bone_offset("Bolt")])
+		await _seconds(0.3)
+	_clear_shots()
+
+	var started: Array = []
+	var on_clip := func(clip: StringName) -> void: started.append(clip)
+	anim.animation_started.connect(on_clip)
+	sounds.clear()
+	player.start_reload()
+	_expect(player.is_reloading(), "no Marksman Rifle reload")
+	var lowest := 0.0
+	for i in ceili(MARKSMAN_RIFLE.reload_tactical / FRAME) + 6:
+		await physics_frame
+		var at := skeleton.get_bone_global_pose(mag).origin - skeleton.get_bone_global_rest(mag).origin
+		lowest = minf(lowest, at.y)
+	_expect(lowest < -0.2, "the magazine dropped only %.3f m on a reload" % -lowest)
+	_expect(not player.is_reloading() and player.ammo == 8, "the reload left %d rounds" % player.ammo)
+	_expect(_bone_offset("Magazine") < 0.002, "the fresh magazine did not seat (%.3f m out)" % _bone_offset("Magazine"))
+	var kinds := _sound_kinds()
+	_expect(kinds.has(&"mag_out") and kinds.has(&"mag_in"), "the Marksman Rifle reload sounded %s" % [kinds])
+	var reload_streams := sounds.filter(func(s: Array) -> bool: return s[0] == &"mag_out" or s[0] == &"mag_in").map(
+			func(s: Array) -> String: return (s[1] as AudioStream).resource_path.get_file())
+	_expect(reload_streams == ["rifle_magazine_out.ogg", "rifle_magazine_in.ogg"],
+			"the Marksman Rifle reload played %s" % [reload_streams])
+	started.clear()
+	player.ammo = 0
+	player.start_reload()
+	await _seconds(MARKSMAN_RIFLE.reload_empty + 0.1)
+	_expect(started == [MARKSMAN_RIFLE.model_reload_clip, MARKSMAN_RIFLE.model_rack_clip],
+			"a reload from empty played %s, not the magazine then the rack" % [started])
+	_expect(player.ammo == 8 and _bone_offset("Bolt") < 0.002 and _bone_offset("Magazine") < 0.002,
+			"the reload from empty did not end full with the bones at rest")
+	anim.animation_started.disconnect(on_clip)
+	await _hold(player.weapons[0])
+	await _place(RUNWAY)
+
+
+## The Marksman Rifle's cones: 3 degrees at the hip, pinpoint aimed and
+## still or crouched, 1.2 degrees aimed and walking, and wide in the air.
+func _check_marksman_rifle_cones() -> void:
+	var cones: Dictionary = await _stance_cones(MARKSMAN_RIFLE)
+	var wanted := {"hip still": 3.0, "hip walking": 4.5, "hip crouched": 2.4, "hip air": 6.0, "hip slide": 6.0,
+			"aimed still": 0.05, "aimed walking": 1.2, "aimed crouched": 0.04, "aimed air": 0.1}
+	for stance: String in wanted:
+		_expect(absf(cones[stance] - wanted[stance]) < 0.001,
+				"the Marksman Rifle's %s cone is %.3f deg, want %.3f" % [stance, cones[stance], wanted[stance]])
+
+
+## Aimed and still, a Marksman Rifle shot strikes a wall 20 m off within a
+## few centimetres of where the front sight sits; from the hip shots
+## scatter across the 3 degree cone.
+func _check_marksman_rifle_on_the_sight() -> void:
+	const FAR := Vector3(60.0, 0.0, 25.0)
+	var wall := _box("SightWall", Vector3(8.0, 3.0, 0.2), Vector3(FAR.x, 1.5, FAR.z - 20.1))
+	await _place(FAR)
+	await _hold(MARKSMAN_RIFLE)
+	player.head.rotation.x = 0.0
+	var aimed: Array[float] = await _misses_at_wall(FAR.z - 20.0, true)
+	var hip: Array[float] = await _misses_at_wall(FAR.z - 20.0, false)
+	_expect(aimed.size() == 8 and aimed.max() < 0.03,
+			"aimed and still at 20 m, shots struck %s m from the front sight, want within 0.03" % [aimed])
+	var scatter: float = hip.max() if not hip.is_empty() else 0.0
+	_expect(hip.size() == 8 and scatter > 0.25 and scatter < 1.1,
+			"from the hip at 20 m, shots struck %s m from the crosshair, want scattered over the 3 degree cone (up to 1.05)" % [hip])
+	wall.free()
+	await _hold(player.weapons[0])
+	await _place(RUNWAY)
+
+
+## Eight shots at the wall standing at [param wall_z], each waited out, and
+## how far each struck from where the crosshair (and in ADS the front sight)
+## pointed the moment it fired.
+func _misses_at_wall(wall_z: float, aimed: bool) -> Array[float]:
+	if aimed:
+		await _aim(true)
+		await _seconds(0.5)
+		var tip: Vector3 = player.camera.to_local((weapon.get_node("SightTip") as Node3D).global_position)
+		_expect(Vector2(tip.x, tip.y).length() < 0.005, "the front sight is off the aim line for the 20 m check")
+	var misses: Array[float] = []
+	for i in 8:
+		player.ammo = MARKSMAN_RIFLE.magazine_size
+		var aim: Vector3 = player.aim_point()
+		var shot: Projectile3D = player.fire()
+		if shot == null:
+			continue
+		var t := (wall_z - shot.global_position.z) / shot.direction.z
+		var struck := shot.global_position + shot.direction * t
+		misses.append(snappedf(struck.distance_to(aim), 0.001))
+		await _seconds(0.6)
+		_clear_shots()
+	if aimed:
+		await _aim(false)
+	return misses
+
+
+## A hit while aimed drops the Marksman Rifle's sights like any gun's.
+func _check_marksman_rifle_descopes() -> void:
+	await _place(RUNWAY)
+	await _hold(MARKSMAN_RIFLE)
+	await _aim(true)
+	await _seconds(0.3)
+	_expect(player.ads, "no Marksman Rifle sights up to hit")
+	descopes = 0
+	player.take_damage(1)
+	await _frames(1)
+	_expect(not player.ads and descopes == 1, "a hit did not Descope the Marksman Rifle")
+	await _seconds(0.4)
+	_expect(player.ads, "the Marksman Rifle's sights did not come back with aim held")
+	await _aim(false)
+	await _hold(player.weapons[0])
+	await _place(RUNWAY)
+
+
+## --- the Shotgun ---
+
+## Angles in degrees between each pellet of the last shot and the line from
+## where it started to the crosshair, read the moment it is fired.
+func _pellet_angles() -> Array[float]:
+	var angles: Array[float] = []
+	for pellet: Projectile3D in player.last_pellets:
+		var aim: Vector3 = (player.aim_point() - pellet.global_position).normalized()
+		angles.append(rad_to_deg(aim.angle_to(pellet.direction)))
+	return angles
+
+
+## Round the wheel to [param profile], and the swap waited out.
+func _hold(profile: WeaponProfile) -> void:
+	player.switch_weapon(player.weapons.find(profile) - player.weapons.find(player.weapon))
+	await _seconds(player.swap_time + 0.3)
+	_expect(player.weapon == profile, "the wheel did not reach %s" % profile.resource_path.get_file())
+
+
+## A Shotgun shot spends one shell and launches 12 pellets, each doing the
+## Profile's damage, all inside the 5 degree cone and spread over its area,
+## not bunched on the crosshair or pushed to the rim. A Slide does not widen
+## it. The Pistol and Assault Rifle still fire one projectile.
+func _check_shotgun_pellets() -> void:
+	await _place(RUNWAY)
+	_expect(_fire_and_drop(), "no Pistol shot to count")
+	_expect(player.last_pellets.size() == 1, "a Pistol shot launched %d projectiles" % player.last_pellets.size())
+	await _hold(ASSAULT_RIFLE)
+	_expect(_fire_and_drop(), "no Assault Rifle shot to count")
+	_expect(player.last_pellets.size() == 1, "an Assault Rifle shot launched %d projectiles" % player.last_pellets.size())
+	_clear_shots()
+	await _place(RUNWAY)
+	await _hold(SHOTGUN)
+	_expect(SHOTGUN.pellet_count == 12 and SHOTGUN.damage == 13, "the Shotgun fires %d pellets of %d, not 12 of 13" % [SHOTGUN.pellet_count, SHOTGUN.damage])
+	_expect(is_equal_approx(player.spread_degrees(), 5.0), "the Shotgun's cone stood still is %.2f deg, not 5" % player.spread_degrees())
+	var angles: Array[float] = []
+	for i in SHOTGUN.magazine_size:
+		_expect(player.fire() != null, "Shotgun shot %d did not fire" % i)
+		_expect(player.last_pellets.size() == 12, "a Shotgun shot launched %d pellets" % player.last_pellets.size())
+		for pellet in player.last_pellets:
+			_expect(pellet.damage == SHOTGUN.damage, "a pellet does %d damage, the Profile says %d" % [pellet.damage, SHOTGUN.damage])
+		angles.append_array(_pellet_angles())
+		_expect(player.ammo == SHOTGUN.magazine_size - 1 - i, "%d Shotgun shots left %d shells" % [i + 1, player.ammo])
+		_expect(is_equal_approx(player.spread_degrees(), 5.0), "a Shotgun shot bloomed the cone to %.2f deg" % player.spread_degrees())
+		await _frames(1)
+		_clear_shots()
+		await _seconds(SHOTGUN.fire_interval + 0.05)
+	var widest: float = angles.max()
+	var inner := angles.filter(func(a: float) -> bool: return a < 2.5).size() / float(angles.size())
+	_expect(widest <= 5.01, "a pellet flew %.2f deg off the crosshair, outside the 5 deg cone" % widest)
+	_expect(widest > 4.0, "no pellet of %d went past 4 deg: the cone is not filled" % angles.size())
+	# Even over the area, a quarter land inside half the radius.
+	_expect(inner > 0.1 and inner < 0.45, "%.0f%% of pellets landed inside half the cone, a quarter expected" % (inner * 100.0))
+
+	# Sprint into a Slide and fire: the cone stays 5 degrees.
+	await _place(RUNWAY)
+	await _hold(SHOTGUN)
+	Input.action_press("move_up")
+	Input.action_press("sprint")
+	await _seconds(0.3)
+	Input.action_press("crouch")
+	await _frames(2)
+	_expect(player.state == player.State.SLIDE, "no Slide for the Shotgun: %s" % player.State.keys()[player.state])
+	_expect(is_equal_approx(player.spread_degrees(), 5.0), "the Shotgun's cone in a Slide is %.2f deg, not 5" % player.spread_degrees())
+	_expect(player.fire() != null, "the Shotgun would not fire in a Slide")
+	var slide_widest: float = _pellet_angles().max()
+	_expect(slide_widest <= 5.01, "a pellet fired in a Slide flew %.2f deg off, wider than standing" % slide_widest)
+	Input.action_release("crouch")
+	Input.action_release("sprint")
+	Input.action_release("move_up")
+	await _frames(1)
+	_clear_shots()
+	await _hold(player.weapons[0])
+	await _place(RUNWAY)
+
+
+## A Shotgun shot that kills reports one kill and flashes one marker with one
+## tick, however many pellets land; one that only wounds reports one hit.
+func _check_shotgun_hit_marker() -> void:
+	await _place(RUNWAY)
+	await _hold(SHOTGUN)
+	player.head.rotation.x = -0.05
+	await _dummy(1000, 3.0)
+	sounds.clear()
+	hits_landed.clear()
+	_expect(player.fire() != null, "no Shotgun shot for the wound")
+	await _seconds(0.3)
+	_expect(dummy.health.current < 1000 - 13 * 6, "the Shotgun shot at a dummy 3 m off did only %d damage" % (1000 - dummy.health.current))
+	_expect(hits_landed == [[dummy, false]], "a wounding Shotgun shot reported %s, want one hit" % [hits_landed])
+	_expect(_sounds_of(&"hitmark") == 1, "a wounding Shotgun shot played %d hit ticks" % _sounds_of(&"hitmark"))
+	_clear_shots()
+	await _seconds(SHOTGUN.fire_interval)
+
+	await _dummy(100, 3.0)
+	sounds.clear()
+	hits_landed.clear()
+	_expect(player.fire() != null, "no Shotgun shot for the kill")
+	await _seconds(0.3)
+	_expect(not dummy.health.is_alive(), "the Shotgun shot 3 m off left the dummy on %d" % dummy.health.current)
+	_expect(hits_landed == [[dummy, true]], "a killing Shotgun shot reported %s, want one kill" % [hits_landed])
+	_expect(hud.hitmarker_is_kill(), "a killing Shotgun shot did not show the kill marker")
+	_expect(_sounds_of(&"hitmark") == 1, "a killing Shotgun shot played %d hit ticks" % _sounds_of(&"hitmark"))
+	player.head.rotation.x = 0.0
+	_clear_shots()
+	await _clear_dummy()
+	await _hold(player.weapons[0])
+	await _place(RUNWAY)
+
+
+## The Shotgun mounts the pump-action model with the clips the Viewmodel
+## plays, at its hip pose, its sights on the camera axis aimed, and a
+## lowered pose well under the hip; until shells load one at a time it
+## reloads like a magazine gun, in 2.4 s.
+func _check_shotgun_model() -> void:
+	await _place(RUNWAY)
+	var pistol_clips: AnimationPlayer = weapon.model_clips
+	await _hold(SHOTGUN)
+	var anim: AnimationPlayer = weapon.model_clips
+	_expect(anim != null and anim != pistol_clips, "the Shotgun did not bring its own clips")
+	if anim != null:
+		for clip_name in [SHOTGUN.model_fire_clip, SHOTGUN.model_reload_clip]:
+			_expect(anim.has_animation(clip_name), "the Shotgun mesh lacks the %s clip" % clip_name)
+	var bones := _mounted_skeleton()
+	_expect(bones != null and bones.find_bone("Pump") >= 0, "the mounted Shotgun has no Pump bone: not the pump-action model")
+	var shown := 0
+	for model in weapon.holder.get_children():
+		if (model as Node3D).visible:
+			shown += 1
+	_expect(shown == 1, "%d weapon meshes are showing" % shown)
+	_expect(SHOTGUN.pose_hip.is_equal_approx(Vector3(0.15, -0.24, -0.34)) and is_equal_approx(SHOTGUN.ads_distance, 0.30),
+			"the Shotgun's hip pose is %s and aimed distance %.2f, not the picked (0.15, -0.24, -0.34) and 0.30" % [SHOTGUN.pose_hip, SHOTGUN.ads_distance])
+	_expect(SHOTGUN.pose_low.y < SHOTGUN.pose_hip.y - 0.08, "the Shotgun's lowered pose %s is not clearly below its hip pose" % SHOTGUN.pose_low)
+	_at_pose(SHOTGUN.pose_hip, "Shotgun at the hip")
+	sounds.clear()
+	_expect(_fire_and_drop(), "no Shotgun shot for its fire clip")
+	await _frames(1)
+	_expect(anim.current_animation == SHOTGUN.model_fire_clip, "a Shotgun shot played %s on the model" % anim.current_animation)
+	var shot_streams := sounds.filter(func(s: Array) -> bool: return s[0] == &"shot")
+	_expect(shot_streams.size() == 1 and (shot_streams[0][1] as AudioStream).resource_path.contains("firearm_library_shotgun/shot"),
+			"a Shotgun shot sounded %s, not its own shot" % [sounds])
+	_expect(is_equal_approx(SHOTGUN.loudness, 32.0), "the Shotgun is %.1f m loud, not 32" % SHOTGUN.loudness)
+	await _aim(true)
+	await _seconds(0.5)
+	var tip: Vector3 = player.camera.to_local((weapon.get_node("SightTip") as Node3D).global_position)
+	_expect(absf(tip.x) < 0.005 and absf(tip.y) < 0.005 and tip.z < 0.0,
+			"in ADS the Shotgun's front sight sits at (%.3f, %.3f) m off the camera axis" % [tip.x, tip.y])
+	await _aim(false)
+	Input.action_press("move_up")
+	Input.action_press("sprint")
+	await _seconds(0.4)
+	_expect(player.state == player.State.SPRINT, "no Sprint for the Shotgun's lowered pose")
+	_at_pose(SHOTGUN.pose_low, "Shotgun lowered in a Sprint")
+	Input.action_release("sprint")
+	Input.action_release("move_up")
+	_clear_shots()
+	await _hold(player.weapons[0])
+	await _place(RUNWAY)
+
+
+## The Shotgun loads one shell at a time: one tap fills it, each shell counts
+## when its time is up, the closing pump runs only from empty and a shot
+## cannot break it, and a shot, a Melee or a swap breaks the reload keeping
+## the shells already in. A shot that breaks in fires by itself after the
+## break-out time. A Sprint does not break it. The Pistol still loses
+## everything on an interrupted reload.
+func _check_shell_reload() -> void:
+	_expect(SHOTGUN.shell_reload and not player.weapons[0].shell_reload and not ASSAULT_RIFLE.shell_reload,
+			"only the Shotgun should load shell by shell")
+	_expect(is_equal_approx(SHOTGUN.first_shell_time, 0.55) and is_equal_approx(SHOTGUN.shell_time, 0.45)
+			and is_equal_approx(SHOTGUN.closing_pump_time, 0.45) and is_equal_approx(SHOTGUN.break_out_time, 0.25),
+			"the Shotgun's shell times are %.2f / %.2f / %.2f / %.2f, not 0.55 / 0.45 / 0.45 / 0.25"
+			% [SHOTGUN.first_shell_time, SHOTGUN.shell_time, SHOTGUN.closing_pump_time, SHOTGUN.break_out_time])
+	_expect(is_equal_approx(SHOTGUN.seconds_empty_to_full(), 3.25),
+			"the Shotgun fills from empty in %.2f s, not 3.25" % SHOTGUN.seconds_empty_to_full())
+	var shells := [0]
+	var pumps := [0]
+	var ended: Array = []
+	var started: Array = []
+	var on_shell := func() -> void: shells[0] += 1
+	var on_pump := func() -> void: pumps[0] += 1
+	var on_end := func(broken: bool) -> void: ended.append(broken)
+	var on_start := func(from_empty: bool) -> void: started.append(from_empty)
+	player.shell_loaded.connect(on_shell)
+	player.closing_pump_started.connect(on_pump)
+	player.shell_reload_ended.connect(on_end)
+	player.shell_reload_started.connect(on_start)
+
+	# Empty to full: a dry pull starts it, six shells, a closing pump, 3.25 s.
+	await _place(RUNWAY)
+	await _hold(SHOTGUN)
+	player.ammo = 0
+	player.ammo_changed.emit(0)
+	reloads_started.clear()
+	_expect(player.fire() == null, "a dry Shotgun fired")
+	_expect(player.is_reloading(), "a dry Shotgun pull did not start the reload")
+	_expect(started == [true], "the shell reload signalled %s, expected [from_empty=true]" % [started])
+	_expect(reloads_started.is_empty(), "the shell reload sent the magazine reload_started")
+	_expect(hud.ammo_text() == "RELOADING…", "the HUD reads '%s' while loading" % hud.ammo_text())
+	await _seconds(0.5)
+	_expect(player.ammo == 0, "a shell counted before its 0.55 s were up")
+	await _seconds(0.1)
+	_expect(player.ammo == 1 and shells[0] == 1, "after 0.6 s the Shotgun holds %d shells (%d signalled), not 1" % [player.ammo, shells[0]])
+	await _seconds(0.35)
+	_expect(player.ammo == 1, "the second shell counted before its 0.45 s were up")
+	await _seconds(0.1)
+	_expect(player.ammo == 2, "after 1.05 s the Shotgun holds %d shells, not 2" % player.ammo)
+	await _seconds(1.8)
+	_expect(player.ammo == 6 and shells[0] == 6, "after 2.85 s the Shotgun holds %d shells, not 6" % player.ammo)
+	_expect(pumps[0] == 1 and player.is_reloading(), "no closing pump after loading from empty (pumps %d)" % pumps[0])
+	_expect(player.fire() == null, "a shot broke the closing pump")
+	await _seconds(0.3)
+	_expect(player.is_reloading(), "the reload from empty ended under 3.25 s")
+	await _seconds(0.15)
+	_expect(not player.is_reloading(), "the reload from empty ran past 3.25 s")
+	_expect(player.ammo == 6 and ended == [false], "empty to full ended at %d shells, signalled %s" % [player.ammo, ended])
+	_expect(shots_fired == 0, "a shot pressed in the closing pump fired later")
+	_expect(hud.ammo_text() == "6 / ∞", "the HUD reads '%s' after the reload" % hud.ammo_text())
+
+	# A shot after two shells: keeps them, loses the one in hand, fires 0.25 s later.
+	await _place(RUNWAY)
+	await _hold(SHOTGUN)
+	player.ammo = 0
+	player.start_reload()
+	await _seconds(0.2)
+	_expect(player.fire() == null and player.is_reloading(), "a shot broke in with no shell in the gun")
+	await _seconds(1.0)
+	_expect(player.ammo == 2, "%d shells in before the shot, expected 2" % player.ammo)
+	ended.clear()
+	shots_fired = 0
+	_expect(player.fire() == null, "the shot breaking in fired at once")
+	_expect(not player.is_reloading() and ended == [true], "a shot did not break the reload (ended %s)" % [ended])
+	_expect(player.ammo == 2, "breaking in left %d shells, not 2" % player.ammo)
+	_expect(player.fire() == null, "a second press in the break-out fired")
+	await _seconds(0.2)
+	_expect(shots_fired == 0, "the break-out shot fired before 0.25 s")
+	await _seconds(0.1)
+	_expect(shots_fired == 1, "the break-out shot did not fire by 0.3 s (%d shots)" % shots_fired)
+	_expect(player.ammo == 1, "the break-out shot left %d shells, not 1" % player.ammo)
+	await _seconds(0.7)
+	_expect(player.ammo == 1 and not player.is_reloading(), "the lost shell came back: %d shells" % player.ammo)
+	_clear_shots()
+
+	# A Melee and a swap keep the shells already in.
+	await _place(RUNWAY)
+	await _hold(SHOTGUN)
+	player.ammo = 0
+	player.start_reload()
+	await _seconds(1.2)
+	player.melee()
+	_expect(not player.is_reloading(), "the reload survived a Melee")
+	_expect(player.ammo == 2, "a Melee left %d shells, not 2" % player.ammo)
+	await _seconds(player.melee_cycle + 0.1)
+	shots_fired = 0
+	player.ammo = 0
+	player.start_reload()
+	await _seconds(1.2)
+	ended.clear()
+	player.switch_weapon(-1)
+	_expect(not player.is_reloading() and ended == [true], "the reload survived a swap (ended %s)" % [ended])
+	await _seconds(player.swap_time + 0.1)
+	await _hold(SHOTGUN)
+	_expect(player.ammo == 2, "a swap left %d shells, not 2" % player.ammo)
+	_expect(shots_fired == 0, "a Melee or swap fired a shot")
+
+	# From 3: a reload to full with no closing pump; a Sprint does not break it.
+	await _place(RUNWAY)
+	await _hold(SHOTGUN)
+	player.ammo = 3
+	pumps[0] = 0
+	started.clear()
+	player.start_reload()
+	_expect(started == [false], "a reload from 3 signalled %s" % [started])
+	await _sprint_up()
+	_expect(player.is_reloading() and player.ammo == 3, "a Sprint broke the reload (%d shells)" % player.ammo)
+	await _seconds(1.0)
+	_expect(player.ammo == 6, "from 3, %d shells after 1.5 s" % player.ammo)
+	_expect(not player.is_reloading() and pumps[0] == 0, "the reload from 3 pumped or ran on")
+	Input.action_release("sprint")
+	Input.action_release("move_up")
+
+	# An interrupted Pistol reload still gains nothing.
+	await _hold(player.weapons[0])
+	await _place(RUNWAY)
+	_expect(_fire_and_drop(), "no Pistol shot to open the magazine")
+	await _seconds(0.2)
+	player.start_reload()
+	await _seconds(1.0)
+	player.melee()
+	_expect(not player.is_reloading() and player.ammo == player.weapon.magazine_size - 1,
+			"an interrupted Pistol reload left %d rounds" % player.ammo)
+	await _seconds(player.melee_cycle + 0.1)
+
+	player.shell_loaded.disconnect(on_shell)
+	player.closing_pump_started.disconnect(on_pump)
+	player.shell_reload_ended.disconnect(on_end)
+	player.shell_reload_started.disconnect(on_start)
+	_clear_shots()
 	await _place(RUNWAY)
 
 
@@ -1014,8 +1702,8 @@ func _check_ads_numbers() -> void:
 	await _seconds(0.5)
 	_expect(is_equal_approx(player.spread_degrees(), 0.5),
 			"ADS spread while still is %.2f deg, expected 0.5" % player.spread_degrees())
-	# The Sidearm zooms 1.6x: a 75 deg hip view narrows to 51.2 deg.
-	_expect(is_equal_approx(profile.ads_zoom, 1.6), "the Sidearm zooms %.2fx, spec says 1.6" % profile.ads_zoom)
+	# The Pistol zooms 1.6x: a 75 deg hip view narrows to 51.2 deg.
+	_expect(is_equal_approx(profile.ads_zoom, 1.6), "the Pistol zooms %.2fx, spec says 1.6" % profile.ads_zoom)
 	_expect(is_equal_approx(player.ads_raise_time, 0.12), "the ADS raise is %.2f s, spec says 0.12" % player.ads_raise_time)
 	var zoomed_fov := rad_to_deg(2.0 * atan(tan(deg_to_rad(hip_fov) / 2.0) / profile.ads_zoom))
 	_expect(absf(hip_fov - 75.0) < 0.01 and absf(zoomed_fov - 51.2) < 0.1, "75 deg at 1.6x should be 51.2, got %.1f" % zoomed_fov)
@@ -1036,6 +1724,150 @@ func _check_ads_numbers() -> void:
 	await _aim(false)
 	await _seconds(0.5)
 	_expect(absf(player.camera.fov - hip_fov) < 0.5, "FOV did not return to %.1f after ADS: %.1f" % [hip_fov, player.camera.fov])
+
+
+## The cone a Profile gives in each stance, hip and aimed, at zero bloom:
+## still, walking, crouched and in the air, and a Slide from the hip.
+func _stance_cones(profile: WeaponProfile) -> Dictionary:
+	var held: WeaponProfile = player.weapon
+	player.weapon = profile
+	var cones := {}
+	for aimed in [false, true]:
+		var tag := "aimed " if aimed else "hip "
+		await _place(RUNWAY)
+		if aimed:
+			await _aim(true)
+		await _frames(2)
+		cones[tag + "still"] = player.spread_degrees()
+		Input.action_press("move_up")
+		await _seconds(0.4)
+		cones[tag + "walking"] = player.spread_degrees() if player.flat_speed() > 0.5 else -1.0
+		Input.action_release("move_up")
+		await _seconds(0.4)
+		Input.action_press("crouch")
+		await _frames(3)
+		cones[tag + "crouched"] = player.spread_degrees() if player.state == player.State.CROUCH else -1.0
+		Input.action_release("crouch")
+		await _frames(3)
+		Input.action_press("jump")
+		await _frames(3)
+		Input.action_release("jump")
+		cones[tag + "air"] = player.spread_degrees() if player.state == player.State.AIR else -1.0
+		await _seconds(1.0)
+		cones[tag + "still sights up"] = player.ads == aimed
+		if aimed:
+			await _aim(false)
+	await _place(RUNWAY)
+	await _sprint_up()
+	Input.action_press("crouch")
+	await _frames(2)
+	cones["hip slide"] = player.spread_degrees() if player.state == player.State.SLIDE else -1.0
+	Input.action_release("crouch")
+	Input.action_release("sprint")
+	Input.action_release("move_up")
+	player.weapon = held
+	await _place(RUNWAY)
+	return cones
+
+
+## The aimed-and-moving spread leaves the Pistol and Assault Rifle exactly
+## as they were in every stance: aimed walking is still their aimed
+## multiplier times their walking one, and an aimed crouch still takes the
+## crouch multiplier.
+func _check_cones_unchanged() -> void:
+	var expected := {
+		"Pistol": [player.weapon, {
+			"hip still": 1.0, "hip walking": 1.2, "hip crouched": 0.7, "hip air": 1.5, "hip slide": 1.5,
+			"aimed still": 0.5, "aimed walking": 0.6, "aimed crouched": 0.35, "aimed air": 0.75}],
+		"Assault Rifle": [ASSAULT_RIFLE, {
+			"hip still": 1.2, "hip walking": 1.56, "hip crouched": 0.84, "hip air": 2.16, "hip slide": 1.92,
+			"aimed still": 0.54, "aimed walking": 0.702, "aimed crouched": 0.378, "aimed air": 0.972}],
+	}
+	for gun: String in expected:
+		var cones: Dictionary = await _stance_cones(expected[gun][0])
+		_expect(cones["aimed still sights up"] and cones["hip still sights up"], "%s: the sights were not where the stance check wanted them" % gun)
+		var wanted: Dictionary = expected[gun][1]
+		for stance: String in wanted:
+			_expect(is_equal_approx(cones[stance], wanted[stance]),
+					"%s %s cone is %.3f deg, was %.3f" % [gun, stance, cones[stance], wanted[stance]])
+
+
+## A Profile with a tiny aimed multiplier and a larger aimed-and-moving one
+## is pinpoint aimed and still or crouched, and a 1.2 degree cone aimed and
+## walking, out of a 3 degree hip cone.
+func _check_aimed_moving_spread() -> void:
+	var cones: Dictionary = await _stance_cones(STEADY_RIFLE)
+	_expect(is_equal_approx(cones["hip still"], 3.0), "the steady rifle's hip cone is %.3f deg, not 3" % cones["hip still"])
+	_expect(cones["aimed still"] > 0.0 and cones["aimed still"] < 0.05, "aimed and still is %.3f deg, not pinpoint" % cones["aimed still"])
+	_expect(cones["aimed crouched"] > 0.0 and cones["aimed crouched"] < 0.05, "aimed and crouched is %.3f deg, not pinpoint" % cones["aimed crouched"])
+	_expect(is_equal_approx(cones["aimed walking"], 1.2), "aimed and walking is %.3f deg, not 1.2" % cones["aimed walking"])
+
+
+## Aimed sway: a gun with sway drifts the view in a figure of eight while
+## aimed, inside its sway, and hands the view back exactly where it was
+## when the sights drop. A gun without sway holds dead still.
+func _check_aimed_sway() -> void:
+	await _place(RUNWAY)
+	player.head.rotation.x = 0.0
+	await _aim(true)
+	var yaw: float = player.rotation.y
+	await _seconds(1.0)
+	_expect(is_equal_approx(player.rotation.y, yaw) and is_equal_approx(player.head.rotation.x, 0.0),
+			"the Pistol, with no sway, drifted the aim")
+	await _aim(false)
+
+	var held: WeaponProfile = player.weapon
+	player.weapon = STEADY_RIFLE
+	await _place(RUNWAY)
+	player.head.rotation.x = 0.0
+	await _frames(2)
+	yaw = player.rotation.y
+	var sway := deg_to_rad(STEADY_RIFLE.ads_sway_degrees)
+	await _aim(true)
+	var yaws: Array[float] = []
+	var pitches: Array[float] = []
+	for i in 300:
+		await physics_frame
+		yaws.append(player.rotation.y - yaw)
+		pitches.append(player.head.rotation.x)
+	var yaw_span: float = yaws.max() - yaws.min()
+	var pitch_span: float = pitches.max() - pitches.min()
+	_expect(yaw_span > sway and yaw_span <= 2.0 * sway + 0.0001,
+			"aimed sway swung the yaw %.3f deg, expected up to %.2f either side" % [rad_to_deg(yaw_span), STEADY_RIFLE.ads_sway_degrees])
+	_expect(pitch_span > sway * 0.5 and pitch_span <= sway + 0.0001,
+			"aimed sway swung the pitch %.3f deg, expected up to half the yaw's" % rad_to_deg(pitch_span))
+	await _aim(false)
+	_expect(absf(player.rotation.y - yaw) < 0.00001 and absf(player.head.rotation.x) < 0.00001,
+			"dropping the sights left the aim %.4f deg yaw, %.4f deg pitch off" % [rad_to_deg(player.rotation.y - yaw), rad_to_deg(player.head.rotation.x)])
+	await _seconds(0.5)
+	_expect(absf(player.rotation.y - yaw) < 0.00001 and absf(player.head.rotation.x) < 0.00001,
+			"the aim kept drifting with the sights down")
+	player.weapon = held
+	await _place(RUNWAY)
+
+
+## Aimed, the mouse turns the view less by the held gun's zoom, so a hand
+## movement covers the same distance on screen.
+func _check_mouse_slowed_by_zoom() -> void:
+	await _place(RUNWAY)
+	player.head.rotation.x = 0.0
+	var yaw: float = player.rotation.y
+	player.look(Vector2(100.0, 40.0))
+	var hip_yaw: float = yaw - player.rotation.y
+	var hip_pitch: float = -player.head.rotation.x
+	await _aim(true)
+	_expect(player.ads and is_equal_approx(player.weapon.ads_zoom, 1.6), "no 1.6 zoom aim to turn under")
+	yaw = player.rotation.y
+	var pitch: float = player.head.rotation.x
+	player.look(Vector2(100.0, 40.0))
+	var aimed_yaw: float = yaw - player.rotation.y
+	var aimed_pitch: float = pitch - player.head.rotation.x
+	_expect(hip_yaw > 0.0 and is_equal_approx(hip_yaw / aimed_yaw, 1.6),
+			"aimed, the mouse turned %.4f rad against %.4f at the hip, not 1.6 times less" % [aimed_yaw, hip_yaw])
+	_expect(hip_pitch > 0.0 and is_equal_approx(hip_pitch / aimed_pitch, 1.6),
+			"aimed, the mouse pitched %.4f rad against %.4f at the hip, not 1.6 times less" % [aimed_pitch, hip_pitch])
+	await _aim(false)
+	player.head.rotation.x = 0.0
 
 
 ## Sights that survive a fight: a hit drops them and they come back on
@@ -1075,7 +1907,7 @@ func _check_descope_recovery() -> void:
 	_expect(not player.is_reloading() and player.ads, "the sights did not rise as the reload ended")
 	_clear_shots()
 
-	await _dummy(4, 6.0)
+	await _dummy(100, 6.0)
 	ads_seen.clear()
 	await _swing()
 	_expect(not player.ads, "the melee kept the sights up")
@@ -1137,24 +1969,24 @@ func _flat_gap() -> float:
 ## reaches 1.2 m straight ahead and no further.
 func _check_melee_cone() -> void:
 	await _place(RUNWAY)
-	await _dummy(4, 1.5)
+	await _dummy(100, 1.5)
 	await _swing()
 	_expect(swings.size() == 1 and swings[0][0] == dummy, "a dummy 1.5 m ahead was not the melee target")
-	_expect(dummy.health.current == 1, "a front hit on 4 HP left %d, not 1" % dummy.health.current)
+	_expect(dummy.health.current == 25, "a front hit on 100 HP left %d, not 25" % dummy.health.current)
 	await _cycle()
 
 	await _place(RUNWAY)
-	await _dummy(4, 3.0)
+	await _dummy(100, 3.0)
 	await _swing()
 	_expect(swings.size() == 1 and swings[0][0] == null, "a dummy 3 m ahead was hit by a melee")
-	_expect(dummy.health.current == 4, "a dummy 3 m ahead took melee damage")
+	_expect(dummy.health.current == 100, "a dummy 3 m ahead took melee damage")
 	await _cycle()
 
 	await _place(RUNWAY)
-	await _dummy(4, 1.5, 20.0)
+	await _dummy(100, 1.5, 20.0)
 	await _swing()
 	_expect(swings.size() == 1 and swings[0][0] == null, "a dummy 20 deg off the axis was hit by a melee")
-	_expect(dummy.health.current == 4, "a dummy 20 deg off the axis took melee damage")
+	_expect(dummy.health.current == 100, "a dummy 20 deg off the axis took melee damage")
 	await _cycle()
 
 	# A body just outside the cone but close enough for the crosshair ray to
@@ -1162,12 +1994,12 @@ func _check_melee_cone() -> void:
 	# ray leaves the eyes at 1.6 m, up in the capsule's top cap, so the body
 	# has to be near.)
 	await _place(RUNWAY)
-	await _dummy(4, 0.75, 17.0)
+	await _dummy(100, 0.75, 17.0)
 	_expect(player.melee_target() == null, "a dummy 17 deg off the axis was inside the cone")
 	var before := player.global_position
 	await _swing()
 	_expect(swings.size() == 1 and swings[0][0] == dummy, "the whiff ray did not sweep a dummy 0.75 m ahead")
-	_expect(dummy.health.current == 1, "a swept dummy took %d damage, not 3" % (4 - dummy.health.current))
+	_expect(dummy.health.current == 25, "a swept dummy took %d damage, not 75" % (100 - dummy.health.current))
 	_expect(player.global_position.distance_to(before) < 0.02, "a whiff lunged")
 	await _cycle()
 
@@ -1187,7 +2019,7 @@ func _check_melee_cone() -> void:
 ## facing to it, and ignores movement input for 0.2 s after.
 func _check_melee_lunge() -> void:
 	await _place(RUNWAY)
-	await _dummy(9, 1.9, 10.0)
+	await _dummy(225, 1.9, 10.0)
 	var start := player.global_position
 	await _swing()
 	var gap := _flat_gap()
@@ -1198,7 +2030,7 @@ func _check_melee_lunge() -> void:
 	var facing := -player.global_transform.basis.z
 	_expect(rad_to_deg(Vector2(facing.x, facing.z).angle_to(Vector2(to.x, to.z).normalized())) < 2.0,
 			"the lunge did not snap his facing to the target")
-	_expect(dummy.health.current == 6, "the lunge landed %d damage, not 3" % (9 - dummy.health.current))
+	_expect(dummy.health.current == 150, "the lunge landed %d damage, not 75" % (225 - dummy.health.current))
 	# Movement input is ignored for a beat after the lunge lands.
 	var landed := player.global_position
 	Input.action_press("move_left")
@@ -1213,11 +2045,11 @@ func _check_melee_lunge() -> void:
 
 
 ## From inside the 120 deg cone behind the target's facing a melee kills
-## outright; from the front it does its 3.
+## outright; from the front it does its 75.
 func _check_melee_back_hit() -> void:
 	await _place(RUNWAY)
 	# Facing away from him: he is squarely behind.
-	await _dummy(4, 1.5, 0.0, Vector3.FORWARD)
+	await _dummy(100, 1.5, 0.0, Vector3.FORWARD)
 	await _swing()
 	_expect(not dummy.is_alive(), "a back hit left the dummy on %d HP" % dummy.health.current)
 	_expect(swings.size() == 1 and swings[0][1] == true, "the back-hit kill was not reported as one")
@@ -1225,22 +2057,22 @@ func _check_melee_back_hit() -> void:
 
 	# Facing him: front.
 	await _place(RUNWAY)
-	await _dummy(4, 1.5, 0.0, Vector3.BACK)
+	await _dummy(100, 1.5, 0.0, Vector3.BACK)
 	await _swing()
-	_expect(dummy.health.current == 1, "a front hit on 4 HP left %d, not 1" % dummy.health.current)
+	_expect(dummy.health.current == 25, "a front hit on 100 HP left %d, not 25" % dummy.health.current)
 	_expect(swings.size() == 1 and swings[0][1] == false, "a front hit was reported as a kill")
 	await _cycle()
 
 	# Facing sideways: 90 deg from behind, outside the 60 deg half-cone.
 	await _place(RUNWAY)
-	await _dummy(4, 1.5, 0.0, Vector3.RIGHT)
+	await _dummy(100, 1.5, 0.0, Vector3.RIGHT)
 	await _swing()
-	_expect(dummy.health.current == 1, "a side hit on 4 HP left %d, not 1" % dummy.health.current)
+	_expect(dummy.health.current == 25, "a side hit on 100 HP left %d, not 25" % dummy.health.current)
 	await _cycle()
 
 	# Facing 50 deg off away: inside the back cone.
 	await _place(RUNWAY)
-	await _dummy(4, 1.5, 0.0, Vector3.FORWARD.rotated(Vector3.UP, deg_to_rad(50.0)))
+	await _dummy(100, 1.5, 0.0, Vector3.FORWARD.rotated(Vector3.UP, deg_to_rad(50.0)))
 	await _swing()
 	_expect(not dummy.is_alive(), "a hit 50 deg inside the back cone left the dummy on %d HP" % dummy.health.current)
 	await _cycle()
@@ -1250,7 +2082,7 @@ func _check_melee_back_hit() -> void:
 ## fresh one at the full duration.
 func _check_melee_cancels_reload() -> void:
 	await _place(RUNWAY)
-	await _dummy(4, 6.0)
+	await _dummy(100, 6.0)
 	_expect(_fire_and_drop(), "no shot to open the magazine")
 	await _seconds(0.2)
 	player.start_reload()
@@ -1274,7 +2106,7 @@ func _check_melee_cancels_reload() -> void:
 ## drops the sights; ignored in CLAMBER.
 func _check_melee_states() -> void:
 	await _place(RUNWAY)
-	await _dummy(4, 6.0)
+	await _dummy(100, 6.0)
 	await _sprint_up()
 	await _swing()
 	_expect(player.state == player.State.WALK, "melee out of SPRINT gave %s" % player.State.keys()[player.state])
@@ -1568,7 +2400,7 @@ func _check_clips_exist() -> void:
 
 
 func _mesh_at_identity() -> bool:
-	var mesh: Node3D = weapon.sidearm
+	var mesh: Node3D = weapon.holder
 	return mesh.position.is_zero_approx() and mesh.rotation.is_zero_approx()
 
 
@@ -1585,7 +2417,7 @@ func _check_clips_play() -> void:
 	_expect(clips.current_animation == "fire" and clips.is_playing(), "a shot did not play fire, playing %s" % clips.current_animation)
 	await _seconds(0.3)
 	_expect(not clips.is_playing(), "fire clip still playing after 0.3 s")
-	_expect(_mesh_at_identity(), "the mesh is off identity after the fire clip: %s %s" % [weapon.sidearm.position, weapon.sidearm.rotation_degrees])
+	_expect(_mesh_at_identity(), "the mesh is off identity after the fire clip: %s %s" % [weapon.holder.position, weapon.holder.rotation_degrees])
 
 	# Tactical reload with rounds left.
 	player.start_reload()
@@ -1604,7 +2436,7 @@ func _check_clips_play() -> void:
 	player.cancel_reload()
 	await _frames(1)
 	_expect(not clips.is_playing(), "the reload cancel left %s playing" % clips.current_animation)
-	_expect(_mesh_at_identity(), "the reload cancel left the mesh at %s %s" % [weapon.sidearm.position, weapon.sidearm.rotation_degrees])
+	_expect(_mesh_at_identity(), "the reload cancel left the mesh at %s %s" % [weapon.holder.position, weapon.holder.rotation_degrees])
 
 	# Empty reload on the dry pull.
 	player.ammo = 0
@@ -1614,7 +2446,7 @@ func _check_clips_play() -> void:
 	_expect(clips.current_animation == "reload_empty", "an empty reload played %s" % clips.current_animation)
 	await _seconds(0.3)
 	# A melee mid-reload cancels it and plays its own clip.
-	await _dummy(4, 6.0)
+	await _dummy(100, 6.0)
 	await _swing()
 	_expect(clips.current_animation == "melee" and clips.is_playing(), "a melee mid-reload played %s" % clips.current_animation)
 	await _cycle()
@@ -1628,7 +2460,7 @@ func _check_clips_play() -> void:
 func _check_clips_follow_profile() -> void:
 	var clips: AnimationPlayer = weapon.clips
 	await _place(RUNWAY)
-	var sidearm: WeaponProfile = player.weapon
+	var pistol: WeaponProfile = player.weapon
 	player.weapon = HEAVY_PISTOL
 	player.ammo = HEAVY_PISTOL.magazine_size - 1
 	player.start_reload()
@@ -1641,23 +2473,23 @@ func _check_clips_follow_profile() -> void:
 	_expect(clips.is_playing(), "the reload clip ended before the heavy pistol's %.1f s reload" % HEAVY_PISTOL.reload_tactical)
 	await _seconds(0.2)
 	_expect(not clips.is_playing(), "the reload clip outlasted the heavy pistol's reload")
-	player.weapon = sidearm
+	player.weapon = pistol
 	await _place(RUNWAY)
 
 
-## --- the Sidearm mesh ---
+## --- the Pistol mesh ---
 
 ## The Viewmodel carries the pistol model: in ADS its front sight sits
 ## on the camera axis, from the hip it sits low right, and the shot leaves
 ## its muzzle.
-func _check_sidearm_model() -> void:
+func _check_holder_model() -> void:
 	await _place(RUNWAY)
-	var sidearm: Node3D = weapon.get_node_or_null("Sidearm")
-	_expect(sidearm != null, "the Viewmodel has no Sidearm node")
-	if sidearm == null:
+	var holder: Node3D = weapon.get_node_or_null("Holder")
+	_expect(holder != null, "the Viewmodel has no Holder node")
+	if holder == null:
 		return
-	_expect(weapon.sidearm == sidearm, "the Viewmodel's Sidearm node is not the pistol model")
-	_expect(sidearm.find_child("Skeleton3D", true, false) != null, "the pistol has no skeleton")
+	_expect(weapon.holder == holder, "the Viewmodel's Holder node is not the pistol model")
+	_expect(holder.find_child("Skeleton3D", true, false) != null, "the pistol has no skeleton")
 	var sight: Node3D = weapon.get_node_or_null("SightTip")
 	_expect(sight != null, "no SightTip marker on the Viewmodel")
 	if sight == null:
@@ -1678,28 +2510,28 @@ func _check_sidearm_model() -> void:
 
 ## The pistol's own clips: the slide cycles on a shot, the magazine on a
 ## reload for the Profile's time, and a cancel leaves the skeleton at rest.
-func _check_sidearm_clips() -> void:
+func _check_pistol_clips() -> void:
 	await _place(RUNWAY)
-	var anim: AnimationPlayer = weapon.sidearm_clips
-	_expect(anim != null, "the Sidearm mesh has no AnimationPlayer")
+	var anim: AnimationPlayer = weapon.model_clips
+	_expect(anim != null, "the Pistol mesh has no AnimationPlayer")
 	if anim == null:
 		return
 	var profile: WeaponProfile = player.weapon
 	for clip_name in [profile.model_fire_clip, profile.model_reload_clip, profile.model_rack_clip]:
-		_expect(anim.has_animation(clip_name), "the Sidearm mesh lacks the %s clip" % clip_name)
+		_expect(anim.has_animation(clip_name), "the Pistol mesh lacks the %s clip" % clip_name)
 	_expect(not anim.is_playing(), "a pistol clip is playing at rest: %s" % anim.current_animation)
 	_expect(_fire_and_drop(), "no shot for the pistol fire clip")
 	await _frames(1)
-	_expect(anim.current_animation == profile.model_fire_clip and anim.is_playing(), "a shot played %s on the Sidearm" % anim.current_animation)
+	_expect(anim.current_animation == profile.model_fire_clip and anim.is_playing(), "a shot played %s on the Pistol" % anim.current_animation)
 	await _seconds(0.3)
 	_expect(not anim.is_playing(), "the pistol fire clip outlasted 0.3 s")
 	player.start_reload()
 	await _frames(1)
-	_expect(anim.current_animation == profile.model_reload_clip and anim.is_playing(), "a reload played %s on the Sidearm" % anim.current_animation)
+	_expect(anim.current_animation == profile.model_reload_clip and anim.is_playing(), "a reload played %s on the Pistol" % anim.current_animation)
 	var wanted: float = anim.get_animation(profile.model_reload_clip).length / profile.reload_tactical
 	_expect(absf(anim.get_playing_speed() - wanted) < 0.01, "the pistol reload runs at %.2fx, want %.2fx" % [anim.get_playing_speed(), wanted])
 	await _seconds(0.4)
-	var skeleton: Skeleton3D = weapon.sidearm.find_child("Skeleton3D", true, false)
+	var skeleton: Skeleton3D = weapon.holder.find_child("Skeleton3D", true, false)
 	var magazine := skeleton.find_bone("Magazine")
 	var moved: Vector3 = skeleton.get_bone_pose_position(magazine)
 	_expect(not moved.is_equal_approx(skeleton.get_bone_rest(magazine).origin), "the reload clip is not moving the magazine bone")
@@ -1713,11 +2545,11 @@ func _check_sidearm_clips() -> void:
 	player.ammo = 0
 	player.fire()
 	await _frames(1)
-	_expect(anim.current_animation == profile.model_reload_clip, "the empty reload played %s on the Sidearm" % anim.current_animation)
+	_expect(anim.current_animation == profile.model_reload_clip, "the empty reload played %s on the Pistol" % anim.current_animation)
 	await _seconds(profile.reload_empty - profile.rack_time / 2.0)
-	_expect(anim.current_animation == profile.model_rack_clip and anim.is_playing(), "near the end of the empty reload the Sidearm plays %s, not the rack" % anim.current_animation)
+	_expect(anim.current_animation == profile.model_rack_clip and anim.is_playing(), "near the end of the empty reload the Pistol plays %s, not the rack" % anim.current_animation)
 	await _seconds(profile.rack_time / 2.0 + 0.1)
-	_expect(not anim.is_playing(), "the Sidearm clip outlasted the empty reload")
+	_expect(not anim.is_playing(), "the Pistol clip outlasted the empty reload")
 	_clear_shots()
 
 
@@ -1785,6 +2617,26 @@ func _check_hud_ammo() -> void:
 	hud.set_ammo(player.ammo)
 
 
+## One bar where the pips were: the Pirate's full Health fills it, six
+## segments of 25, and any hit, however small, shortens the fill.
+func _check_hud_health() -> void:
+	hud.set_max_health(player.health.max_health)
+	hud.set_health(player.health.max_health)
+	_expect(hud.health_segments() == 6, "the Health bar has %d segments, not 6" % hud.health_segments())
+	var full := hud.health_fill_width()
+	_expect(full > 0.0 and is_equal_approx(full, hud.health_bar_width()),
+			"150 Health fills %.1f px of a %.1f px bar" % [full, hud.health_bar_width()])
+	hud.set_health(player.health.max_health - 13)
+	var hit := hud.health_fill_width()
+	_expect(hit < full and is_equal_approx(hit, full * 137.0 / 150.0),
+			"13 damage left the fill at %.1f px of %.1f" % [hit, full])
+	hud.set_health(player.health.max_health - 14)
+	_expect(hud.health_fill_width() < hit, "one more point of damage did not move the fill")
+	hud.set_health(0)
+	_expect(is_zero_approx(hud.health_fill_width()), "no Health still fills %.1f px" % hud.health_fill_width())
+	hud.set_health(player.health.max_health)
+
+
 ## A dry pull clicks once, however long it is held, and the reload it starts
 ## swallows further pulls without another click.
 func _check_hud_dry_click() -> void:
@@ -1828,8 +2680,27 @@ func _check_audio_events() -> void:
 	await _frames(1)
 	_expect(_sound_kinds() == [&"shot"], "a shot played %s" % [_sound_kinds()])
 	var first_stream: AudioStream = sounds[0][1]
-	_expect(first_stream != null and first_stream.resource_path.contains("kurt_gunshots/shot"), "the shot played %s" % [first_stream])
+	_expect(first_stream in player.weapon.shot_sounds and first_stream.resource_path.contains("kurt_22_magnum/shot"),
+			"the Pistol's shot played %s" % [first_stream])
+	_expect(player.weapon.shot_sounds.size() >= 2, "the Pistol has %d shot takes" % player.weapon.shot_sounds.size())
 	sounds.clear()
+	# The Assault Rifle sounds its own shot, not the Pistol's.
+	await _seconds(0.2)
+	player.switch_weapon(1)
+	await _seconds(player.swap_time + 0.05)
+	_expect(player.weapon == ASSAULT_RIFLE, "the wheel did not reach the Assault Rifle")
+	_expect(_fire_and_drop(), "no Assault Rifle shot for the shot sound")
+	await _frames(1)
+	var rifle_stream: AudioStream = sounds[0][1] if sounds.size() == 1 else null
+	_expect(rifle_stream != null and rifle_stream in ASSAULT_RIFLE.shot_sounds and rifle_stream.resource_path.contains("kurt_gunshots/shot"),
+			"the Assault Rifle's shot played %s" % [sounds])
+	for stream in ASSAULT_RIFLE.shot_sounds:
+		_expect(not stream in player.weapons[0].shot_sounds, "the Pistol and the Assault Rifle share %s" % stream.resource_path)
+	_expect(is_equal_approx(ASSAULT_RIFLE.loudness, 24.0), "the Assault Rifle is %.1f m loud, not 24" % ASSAULT_RIFLE.loudness)
+	player.switch_weapon(-1)
+	await _seconds(player.swap_time + 0.05)
+	sounds.clear()
+	await _check_action_sound()
 	await _seconds(0.2)
 	player.ammo = 0
 	await _pull_trigger(30)
@@ -1840,12 +2711,12 @@ func _check_audio_events() -> void:
 	sounds.clear()
 
 	await _place(RUNWAY)
-	await _dummy(4, 6.0)
+	await _dummy(100, 6.0)
 	await _swing()
 	_expect(_sounds_of(&"melee") == 0, "a whiff into air played the melee landing")
 	await _cycle()
 	await _place(RUNWAY)
-	await _dummy(9, 1.5)
+	await _dummy(225, 1.5)
 	await _swing()
 	_expect(_sounds_of(&"melee") == 1, "a landed melee played %d landing sounds" % _sounds_of(&"melee"))
 	await _cycle()
@@ -1854,6 +2725,63 @@ func _check_audio_events() -> void:
 	player.take_damage(1)
 	await _frames(1)
 	_expect(_sounds_of(&"hit") == 1, "a hit taken played %d hit sounds" % _sounds_of(&"hit"))
+
+
+## A Profile's action sound plays its delay after each shot; neither gun
+## today has one. A test Profile carries it, since no gun does yet.
+func _check_action_sound() -> void:
+	var pistol: WeaponProfile = player.weapon
+	_expect(pistol.action_sound == null and ASSAULT_RIFLE.action_sound == null, "a current gun has an action sound")
+	var pumped: WeaponProfile = pistol.duplicate()
+	var pump: AudioStream = pistol.reload_sounds[0]
+	pumped.action_sound = pump
+	pumped.action_sound_delay = 0.3
+	player.weapon = pumped
+	await _seconds(0.2)
+	sounds.clear()
+	_expect(_fire_and_drop(), "no shot from the test Profile")
+	await _seconds(0.15)
+	_expect(_sound_kinds() == [&"shot"], "0.15 s after a shot with a 0.3 s action the sounds were %s" % [_sound_kinds()])
+	await _seconds(0.25)
+	_expect(_sound_kinds() == [&"shot", &"action"] and sounds[1][1] == pump,
+			"0.4 s after a shot with a 0.3 s action the sounds were %s" % [sounds])
+	player.weapon = pistol
+	sounds.clear()
+	_fire_and_drop()
+	await _seconds(0.5)
+	_expect(_sounds_of(&"action") == 0, "the Pistol played an action sound")
+	sounds.clear()
+
+
+## No shot sound is named anywhere but a Weapon Profile: every take a
+## carried Profile plays is referenced only under `resources/weapons`.
+func _check_shot_sounds_only_in_profiles() -> void:
+	var paths: Array[String] = []
+	for profile in player.weapons:
+		for stream in profile.shot_sounds:
+			paths.append(stream.resource_path)
+	_expect(paths.size() >= 2, "the carried Profiles name %d shot takes" % paths.size())
+	var offenders: Array[String] = []
+	for file in _source_files("res://"):
+		if file.begins_with("res://resources/weapons/"):
+			continue
+		var text := FileAccess.get_file_as_string(file)
+		for path in paths:
+			if text.contains(path.get_base_dir() + "/"):
+				offenders.append("%s names %s" % [file, path])
+	_expect(offenders.is_empty(), "shot sounds named outside a Weapon Profile: %s" % [offenders])
+
+
+func _source_files(dir: String) -> Array[String]:
+	var out: Array[String] = []
+	for sub in DirAccess.get_directories_at(dir):
+		if sub.begins_with(".") or sub in ["assets", "tests", "docs"]:
+			continue
+		out.append_array(_source_files(dir.path_join(sub)))
+	for file in DirAccess.get_files_at(dir):
+		if file.get_extension() in ["gd", "tscn", "tres"]:
+			out.append(dir.path_join(file))
+	return out
 
 
 ## The reload sequence: magazine out at the start, in later, the rack only on
@@ -1868,6 +2796,8 @@ func _check_audio_reload() -> void:
 	_expect(_sound_kinds() == [&"mag_out"], "the tactical reload opened with %s" % [_sound_kinds()])
 	await _seconds(player.weapon.reload_tactical + 0.1)
 	_expect(_sound_kinds() == [&"mag_out", &"mag_in"], "the tactical reload played %s" % [_sound_kinds()])
+	_expect(sounds.size() == 2 and [sounds[0][1], sounds[1][1]] == Array(player.weapon.reload_sounds),
+			"the reload did not play the Profile's reload sounds in order: %s" % [sounds])
 	_clear_shots()
 
 	player.ammo = 0
@@ -2003,7 +2933,8 @@ func _check_crew_shot_sound() -> void:
 	if ring != null:
 		_expect(ring.global_position.distance_to(crew.global_position + Vector3.UP * Crew3D.MUZZLE_HEIGHT) < 1.0,
 				"the crew shot rings %.1f m from the muzzle" % ring.global_position.distance_to(crew.global_position))
-		_expect(ring.stream != null and ring.stream.resource_path.contains("kurt_gunshots/shot"), "the crew shot plays %s" % [ring.stream])
+		_expect(ring.stream != null and ring.stream in crew.weapon.shot_sounds and ring.stream.resource_path.contains("kurt_22_magnum/shot"),
+				"the crew shot plays %s, not the Pistol's" % [ring.stream])
 	if shot != null:
 		shot.queue_free()
 	await _seconds(1.3)
@@ -2021,7 +2952,7 @@ func _check_bolt_reach() -> void:
 	await _clear_dummy()
 	await _place(RUNWAY)
 	_clear_shots()
-	await _dummy(30, 7.0)
+	await _dummy(750, 7.0)
 	var hits := 0
 	for i in 10:
 		var shot: Projectile3D = player.fire()
@@ -2030,7 +2961,7 @@ func _check_bolt_reach() -> void:
 		# Aim straight, no spread: the Profile's cone is 1 deg, well inside
 		# the dummy at 14 m; if a shot misses, that is the tunnelling.
 		await _seconds(player.weapon.fire_interval)
-	hits = 30 - dummy.health.current
+	hits = (750 - dummy.health.current) / player.weapon.damage
 	_expect(hits == 10, "10 bolts at a dummy 7 m off landed %d hits" % hits)
 	_clear_shots()
 	await _clear_dummy()
@@ -2048,7 +2979,7 @@ func _check_bolt_reach() -> void:
 	_clear_shots()
 
 
-## A landed shot or melee says so: `hit_landed(target, killed)`, the HUD
+## A landed shot or melee says so: `hit_landed(target, killed, headshot)`, the HUD
 ## flashes its marker (red on a kill) and fades it, and the hit tick plays
 ## once per hit. A bolt into the ship says nothing.
 func _check_hit_markers() -> void:
@@ -2064,7 +2995,7 @@ func _check_hit_markers() -> void:
 	_clear_shots()
 	await _seconds(0.2)
 
-	await _dummy(5, 6.0)
+	await _dummy(125, 6.0)
 	sounds.clear()
 	# Aimed at the chest: at eye height the crosshair sits on the capsule's
 	# top cap, where the 1 deg cone can skim over.
@@ -2080,7 +3011,7 @@ func _check_hit_markers() -> void:
 	_expect(is_zero_approx(hud.hitmarker_alpha()), "the hit marker did not fade (alpha %.2f)" % hud.hitmarker_alpha())
 	_clear_shots()
 
-	# Four more rounds kill the 5 HP dummy: the last one is a kill marker.
+	# Four more rounds kill the 125 HP dummy: the last one is a kill marker.
 	hits_landed.clear()
 	sounds.clear()
 	for i in 4:
@@ -2096,7 +3027,7 @@ func _check_hit_markers() -> void:
 
 	# A landed melee is a hit too.
 	await _place(RUNWAY)
-	await _dummy(9, 1.5)
+	await _dummy(225, 1.5)
 	sounds.clear()
 	await _swing()
 	_expect(hits_landed == [[dummy, false]], "a landed melee reported %s" % [hits_landed])
