@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: resolved
 Map: map.md
 
 # Spec: Shotgun, Marksman Rifle and the Sandbox sheet

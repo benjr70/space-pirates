@@ -61,3 +61,5 @@ Build note, 2026-11-22:
 
   Cause: the 0.09 m overlap sphere on every bolt widens the target. The numbers were kept as the user picked them, and the band is left to ticket 28. `_check_shotgun_range` in `tests/test_crew.gd` is now a loose seeded guard: at 3 m one shot kills at least 95% of the time, at 12 m one shot kills at most 45%, and at 8 m two shots kill at least 95%.
 - Not checked by eye or ear: the model, the poses, the sound and the recoil feel.
+
+- 2026-11-24: The unticked range line stays unticked: the Shotgun kills in one shot further out than it says. The user played with these numbers and kept them (see the first balance pass ticket), so the measured band is the accepted one.
