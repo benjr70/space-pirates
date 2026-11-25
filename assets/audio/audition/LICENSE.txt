@@ -1,16 +1,6 @@
-PROTOTYPE candidates for the sound booth, 2026-11-24: what a suppressed shot
-sounds like. All sources are CC0 on OpenGameArt. Cut by cut.py.
-
-*0_REFERENCE_*        the gun's own shot as it ships today, for comparison
-*1_own_shot_muffled_thump, *2_own_shot_softened
-                      that same shot through ffmpeg filters (see cut.py)
-p3, a3, m3            "The Free Firearm Sound Library",
-                      https://opengameart.org/content/the-free-firearm-sound-library
-                      Ruger Mark III/R_35P.wav, Ruger Single Six/S_14P.wav,
-                      Savage 10 .300 Blackout/T_17P.wav (low-passed at 5 kHz)
-p4, a4, m4            "Hollywood-style pistol silencer sound effect",
-                      https://opengameart.org/content/hollywood-style-pistol-silencer-sound-effect
-                      silencer.wav; a4 and m4 are slowed to 0.8 and 0.65 speed
-p5, a5, m5            "Silencers" by EmoPreben (a processed voice),
-                      https://opengameart.org/content/silencers-by-emopreben
-                      Silencers - 2, 6 and 9
+PROTOTYPE candidates for the sound booth, round 2 (Pistol only), 2026-11-24.
+All are real recordings from "The Free Firearm Sound Library", CC0,
+https://opengameart.org/content/the-free-firearm-sound-library, cut by
+`cut.py <sources> <out> 2`, except p0, the Pistol's shot as it ships today.
+Each name says the round, the gun and the microphone distance; "muffled" is
+a low-pass, "higher" is the take sped up. Round 1 is in ../audition_round_1.

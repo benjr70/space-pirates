@@ -36,6 +36,27 @@ JOBS = [
     ("m4_hollywood_silencer_deepest", src + "/silencer.wav", "asetrate=44100*0.65,aresample=44100", False),
     ("m5_emopreben_silencer_9", src + "/emo/Silencers - 9.wav", None, False),
 ]
+# Round 2, Pistol only: the user picked a3 for the Assault Rifle and m3 for
+# the Marksman Rifle, both real small or subsonic rounds, and rejected every
+# Pistol candidate. So: more real recordings, mostly from further off.
+UP = "asetrate=44100*%s,aresample=44100"
+ROUND_2 = [
+    ("p0_REFERENCE_pistol_unsuppressed", OWN["p"], None, True),
+    ("p1_22_pistol_ruger_mk3_mid", L + "Ruger Mark III/R_30P.wav", None, False),
+    ("p2_22_revolver_single_six_mid", L + "Ruger Single Six/S_11P.wav", None, False),
+    ("p3_22_revolver_single_six_near_AS_ASSAULT_RIFLE", L + "Ruger Single Six/S_14P.wav", None, False),
+    ("p4_22_revolver_single_six_near_higher", L + "Ruger Single Six/S_14P.wav", UP % "1.2", False),
+    ("p5_380_bersa_mid", L + "Bersa/F_41P.wav", None, False),
+    ("p6_380_bersa_mid_muffled", L + "Bersa/F_41P.wav", "lowpass=f=3000", False),
+    ("p7_38_snubnose_642_mid", L + "Smith & Wesson 642/V_22P.wav", None, False),
+    ("p8_9mm_walther_ppq_mid", L + "Walther PPQ/X_31P.wav", None, False),
+    ("p9_9mm_walther_ppq_mid_muffled", L + "Walther PPQ/X_31P.wav", "lowpass=f=2500", False),
+    ("pa_45_1911_mid", L + "1911/A_34P.wav", None, False),
+    ("pb_45_1911_mid_muffled", L + "1911/A_34P.wav", "lowpass=f=2500", False),
+    ("pc_300_blackout_AS_MARKSMAN_higher", L + "Savage 10 .300 Blackout/T_17P.wav", "lowpass=f=5000," + UP % "1.25", False),
+]
+if len(sys.argv) > 3 and sys.argv[3] == "2":
+    JOBS = ROUND_2
 R = 44100
 for name, source, chain, reference in JOBS:
     raw = subprocess.run(["ffmpeg", "-v", "error", "-i", source, "-ac", "1", "-ar", str(R), "-f", "s16le", "-"],
