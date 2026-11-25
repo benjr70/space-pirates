@@ -39,6 +39,9 @@ Every Sandbox number, generated from `resources/weapons/`, `resources/sandbox.tr
 | Ads Sway Degrees | 0.0 | 0.0 | 0.0 | 0.25 |
 | Ads Zoom | 1.6 | 1.6 | 1.15 | 3.0 |
 | Ads Speed | 0.8 | 0.7 | 0.85 | 0.6 |
+| Aim Time | 0.15 | 0.22 | 0.22 | 0.32 |
+| **Weapon Wheel** | | | | |
+| Swap Time | 0.3 | 0.4 | 0.45 | 0.5 |
 | **Recoil** | | | | |
 | Recoil Push | 0.05 | 0.035 | 0.09 | 0.05 |
 | Recoil Kick Degrees | 7.0 | 3.0 | 11.0 | 5.0 |

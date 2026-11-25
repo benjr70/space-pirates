@@ -51,7 +51,9 @@ extends Node3D
 ## every pose turns it round. The positions come from the Weapon Profile.
 @export var rotation_hip := Vector3(0.0, 180.0, 0.0)
 @export var rotation_low := Vector3(-35.0, 180.0, 15.0)
-## How fast the Viewmodel settles toward its target pose.
+## How fast the Viewmodel settles toward the sprint-low pose and out of it.
+## Between the hip and the sights it eases at the held weapon's
+## `aim_ease_rate()` instead, so it is 95% there in its aim time.
 @export var pose_lerp := 10.0
 
 @export_group("Sway")
@@ -216,13 +218,15 @@ func _process(delta: float) -> void:
 	# each is already smooth or is meant to snap.
 	var pose_position: Vector3
 	var pose_rotation: Vector3
+	var t: float
 	if lowered:
 		pose_position = pose_low
 		pose_rotation = rotation_low
+		t = minf(pose_lerp * delta, 1.0)
 	else:
 		pose_position = pose_ads if aiming else pose_hip
 		pose_rotation = rotation_hip
-	var t := minf(pose_lerp * delta, 1.0)
+		t = 1.0 - exp(-profile.aim_ease_rate() * delta)
 	_pose_position = _pose_position.lerp(pose_position, t)
 	_pose_rotation = _pose_rotation.lerp(pose_rotation, t)
 	var recoil_push: float = profile.ads_recoil_push if aiming else profile.recoil_push
@@ -264,7 +268,7 @@ func _on_reload_started(from_empty: bool) -> void:
 	var wanted: float = profile.reload_empty if from_empty else profile.reload_tactical
 	_play_for(clips, RELOAD_CLIPS[1] if from_empty else RELOAD_CLIPS[0], wanted)
 	_rack_after_reload = profile.racks_after(from_empty)
-	_play_for(model_clips, profile.model_reload_clip, profile.swap_time(from_empty))
+	_play_for(model_clips, profile.model_reload_clip, profile.magazine_swap_time(from_empty))
 
 
 ## A shell-by-shell reload plays the reload clip once per shell, over that
@@ -297,7 +301,7 @@ func _on_model_clip_finished(clip: StringName) -> void:
 
 func _on_weapon_changed(_profile: WeaponProfile) -> void:
 	_stop_clip()
-	_swap_time = _pirate.swap_time
+	_swap_time = profile.swap_time
 	_swap_left = _swap_time
 	if _swap_time <= 0.0:
 		_mount(profile)

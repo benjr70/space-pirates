@@ -5,6 +5,10 @@ extends Resource
 ## `resources/weapons/pistol.tres`; the Pirate reads whichever Profile he
 ## holds and never keeps a weapon number of his own.
 
+## An exponential ease at this many per aim time is 95% (1 - e^-3) of the
+## way there at the aim time.
+const AIM_EASE := 3.0
+
 @export_group("Trigger")
 ## One shot per press: holding the trigger never repeats. Off, the trigger
 ## fires again every `fire_interval` while held.
@@ -77,6 +81,16 @@ extends Resource
 @export var ads_zoom := 1.3
 ## Multiplier on walking speed while aimed.
 @export var ads_speed := 0.8
+## Seconds for the sights to come up from the hip, and to drop again. The
+## Viewmodel and the zoom ease in and are 95% there at the aim time; what
+## aiming gives (`ads_spread`, `ads_moving_spread`, `ads_speed`) comes in
+## with the rise, in a straight line over it. He may fire while it rises.
+@export var aim_time := 0.15
+
+@export_group("Weapon Wheel")
+## Seconds a swap to this weapon keeps the trigger, the sights and the
+## reload busy: a swap takes the time of the weapon being drawn.
+@export var swap_time := 0.30
 
 @export_group("Recoil")
 ## A shot shoves the weapon this far back toward him and tips its muzzle up
@@ -160,8 +174,14 @@ func racks_after(from_empty: bool) -> bool:
 	return from_empty and model_rack_clip != &"" and reload_empty > rack_time
 
 
+## How fast the Viewmodel's pose and the zoom ease toward the sights and
+## back, per second: 95% of the way there in one aim time.
+func aim_ease_rate() -> float:
+	return AIM_EASE / maxf(aim_time, 0.001)
+
+
 ## How long the magazine swap itself takes: the reload, less the rack when
 ## there is one.
-func swap_time(from_empty: bool) -> float:
+func magazine_swap_time(from_empty: bool) -> float:
 	var total := reload_empty if from_empty else reload_tactical
 	return total - (rack_time if racks_after(from_empty) else 0.0)

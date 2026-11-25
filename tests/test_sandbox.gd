@@ -51,8 +51,13 @@ func _check_doc_fresh() -> void:
 			"| = Reach (m) | 40.0 | 50.0 | 15.0 | 80.0 |", "| Pirate Health | 150 |", "| Crew Health | 100 |",
 			"| Melee Damage | 75 |", "kills outright", "## Gunnery", "| | Guard | Worker |", "| **Aim** |",
 			"| Aim Error Degrees | 6.0 | 11.0 |", "| Burst Length | 3 | 2 |", "| Pause Between Bursts | 1.1 | 1.1 |",
-			"| Engage Range | 10.6 | 10.6 |", "Crew fire the Pistol"]:
+			"| Engage Range | 10.6 | 10.6 |", "Crew fire the Pistol",
+			"| Aim Time | 0.15 | 0.22 | 0.22 | 0.32 |", "| Swap Time | 0.3 | 0.4 | 0.45 | 0.5 |"]:
 		_expect(doc.contains(heading), "docs/sandbox.md lacks \"%s\"" % heading)
+	# Aim time and swap time are each weapon's own, editable in the sheet.
+	var weapons := SandboxSheet.from_disk().table(SandboxSheet.WEAPONS)
+	for key: StringName in [&"aim_time", &"swap_time"]:
+		_expect(not weapons.row(key).is_empty() and weapons.is_editable(key), "the sheet has no editable %s row" % key)
 
 
 ## Fresh copies of the weapons, the Sandbox and the Gunnery under SCRATCH,

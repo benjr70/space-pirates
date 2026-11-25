@@ -127,10 +127,9 @@ const TEAM := &"pirate"
 @export_group("Aim Down Sights")
 ## Seconds from a sprint's lowered weapon to the sights.
 @export var ads_raise_time: float = 0.12
-## Seconds after a Descope before held aim brings the sights back.
+## Seconds after a Descope before held aim brings the sights back. They then
+## come up over the held weapon's full aim time.
 @export var descope_recovery: float = 0.35
-## How fast the FOV settles into and out of the zoom.
-@export var ads_zoom_speed: float = 14.0
 
 @export_group("Melee")
 ## The cone a target is picked from, measured on the floor plane.
@@ -175,8 +174,6 @@ const TEAM := &"pirate"
 	preload("res://resources/weapons/shotgun.tres"),
 	preload("res://resources/weapons/marksman_rifle.tres"),
 ]
-## Seconds a weapon swap keeps the trigger, the sights and the reload busy.
-@export var swap_time := 0.4
 @export var projectile_scene: PackedScene = preload("res://scenes/projectile_3d.tscn")
 ## How far ahead the crosshair ray looks for something to converge on.
 @export var aim_distance: float = 100.0
@@ -255,6 +252,10 @@ var _clamber_tween: Tween
 var _ads_raise_left := 0.0
 ## Seconds of Descope still keeping held aim down.
 var _descope_left := 0.0
+## How far up the sights are: 0 at the hip, 1 aimed. It follows `ads` in a
+## straight line over the held weapon's aim time, both ways, and what aiming
+## gives (the tighter cone, the slower walk) blends in with it.
+var aim_progress := 0.0
 var _hip_fov := 75.0
 ## Seconds the current aimed sway has run, and the view offset it last laid
 ## on, which the next frame takes back.
@@ -369,6 +370,7 @@ func _physics_process(delta: float) -> void:
 	if state == State.CLAMBER:
 		# The tween owns the body; nothing else is read until it lets go.
 		_lower_sights()
+		_tick_aim_progress(delta)
 		_sway_aim(delta)
 		_animate_camera(delta)
 		_report_spread()
@@ -399,6 +401,7 @@ func _physics_process(delta: float) -> void:
 			return
 
 	_update_ads(delta)
+	_tick_aim_progress(delta)
 	_sway_aim(delta)
 	_move(delta, direction)
 
@@ -484,8 +487,7 @@ func _move(delta: float, direction: Vector3) -> void:
 
 
 func _walk(flat: Vector3, direction: Vector3, multiplier: float, delta: float) -> Vector3:
-	if ads:
-		multiplier *= weapon.ads_speed
+	multiplier *= lerpf(1.0, weapon.ads_speed, aim_progress)
 	if direction != Vector3.ZERO:
 		return flat.move_toward(direction * max_speed * multiplier, acceleration * delta)
 	return flat.move_toward(Vector3.ZERO, friction * delta)
@@ -523,6 +525,11 @@ func _update_ads(delta: float) -> void:
 		_ads_raise_left = maxf(_ads_raise_left - delta, 0.0)
 		if _ads_raise_left == 0.0:
 			_set_ads(true)
+
+
+## The sights move a frame toward where `ads` says, over the aim time.
+func _tick_aim_progress(delta: float) -> void:
+	aim_progress = move_toward(aim_progress, 1.0 if ads else 0.0, delta / maxf(weapon.aim_time, 0.001))
 
 
 func _set_ads(on: bool) -> void:
@@ -682,7 +689,7 @@ func _sway_aim(delta: float) -> void:
 func _animate_camera(delta: float) -> void:
 	var zoom := weapon.ads_zoom if ads else 1.0
 	var fov := rad_to_deg(2.0 * atan(tan(deg_to_rad(_hip_fov) / 2.0) / zoom))
-	camera.fov = lerpf(camera.fov, fov, ads_zoom_speed * delta)
+	camera.fov = lerpf(camera.fov, fov, 1.0 - exp(-weapon.aim_ease_rate() * delta))
 	_dip = move_toward(_dip, 0.0, clamber_dip / maxf(clamber_time, 0.01) * delta)
 	head.position.y = lerpf(head.position.y, _head_target_y - _dip, CAMERA_LERP * delta)
 	var roll := deg_to_rad(slide_roll_degrees) if state == State.SLIDE else 0.0
@@ -782,7 +789,8 @@ func is_swapping() -> bool:
 
 ## The next weapon he carries, [param step] places round the wheel. Each
 ## keeps the rounds it had; the swap drops a running reload and the sights,
-## and holds the trigger for `swap_time`. Refused mid-clamber and mid-swing.
+## and holds the trigger for the drawn weapon's `swap_time`. Refused
+## mid-clamber and mid-swing.
 func switch_weapon(step: int) -> void:
 	if weapons.is_empty() or state == State.CLAMBER or is_meleeing():
 		return
@@ -792,7 +800,7 @@ func switch_weapon(step: int) -> void:
 	cancel_reload()
 	_lower_sights()
 	_stowed_ammo[weapon] = ammo
-	_swap_left = swap_time
+	_swap_left = next.swap_time
 	_bloom = 0.0
 	ammo = _stowed_ammo.get(next, next.magazine_size)
 	weapon = next
@@ -836,14 +844,13 @@ func spread_degrees() -> float:
 		_:
 			if flat_speed() <= 0.5:
 				multiplier = weapon.spread_still
-			elif ads:
-				# Aimed and walking has a multiplier of its own, in place of
-				# the aimed one times the walking one.
-				return (weapon.spread_base_degrees + _bloom) * weapon.ads_moving_spread
 			else:
-				multiplier = weapon.spread_walking
-	if ads:
-		multiplier *= weapon.ads_spread
+				# Aimed and walking has a multiplier of its own, in place of
+				# the aimed one times the walking one, blended from the
+				# walking one as the sights rise.
+				return (weapon.spread_base_degrees + _bloom) \
+						* lerpf(weapon.spread_walking, weapon.ads_moving_spread, aim_progress)
+	multiplier *= lerpf(1.0, weapon.ads_spread, aim_progress)
 	return (weapon.spread_base_degrees + _bloom) * multiplier
 
 
@@ -1140,6 +1147,7 @@ func respawn() -> void:
 	_melee_cycle_left = 0.0
 	_melee_lock_left = 0.0
 	_lower_sights()
+	aim_progress = 0.0
 	_sway_aim(0.0)
 	# Silence first: the state reset below must not sound like a landing.
 	audio.reset()

@@ -109,7 +109,11 @@ func _viewmodel() -> void:
 		weapon.add_child(holder)
 	var wheel := int(args.get("wheel", "0"))
 	if wheel != 0:
-		player.swap_time = 0.0
+		# Drawn on the spot: a copy of the next weapon with no swap time.
+		var index := posmod(player.weapons.find(player.weapon) + wheel, player.weapons.size())
+		var drawn: WeaponProfile = player.weapons[index].duplicate()
+		drawn.swap_time = 0.0
+		player.weapons[index] = drawn
 		player.switch_weapon(wheel)
 	if args.has("hip"):
 		weapon.pose_hip = _v3(args.hip)
