@@ -75,8 +75,11 @@ func _ready() -> void:
 	_wire_raid_end()
 	if ship.has_node("BoardingPod"):
 		_wire_extraction(ship.get_node("BoardingPod"))
-	# F1: the Sandbox sheet, in debug builds only.
+	# F1: the Sandbox sheet, in debug builds only. Attached before the Raid's
+	# weapons go in his hands: the sheet dials the bare Profiles.
 	SandboxSheetView.attach(self)
+	if Raid.is_active() and not Raid.weapons.is_empty():
+		player.carry(Raid.weapons)
 
 
 ## The hand-authored ship, or a generated target when `--seed=N` (and

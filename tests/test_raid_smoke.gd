@@ -33,6 +33,10 @@ extends SceneTree
 ## target and firing only while the cone is tight enough for the range, and
 ## swings at one inside 1.6 m.
 ##
+## Every Raid carries a fitted Loadout, given the way a Raid from the menu
+## gives it: the Assault Rifle with a Suppressor and a Drum, in hand, and the
+## Shotgun with a Short Barrel. The scripts fire the Assault Rifle.
+##
 ## Three scripts per ship. Each is what the bot tries; the verdict does not
 ## ask it to win (see "The verdict" below):
 ## - **Quiet**: Assault Rifle out, crouch-walks in, shuts the boarding Hatch behind
@@ -133,6 +137,16 @@ extends SceneTree
 const SUITE := "raid_smoke"
 const STEP := 1.0 / 60.0
 const SCRIPTS: Array[StringName] = [&"quiet", &"loud", &"caught"]
+## The Loadout every Raid carries, given as a Raid from the menu gives it
+## ([method Raid.arm]): the Assault Rifle first, in hand, with a Suppressor
+## and a Drum; the Shotgun second with a Short Barrel.
+const FITTED := {
+	&"first": preload("res://resources/weapons/assault_rifle.tres"),
+	&"second": preload("res://resources/weapons/shotgun.tres"),
+	&"suppressor": preload("res://resources/attachments/suppressor.tres"),
+	&"drum": preload("res://resources/attachments/drum.tres"),
+	&"short_barrel": preload("res://resources/attachments/short_barrel.tres"),
+}
 const DEFAULT_SEEDS := 5
 ## Simulated seconds each script may take to reach its end state.
 const BUDGET := {&"quiet": 240.0, &"loud": 300.0, &"caught": 150.0}
@@ -529,6 +543,7 @@ func _attempt(ship_class: StringName, ship_seed: int, script: StringName) -> Arr
 
 	Raid.ship_class = ship_class
 	Raid.seed = ship_seed
+	Raid.arm(_fitted_loadout())
 	main = load(Raid.RAID_SCENE).instantiate()
 	root.add_child(main)
 	spots = SpotCounter.new()
@@ -538,6 +553,10 @@ func _attempt(ship_class: StringName, ship_seed: int, script: StringName) -> Arr
 	await physics_frame
 	await physics_frame
 	player = main.get_node("Player")
+	_expect(player.weapons.size() == 2 and player.weapon == player.weapons[0]
+			and player.weapons[0].attachments == [FITTED[&"suppressor"], FITTED[&"drum"]]
+			and player.weapons[1].attachments == [FITTED[&"short_barrel"]],
+			"the Pirate does not carry the fitted Loadout, the Assault Rifle in hand")
 	layout = main.layout
 	pod = main.get_node("Ship/BoardingPod")
 	extraction = main.extraction
@@ -592,8 +611,20 @@ func _attempt(ship_class: StringName, ship_seed: int, script: StringName) -> Arr
 	main.free()
 	Raid.seed = 0
 	Raid.ship_class = &""
+	Raid.weapons = []
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	return result
+
+
+func _fitted_loadout() -> Loadout:
+	var loadout := Loadout.new()
+	loadout.set_first(FITTED[&"first"])
+	loadout.set_second(FITTED[&"second"])
+	for fit in [[&"first", Attachment.Slot.BARREL, &"suppressor"], [&"first", Attachment.Slot.MAGAZINE, &"drum"],
+			[&"second", Attachment.Slot.BARREL, &"short_barrel"]]:
+		_expect(loadout.set_attachment(FITTED[fit[0]], fit[1], FITTED[fit[2]]),
+				"the fitted Loadout refused its %s" % fit[2])
+	return loadout
 
 
 ## Checks the Raid's ending is consistent with what happened in it, through
@@ -785,7 +816,6 @@ func _quiet() -> bool:
 	if target[0] == null:
 		return false
 	var box: Container3D = target[0]
-	player.switch_weapon(1)
 	if not await _walk_to(entry, true, budget, "the boarding Hatch", Fire.THREATS):
 		return false
 	# Shut the Hatch behind him: an open boarding Hatch is a trace crew act on.
@@ -804,7 +834,6 @@ func _quiet() -> bool:
 ## falls back to the pod mouth. Extracting with a kill is what it plays for.
 func _loud() -> bool:
 	var budget: float = BUDGET[&"loud"]
-	player.switch_weapon(1)
 	if not await _walk_to(entry, false, budget, "the boarding Hatch"):
 		return false
 	# Walk at the nearest crew member until he sees one or stands in its Room.

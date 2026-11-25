@@ -153,7 +153,9 @@ the Raid loop.
 `raid_smoke` plays whole Raids with a scripted Pirate (Quiet, Loud,
 Caught; the rules are in the suite's header). Crew are meant to be
 dangerous, so the verdict never asks the bot to win: a Raid where it is
-seen into an Alarm or shot down is legitimate. Every Raid is played once
+seen into an Alarm or shot down is legitimate. Every Raid carries a fitted Loadout (the Assault Rifle
+with a Suppressor and a Drum, in hand, and the Shotgun with a Short Barrel),
+given through `Raid.arm` as a Raid from the menu gives it. Every Raid is played once
 (no second draw, no workarounds, no `NOTE` lines) and judged on:
 
 - **Invariants, strict on every Raid:** no engine error; the Pirate never
@@ -214,7 +216,7 @@ inside a suite with nothing asserted about it, does not count. `static`
 covers every file below for loading and is left out of the table.
 Helper files fold into the suite that calls them: `tests/raid_checks.gd`,
 `tests/generated_ship_checks.gd`, `tests/two_rect_room_checks.gd` and
-`tests/built_sample_checks.gd` run inside `ship_3d`; `tests/room_data_checks.gd`
+`tests/built_sample_checks.gd` run inside `ship_3d`; `tests/loadout_checks.gd` runs inside `pirate`; `tests/room_data_checks.gd`
 runs inside both `layouts` and `ship_3d`. Verified 2026-11-22 by grepping the
 suites and helpers for each script's class name and `res://` path, then
 reading the checks that use it.
@@ -227,7 +229,7 @@ reading the checks that use it.
 | `scripts/layouts/` | `layouts`, `ship_3d` | `PlayerShipLayout` is the built sample both suites walk |
 | `scripts/ship/` | `ship_3d` (3D), `layouts` (2D) | `ship_3d`: `ShipBuilder3D` geometry, `BoardingPod`, `RoomReveal`, `RoomTracker`, `ShipNavigator`. `layouts`: `ShipBuilder` and `RoomFog`. `crew` builds on `ShipBuilder3D` too. `ship_3d` also checks `HazardStripes` (texture, material, and on sealed Hatches and the Boarding Pod collar) |
 | `scripts/ui/` | `ship_3d`, `pirate`, `crew`, `raid_smoke` | `ship_3d` (`RaidChecks`): `MainMenu`, `MenuBackdrop`, `PauseMenu`, `RaidEndScreen`, `MenuStyle`, the `Hud` hidden on death. `pirate`: `Hud` crosshair, ammo, dry click, hit markers. `crew`: `AwarenessMarkers`. `raid_smoke`: the `RaidEndScreen` heading and tally on both endings (gold banked or left behind, XP, kills, the Ghost bonus if and only if the Alarm was never raised), the `Hud` hidden at the end, its Alarm banner every frame, Loot line, spotted stings and Door and search prompts, in whole Raids |
-| `scripts/raid.gd`, `raid_ledger.gd`, `extraction.gd`, `profile.gd` | `ship_3d`, `raid_smoke` | `RaidChecks`: levels, the ledger and Ghost bonus, a Raid's seed, pause, death, Extraction, banking to the Profile. `raid_smoke`: the same end to end, a seeded Raid boarded, played and extracted from (or died on), with the XP and gold banked checked against the ledger on either ending, and sweep floors on Ghost Extractions, Extractions with a kill and Loot banked |
+| `scripts/raid.gd`, `raid_ledger.gd`, `extraction.gd`, `profile.gd`, `loadout.gd` | `ship_3d`, `raid_smoke`, `pirate` | `RaidChecks`: levels, the ledger and Ghost bonus, a Raid's seed, pause, death, Extraction, banking to the Profile. `raid_smoke`: the same end to end, a seeded Raid boarded, played and extracted from (or died on), with the XP and gold banked checked against the ledger on either ending, and sweep floors on Ghost Extractions, Extractions with a kill and Loot banked. `pirate` (`LoadoutChecks`): the `Loadout`'s default, set and swap of the two places, fitting, save and load in the profile file beside XP and gold, the stale-entry fallbacks, and a Raid from the menu carrying its two Built Weapons (keys 1 and 2, the wheel, a Retry carrying the same two). `raid_smoke` plays every Raid with a fitted Loadout given through `Raid.arm` |
 | `scripts/main_3d.gd`, `door_3d.gd` | `ship_3d`, `raid_smoke`; `crew` for doors | the Raid scene, open and locked Doors, Hatches, boarding, a Door's prompt offered only to the Pirate in its reach (`test_ship_3d.gd::_physics_door_prompt`, with a crew member at a Door across the ship). `raid_smoke`: Doors and the boarding Hatch worked with the interact key, a Container searched with it (and the HUD offering the search there), a Door's prompt offered only with the Pirate in a Door's reach, checked every frame, the home door worked to extract |
 | `scripts/container_3d.gd` | `ship_3d`, `crew`, `raid_smoke` | searching a Container (`RaidChecks`; the interact key searching one while crew stand at a distant Door, `test_ship_3d.gd::_physics_door_prompt`; `raid_smoke` with the interact key in a live Raid, failing if the key does nothing at a Container in reach), an emptied Container as a trace (`crew`) |
 | `scripts/attachment.gd`, `resources/attachments/`, and the Slots, fits and `build` in `weapon_profile.gd` | `attachments`; `crew` in part | `attachments`: the fourteen Attachment files (Slot, name, factors, lens, Suppressor), each gun's Slots and what fits them, every gun with every Attachment it takes built against the catalogue's factors and limits, the Built Weapon numbers of `.scratch/weapon-attachments/issues/13-starting-numbers.md`, stacking, the suppressed shot per gun, building leaving the bare Profile and the Attachment files alone, and refusals. `crew`: a Laser's conspicuous on Awareness (`_check_conspicuous`), a suppressed shot's reach (`_check_suppressed`) |

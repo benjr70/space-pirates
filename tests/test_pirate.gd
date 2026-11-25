@@ -130,6 +130,7 @@ func _run() -> void:
 	await _check_weapon_wheel()
 	await _check_swap_is_busy()
 	await _check_weapon_keys()
+	await _check_loadout()
 	await _check_assault_rifle_full_auto()
 	await _check_assault_rifle_model()
 	await _check_shotgun_pellets()
@@ -858,6 +859,16 @@ func _check_weapon_keys() -> void:
 	await _cycle()
 	await _clear_dummy()
 	await _place(RUNWAY)
+
+## The Loadout and a Raid from the menu carrying it (`LoadoutChecks`). The
+## course is switched off meanwhile, so the number keys and the wheel reach
+## only the Raid's Pirate.
+func _check_loadout() -> void:
+	world.process_mode = Node.PROCESS_MODE_DISABLED
+	await LoadoutChecks.run(_expect, self)
+	world.process_mode = Node.PROCESS_MODE_INHERIT
+	await _place(RUNWAY)
+
 
 ## The Assault Rifle is fully automatic: a held trigger keeps firing at its
 ## interval, where the Pistol fires once.

@@ -54,7 +54,8 @@ ALLOWED=(
 	# of each Raid in generated_ship_checks.gd (run), raid_checks.gd
 	# (_check_raid, _check_extraction) and built_sample_checks.gd (tick), and by
 	# test_crew.gd's Pirate being freed when the suite quits, and by
-	# test_raid_smoke.gd's teardown of each Raid (_play).
+	# test_raid_smoke.gd's teardown of each Raid (_play), and by
+	# loadout_checks.gd's teardown of each Raid boarded from the menu (_leave).
 	'ERROR: Parameter "material" is null\.'
 )
 

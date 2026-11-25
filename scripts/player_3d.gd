@@ -807,6 +807,22 @@ func switch_weapon(step: int) -> void:
 	ammo_changed.emit(ammo)
 
 
+## Carries [param list] in place of what he had, in that order, the first in
+## hand and every magazine full: a Raid's Loadout, given at its start.
+func carry(list: Array[WeaponProfile]) -> void:
+	if list.is_empty():
+		return
+	cancel_reload()
+	_lower_sights()
+	weapons = list.duplicate()
+	_stowed_ammo.clear()
+	_swap_left = 0.0
+	_bloom = 0.0
+	weapon = list[0]
+	ammo = weapon.magazine_size
+	ammo_changed.emit(ammo)
+
+
 ## The weapon at [param index] in the order he carries them, straight from
 ## a number key: the same swap as the wheel, with its time and refusals.
 ## The weapon already in hand stays put.
