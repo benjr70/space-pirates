@@ -41,8 +41,9 @@ extends SceneTree
 ## ask it to win (see "The verdict" below):
 ## - **Quiet**: Assault Rifle out, crouch-walks in, shuts the boarding Hatch behind
 ##   him, loots one Container, comes back, extracts. He fires only at crew
-##   that have noticed him (suspicious, or HUNT, FIGHT, COVER, or a Worker
-##   fleeing to raise the Alarm), standing to do it. Plays for a Ghost
+##   that have noticed him (suspicious, or HUNT, FIGHT, COVER, a Worker
+##   fleeing to raise the Alarm, or one cowering cornered at his elbow),
+##   standing to do it. Plays for a Ghost
 ##   Extraction.
 ## - **Loud**: Assault Rifle out, walks to the first occupied Room and fires there,
 ##   falls back to the pod mouth shooting whoever follows and holds it until
@@ -90,8 +91,8 @@ extends SceneTree
 ##    pod) or drops below the floor while alive;
 ## 3. no crew member is stuck: walking to a Job (on routine, or sweeping
 ##    under the Alarm) without moving 1 m in STUCK_LIMIT simulated seconds;
-## 4. no crew member holds COVER longer than COVER_LIMIT, and none puts
-##    COVER_SHOTS bolts in a row into the ship within COVER_SHOT_RANGE of
+## 4. no crew member holds COVER longer than its _cover_limit, and none puts
+##    COVER_SHOTS shots in a row into the ship within COVER_SHOT_RANGE of
 ##    its own muzzle;
 ## 5. the HUD offers a Door's prompt only while the Pirate is in a Door's
 ##    reach, and its Alarm banner shows exactly while the Alarm is raised;
@@ -193,12 +194,17 @@ const HIDE_TIME := 5.0
 const SPOT_NEAR := Vector2(3.0, 8.0)
 ## The same when no spot that far off will do.
 const SPOT_CLOSE := Vector2(1.5, 3.0)
-## A crew member in COVER this long without leaving it fails the Raid: it
-## gives up a cover point it cannot reach after Crew3D.COVER_GIVE_UP (3 s),
-## and its hold and reload (at most 1.6 and 1.5 s) run from when it ducked,
-## so it is out by about 3 s. Longest seen over 990 Raids: 3.0 s.
-const COVER_LIMIT := Crew3D.COVER_GIVE_UP + 0.5
-## A crew member putting this many bolts in a row into the ship within
+## A crew member in COVER longer than its own cover limit (_cover_limit)
+## fails the Raid: it gives up a cover point it cannot reach after
+## Crew3D.COVER_GIVE_UP (3 s), and its hold (at most 1.2 x 1.35 = 1.6 s) and
+## its Gunnery's time down (drawn at its last shot, so already running when
+## it ducks: at most 2.0 s Pistol, 2.5 s Assault Rifle, 1.5 s Shotgun, 4.0 s
+## Marksman Rifle) run from when it ducked, so it is out by the longest of
+## the three. COVER_SLACK on top. Before time down replaced the 1.1 s pause
+## (crew-combat ticket 15) the limit was a flat 3.5 s, longest seen 3.0 s
+## over 990 Raids.
+const COVER_SLACK := 0.5
+## A crew member putting this many shots (a Shotgun's pellets one shot) in a row into the ship within
 ## COVER_SHOT_RANGE of its own muzzle (cover at its shoulder or in front of
 ## it), never a body, fails the Raid. Longest such streak seen over 990
 ## Raids: 2.
@@ -313,8 +319,11 @@ var box_blocked := false
 ## The sights come down once this passes without a shot taken.
 var _aim_until := 0.0
 var _in_cover := {}
-## Crew bolts in a row that hit the ship rather than a body, by shooter.
+## Crew shots in a row that hit the ship rather than a body, by shooter.
 var _wasted := {}
+## Crew member to the physics frame of the last shot counted in its streak:
+## a Shotgun shot's pellets all leave on one frame and count once.
+var _wasted_shot := {}
 var _given_up := {}
 var _retreats := 0
 
@@ -538,6 +547,7 @@ func _attempt(ship_class: StringName, ship_seed: int, script: StringName) -> Arr
 	_retreats = 0
 	_in_cover.clear()
 	_wasted.clear()
+	_wasted_shot.clear()
 	route.clear()
 	t = 0.0
 
@@ -701,6 +711,14 @@ func _frame(budget: float) -> bool:
 	return t < budget
 
 
+## Seconds [param member] may stay in COVER: the longest of giving up an
+## unreachable cover point, its own hold and its Gunnery's time-down
+## ceiling, plus COVER_SLACK.
+func _cover_limit(member: Crew3D) -> float:
+	var down: float = member.gunnery.time_down_high if member.gunnery != null else 0.0
+	return maxf(Crew3D.COVER_GIVE_UP, maxf(member.cover_hold_time, down)) + COVER_SLACK
+
+
 func _check_invariants() -> void:
 	if player.is_alive():
 		var at := player.global_position
@@ -723,9 +741,10 @@ func _check_invariants() -> void:
 			_in_cover.erase(member)
 		elif not _in_cover.has(member):
 			_in_cover[member] = t
-		elif cover_held == "" and t - _in_cover[member] > COVER_LIMIT:
-			cover_held = "a %s held COVER for %.0f s, %.1f m from the Pirate, Awareness %.2f (t=%.1f s)" % [
-				"Worker" if member.is_worker() else "Guard", COVER_LIMIT,
+		elif cover_held == "" and t - _in_cover[member] > _cover_limit(member):
+			cover_held = "a %s (%s, hold %.2f s, down left %.2f s, path %d) held COVER for %.1f s, %.1f m from the Pirate, Awareness %.2f (t=%.1f s)" % [
+				"Worker" if member.is_worker() else "Guard", member.weapon.resource_path.get_file() if member.weapon else "unarmed",
+				member.cover_hold_time, member._reload_timer, member._path.size(), _cover_limit(member),
 				_flat(member.global_position).distance_to(_flat(player.global_position)), member.perception.awareness, t]
 		var walking: bool = member.state == Crew3D.State.PATROL and member.routine != null \
 				and member.job_phase == Crew3D.JobPhase.WALKING
@@ -771,15 +790,19 @@ func _pressed_against(member: Crew3D) -> String:
 	return "nothing"
 
 
-## Watches crew bolts: one crew member putting COVER_SHOTS bolts in a row
+## Watches crew shots: one crew member putting COVER_SHOTS shots in a row
 ## into the ship within COVER_SHOT_RANGE of its muzzle (never a body) fails
-## the Raid. A bolt that strikes further off (a miss past the Pirate, his
-## own cover) breaks no streak and adds to none.
+## the Raid. A shot is every projectile one crew member launches on one
+## physics frame, so a Shotgun's 12 pellets count once (since crew-combat
+## ticket 15 gave Guards their own guns), and any of them striking a body
+## breaks the streak. A projectile that strikes further off (a miss past
+## the Pirate, his own cover) breaks no streak and adds to none.
 func _on_shot(node: Node) -> void:
 	var shot := node as Projectile3D
 	if shot == null or not shot.shooter is Crew3D:
 		return
 	var member: Crew3D = shot.shooter
+	var fired_on := Engine.get_physics_frames()
 	shot.hit.connect(func(body: Node3D, _head: bool) -> void:
 		if body is CharacterBody3D:
 			_wasted[member] = 0
@@ -789,10 +812,14 @@ func _on_shot(node: Node) -> void:
 		var muzzle := member.global_position + Vector3.UP * Crew3D.MUZZLE_HEIGHT
 		if muzzle.distance_to(shot.global_position) > COVER_SHOT_RANGE:
 			return
+		if _wasted_shot.get(member, -1) == fired_on:
+			return  # another pellet of a shot already counted
+		_wasted_shot[member] = fired_on
 		_wasted[member] = _wasted.get(member, 0) + 1
 		if _wasted[member] == COVER_SHOTS and cover_fire == "":
-			cover_fire = "a %s put %d bolts in a row into the ship within %.0f m of its muzzle (%s at %s) from %.1f m off the Pirate (t=%.1f s)" % [
-				"Worker" if member.is_worker() else "Guard", COVER_SHOTS, COVER_SHOT_RANGE,
+			cover_fire = "a %s (%s) put %d shots in a row into the ship within %.0f m of its muzzle (%s at %s) from %.1f m off the Pirate (t=%.1f s)" % [
+				"Worker" if member.is_worker() else "Guard", member.weapon.resource_path.get_file() if member.weapon else "unarmed",
+				COVER_SHOTS, COVER_SHOT_RANGE,
 				body.scene_file_path.get_file().get_basename() if body.scene_file_path != "" else body.name,
 				ShipBuilder3D.world_to_tile(shot.global_position),
 				_flat(member.global_position).distance_to(_flat(player.global_position)), t])
@@ -806,7 +833,8 @@ func _on_shot(node: Node) -> void:
 
 ## Crouched all the way: in, Hatch shut behind him, one Container, back
 ## out, extract. He fires only at crew that have noticed him (suspicious of
-## him, a Guard fighting or hunting him, a Worker running for a panel),
+## him, a Guard fighting or hunting him, a Worker running for a panel or
+## cowering cornered),
 ## standing up to do it. A Ghost Extraction is what it plays for; seen into
 ## an Alarm or shot down is a legitimate ending, counted against the floor.
 func _quiet() -> bool:
@@ -1326,7 +1354,7 @@ func _aim_at(member: Crew3D) -> void:
 ## muzzle to the chest, within SIGHT, not given up on; a fleeing Worker
 ## first, then nearest first. With
 ## [param threats_only], only crew already after him: a Guard hunting or
-## fighting him, a Worker fleeing to raise the Alarm,
+## fighting him, a Worker fleeing to raise the Alarm or cowering cornered,
 ## or anyone suspicious of him (_onto_him).
 func _targets(threats_only: bool) -> Array[Crew3D]:
 	var out: Array[Crew3D] = []
@@ -1377,10 +1405,15 @@ func _barrel_blocked() -> Crew3D:
 ## A crew member after him (THREAT_STATES), or one that has noticed him
 ## (suspicious, coming to look): shot before it spots him, it never
 ## fires back and never runs for an Alarm Panel. A Worker cowering is
-## harmless and left be.
+## harmless and left be, unless it cowers cornered (him in its sight
+## within Crew3D.CORNERED_RANGE): stood at his elbow it can wall off his
+## way out (seen on the way to the home door, 0.7 m off, in a gate after
+## crew-combat ticket 15), and before that ticket a cornered Worker fought
+## (FIGHT) and was shot as a threat, so it is still shot.
 func _onto_him(member: Crew3D) -> bool:
-	return member.state in THREAT_STATES or (member.state != Crew3D.State.COWER
-			and member.perception.awareness >= CrewPerception.SUSPICIOUS)
+	if member.state == Crew3D.State.COWER:
+		return member._cornered()
+	return member.state in THREAT_STATES or member.perception.awareness >= CrewPerception.SUSPICIOUS
 
 
 ## Some crew member within SIGHT is after him (THREAT_STATES).
