@@ -7,3 +7,5 @@ script = ExtResource("1")
 slot = 3
 display_name = "Bipod"
 changes = Dictionary[StringName, float]({&"spread_crouch": 0.5, &"ads_sway_degrees": 0.5, &"aim_time": 1.2, &"swap_time": 1.2})
+model = &"Bipod"
+mount = &"MountUnder"

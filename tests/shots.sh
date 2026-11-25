@@ -5,6 +5,7 @@
 # script's flat-colour and magenta checks. See docs/agents/validation.md.
 #
 #   tests/shots.sh viewmodel [wheel=1] [hip=x,y,z ...]
+#   tests/shots.sh attachments
 #   tests/shots.sh ship class=medium seed=1
 #   tests/shots.sh crew | hud | menu
 #   tests/shots.sh scene path=res://scenes/props3d/prop_crate_3d.tscn cam=2,1.5,2 look=0,0.5,0
@@ -17,7 +18,7 @@ cd "$(dirname "$0")/.."
 root=$(pwd)
 
 if [ $# -lt 1 ]; then
-	sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
+	sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
 	exit 2
 fi
 preset=$1; shift

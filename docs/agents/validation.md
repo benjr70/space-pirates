@@ -15,7 +15,7 @@ worktree needs the one-off import first (Setup in `docs/agents/paperclip.md`).
 | Every script, scene and resource loads | `tests/run_all.sh only=static` | 2 s |
 | A failure again, exactly | the `replay:` command the failing suite printed (`seed=<n>`) | |
 | Whole Raids end to end | `tests/run_all.sh only=raid_smoke` (`seeds=10` or `seeds=20` for the wide sweep) | 80–90 s |
-| How the game looks | `tests/shots.sh <preset>`, then read the PNGs against the defect checklist | 2–5 s |
+| How the game looks | `tests/shots.sh <preset>`, then read the PNGs against the defect checklist | 2–10 s |
 | One-off state or behaviour | a scripted headless run (see "Scripted runs") | |
 | That a ticket matches its spec | one evidence entry per `(agent)` criterion (see "Evidence") | |
 
@@ -232,6 +232,7 @@ reading the checks that use it.
 | `scripts/container_3d.gd` | `ship_3d`, `crew`, `raid_smoke` | searching a Container (`RaidChecks`; the interact key searching one while crew stand at a distant Door, `test_ship_3d.gd::_physics_door_prompt`; `raid_smoke` with the interact key in a live Raid, failing if the key does nothing at a Container in reach), an emptied Container as a trace (`crew`) |
 | `scripts/attachment.gd`, `resources/attachments/`, and the Slots, fits and `build` in `weapon_profile.gd` | `attachments`; `crew` in part | `attachments`: the fourteen Attachment files (Slot, name, factors, lens, Suppressor), each gun's Slots and what fits them, every gun with every Attachment it takes built against the catalogue's factors and limits, the Built Weapon numbers of `.scratch/weapon-attachments/issues/13-starting-numbers.md`, stacking, the suppressed shot per gun, building leaving the bare Profile and the Attachment files alone, and refusals. `crew`: a Laser's conspicuous on Awareness (`_check_conspicuous`), a suppressed shot's reach (`_check_suppressed`) |
 | `scripts/player_3d.gd`, `viewmodel.gd`, `weapon_profile.gd`, `pirate_audio.gd`, `health.gd`, `projectile_3d.gd`, `sound_at.gd` | `pirate`; `ship_3d`, `raid_smoke` in part | `pirate`: movement course, weapons and the wheel, ADS, melee, Viewmodel poses and clips, sounds, bolts, damage. `ship_3d`: walking, ammo and shooting on a built ship. `raid_smoke`: the Pirate never leaves the Hull or drops below the floor while walked through generated ships by input actions, and goes down under crew fire (Caught, every Raid) |
+| `scripts/weapon_model.gd`, the model fields of `attachment.gd`, `tools/blender/attachments.py` as imported under `assets/models/attachments/` | `pirate`; `tests/shots.sh attachments` | `pirate` (`tests/attachment_model_checks.gd`): all 34 gun-and-Attachment pairs show their model and hide the parts they replace, the Assault Rifle's muzzle with a Suppressor and a Long Barrel and the tracer from it, every Sight's (and the Shotgun Barrels' bead's) aim point on the camera axis when aimed, Magazines riding the magazine's bone through a reload, the Shotgun's Foregrip and Laser riding the pump and the Pistol's Reflex Sight the slide through a shot. `_check_viewmodel_materials` covers the Attachment meshes' material flags. Rebuilding the models needs Blender and is not part of the Gate |
 | `tools/blender/` gun scripts and `kit.py`, as imported under `assets/models/` | `pirate`; `tests/shots.sh viewmodel` | `pirate` (`tests/gun_model_checks.gd`): each gun's separate part meshes and `<Bone>Mesh` names, the mesh each bone carries, the mount markers, Muzzle and sights within 1 mm of their recorded places, and the bones each clip moves. Rebuilding a gun needs Blender and is not part of the Gate |
 | `scripts/main.gd`, `player.gd`, `crew.gd`, `door.gd`, `projectile.gd` (2D) | `layouts` | the 2D scene: Doors, shooting, crew, fog, navigation |
 | `scripts/proto/` | none, by design | prototypes; excluded |
@@ -270,6 +271,7 @@ the Gate and not in `tests/run_all.sh`.
 ```sh
 tests/shots.sh viewmodel                     # hip, ads, low, tracer
 tests/shots.sh viewmodel wheel=1             # the same for the next weapon (Assault Rifle)
+tests/shots.sh attachments                   # each gun bare and in two builds, side-on and at the hip
 tests/shots.sh ship class=medium seed=1      # room_<i>_<role>.png per Room, overview.png
 tests/shots.sh crew                          # front.png, side.png: Guard left, Worker right
 tests/shots.sh hud                           # hud.png, hud_busy.png
@@ -280,6 +282,16 @@ tests/shots.sh scene path=res://scenes/props3d/prop_crate_3d.tscn cam=2,1.5,2 lo
 - **viewmodel:** the Pirate in a small lit test room with two crew ahead.
   Takes the Viewmodel's pose overrides `hip= ads= low= lowrot=` (x,y,z) and
   `pistol=1 scale= rot= pos=` to try a fresh pistol mesh.
+- **attachments:** each of the four guns bare and in two full builds of
+  Attachments (`BUILDS` in `tests/shots.gd`), mounted by the Viewmodel as in
+  a Raid: `<gun>_<bare|a|b>_side.png` held side-on in front of the eye, barrel
+  left, and `<gun>_<bare|a|b>_hip.png` in the hip pose, 24 frames. Between
+  them the builds show every Attachment model but the Assault Rifle's
+  Suppressor and Extended Magazine (the same models show on the other
+  guns). Read each for a fitted part floating off its gun, a gap where a
+  replaced part was, a part of the gun showing through its replacement, and
+  the Shotgun's front sight only with its own barrel and no Sight. Scopes
+  have dark glass here.
 - **ship:** the generated ship of that Ship Class and seed, fully lit with
   every crew member held at their post: one shot per Room (Corridors
   included) from the corner of its largest rect clearest of props, at eye

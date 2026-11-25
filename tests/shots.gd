@@ -15,6 +15,8 @@ extends SceneTree
 ##              low=x,y,z lowrot=x,y,z override the Viewmodel's poses;
 ##              pistol=1 scale=<f> rot=x,y,z pos=x,y,z hides the Holder and
 ##              mounts a fresh pistol.glb at that transform instead.
+##   attachments each gun bare and in two full builds of Attachments, held
+##              side-on and at the hip: <gun>_<bare|a|b>_<side|hip>.png.
 ##   ship       class=<small|medium|large> seed=<n>: one shot per Room from a
 ##              corner at eye height, room_<i>_<role>.png, plus overview.png.
 ##   crew       one of each crew type side by side, front.png and side.png.
@@ -69,13 +71,14 @@ func _initialize() -> void:
 func _run() -> void:
 	match preset:
 		"viewmodel": await _viewmodel()
+		"attachments": await _attachments()
 		"ship": await _ship()
 		"crew": await _crew()
 		"hud": await _hud()
 		"menu": await _menu()
 		"scene": await _scene()
 		_:
-			printerr("shots: unknown preset '%s'; want viewmodel, ship, crew, hud, menu or scene" % preset)
+			printerr("shots: unknown preset '%s'; want viewmodel, attachments, ship, crew, hud, menu or scene" % preset)
 			failed = true
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(Profile.path))
 	print("SHOTS_DONE ", "fail" if failed else "ok")
@@ -147,6 +150,80 @@ func _viewmodel() -> void:
 	await process_frame
 	await process_frame
 	_save("tracer")
+
+
+# --- attachments -----------------------------------------------------------
+
+## Per gun, two full builds (Slot to Attachment file stem) that between them
+## show every Attachment the gun takes but the Assault Rifle's Suppressor and
+## Extended Magazine, which the other guns show.
+const BUILDS := {
+	"pistol": [
+		["reflex_sight", "suppressor", "extended_magazine", "laser"],
+		["reflex_sight", "quick_magazine"],
+	],
+	"assault_rifle": [
+		["reflex_sight", "short_barrel", "quick_magazine", "laser", "heavy_stock"],
+		["combat_scope", "long_barrel", "drum", "bipod", "light_stock"],
+	],
+	"shotgun": [
+		["reflex_sight", "long_barrel", "foregrip", "heavy_stock"],
+		["short_barrel", "laser", "light_stock"],
+	],
+	"marksman_rifle": [
+		["long_scope", "suppressor", "extended_magazine", "foregrip", "heavy_stock"],
+		["long_scope", "long_barrel", "quick_magazine", "bipod", "light_stock"],
+	],
+}
+
+
+## Each gun bare and in its two builds, held side-on in front of the eye
+## (barrel left) and at the hip: `<gun>_<bare|a|b>_<side|hip>.png`.
+func _attachments() -> void:
+	var labels: Array = []
+	for gun: String in BUILDS:
+		for build in ["bare", "a", "b"]:
+			labels.append_array(["%s_%s_side" % [gun, build], "%s_%s_hip" % [gun, build]])
+	_expect(labels)
+	var world := _test_room()
+	var player: CharacterBody3D = load("res://scenes/player_3d.tscn").instantiate()
+	world.add_child(player)
+	player.position = Vector3.ZERO
+	var weapon: Viewmodel = player.get_node("Head/Camera3D/Weapon")
+	await process_frame
+	await process_frame
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	player.set_physics_process(false)
+	weapon.set_process(false)
+	for gun: String in BUILDS:
+		var bare: WeaponProfile = load("res://resources/weapons/%s.tres" % gun)
+		var at: int = player.weapons.find(bare)
+		var builds: Array = [[]]
+		builds.append_array(BUILDS[gun])
+		for i in builds.size():
+			var choice := {}
+			for file: String in builds[i]:
+				var attachment: Attachment = load("res://resources/attachments/%s.tres" % file)
+				choice[attachment.slot] = attachment
+			var built: WeaponProfile = bare.build(choice)
+			if built == null:
+				printerr("shots: %s refused %s" % [gun, builds[i]])
+				failed = true
+				continue
+			# Drawn on the spot: no swap dip.
+			built.swap_time = 0.0
+			player.weapons[at] = built
+			player.weapon = built
+			var label := "%s_%s" % [gun, ["bare", "a", "b"][i]]
+			# Side-on, barrel to the left, the long guns held further off.
+			var long_gun := gun != "pistol"
+			weapon.position = Vector3(0.12, -0.03, -1.45) if long_gun else Vector3(-0.05, 0.0, -0.66)
+			weapon.basis = Basis(Vector3.UP, -PI / 2)
+			await _snap(label + "_side")
+			weapon.position = weapon.pose_hip
+			weapon.rotation_degrees = weapon.rotation_hip
+			await _snap(label + "_hip")
+		player.weapons[at] = bare
 
 
 # --- ship ------------------------------------------------------------------

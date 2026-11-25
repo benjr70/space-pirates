@@ -8,3 +8,5 @@ slot = 1
 display_name = "Suppressor"
 changes = Dictionary[StringName, float]({&"loudness": 0.4, &"projectile_speed": 0.8})
 suppresses = true
+model = &"Suppressor"
+mount = &"MountMuzzle"

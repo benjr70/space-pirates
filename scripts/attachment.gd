@@ -26,3 +26,43 @@ enum Slot { SIGHT, BARREL, MAGAZINE, UNDERBARREL, STOCK }
 ## one Attachment sounds right on every gun it fits and still knows nothing
 ## about any of them.
 @export var suppresses := false
+
+@export_group("Model")
+## What it looks like on a gun: a model in
+## `assets/models/attachments/attachments.glb`, by name. A gun is named by
+## its model's body mesh (`Pistol`, `AssaultRifle`, `Shotgun`,
+## `MarksmanRifle`). These say only what is the Attachment's own;
+## [WeaponModel] puts it on.
+##
+## The model it shows on every gun, built around its mount point:
+## `Suppressor`. Blank when the model is per gun ([member models]).
+@export var model: StringName = &""
+## Per gun where it differs, the model it shows there, built in that gun's
+## space: `{&"AssaultRifle": &"AssaultRifle_LongBarrel"}`.
+@export var models: Dictionary[StringName, StringName] = {}
+## The mount point on the gun its [member model] goes on: `MountSight`,
+## `MountMuzzle` or `MountUnder`. Blank for a model built in the gun's space.
+@export var mount: StringName = &""
+## Per gun, the gun's own part meshes it takes the place of, hidden while it
+## is fitted: `{&"AssaultRifle": ["Barrel"]}`. A gun it is not listed for
+## keeps all its parts (the Pistol keeps its sights under a Reflex Sight).
+@export var hides: Dictionary[StringName, PackedStringArray] = {}
+## Per gun, the bone of the gun's skeleton it rides, so the gun's own clips
+## move it: a Magazine rides the magazine's bone. Not listed: it sits still
+## on the body.
+@export var rides: Dictionary[StringName, StringName] = {}
+
+
+## The model it shows on [param gun] (a gun's model name), blank for none.
+func model_on(gun: StringName) -> StringName:
+	return models.get(gun, model)
+
+
+## The parts of [param gun] it hides.
+func hides_on(gun: StringName) -> PackedStringArray:
+	return hides.get(gun, PackedStringArray())
+
+
+## The bone of [param gun] it rides, blank for none.
+func rides_on(gun: StringName) -> StringName:
+	return rides.get(gun, &"")
