@@ -232,6 +232,7 @@ reading the checks that use it.
 | `scripts/container_3d.gd` | `ship_3d`, `crew`, `raid_smoke` | searching a Container (`RaidChecks`; the interact key searching one while crew stand at a distant Door, `test_ship_3d.gd::_physics_door_prompt`; `raid_smoke` with the interact key in a live Raid, failing if the key does nothing at a Container in reach), an emptied Container as a trace (`crew`) |
 | `scripts/attachment.gd`, `resources/attachments/`, and the Slots, fits and `build` in `weapon_profile.gd` | `attachments`; `crew` in part | `attachments`: the fourteen Attachment files (Slot, name, factors, lens, Suppressor), each gun's Slots and what fits them, every gun with every Attachment it takes built against the catalogue's factors and limits, the Built Weapon numbers of `.scratch/weapon-attachments/issues/13-starting-numbers.md`, stacking, the suppressed shot per gun, building leaving the bare Profile and the Attachment files alone, and refusals. `crew`: a Laser's conspicuous on Awareness (`_check_conspicuous`), a suppressed shot's reach (`_check_suppressed`) |
 | `scripts/player_3d.gd`, `viewmodel.gd`, `weapon_profile.gd`, `pirate_audio.gd`, `health.gd`, `projectile_3d.gd`, `sound_at.gd` | `pirate`; `ship_3d`, `raid_smoke` in part | `pirate`: movement course, weapons and the wheel, ADS, melee, Viewmodel poses and clips, sounds, bolts, damage. `ship_3d`: walking, ammo and shooting on a built ship. `raid_smoke`: the Pirate never leaves the Hull or drops below the floor while walked through generated ships by input actions, and goes down under crew fire (Caught, every Raid) |
+| `scripts/scoped_view.gd`, `resources/shaders/scope_lens.gdshader`, `scope_surround.gdshader`, the lens pose and render layer in `viewmodel.gd`, `view_zoom` and `aims_through_sight` in `weapon_profile.gd`, the crosshair hiding in `hud.gd` | `pirate`; `tests/shots.sh scoped` | `pirate` (`tests/scoped_view_checks.gd`): the Viewmodel on its own render layer and the lens camera leaving it out, the lens magnifying a 1 m target at 50 m by 5.01x (Long Scope) and 2.48x (Combat Scope) within 5% through the lens camera's own projection, the camera at 1.25x through a lens and at `ads_zoom` with the Reflex Sight and a gun's own sights within 2%, the mouse slowed by the lens's zoom within 2%, the eye 0.06 m from the rear glass within 2 mm, the lens camera rendering only aimed through a lens, the surround following the sights, the glass still covering the screen's middle with the gun 6 mm off, the Reflex Sight model's own dot gone, the HUD crosshair hidden only aimed through a Sight Attachment. `scoped` measures the reticle's centre and the target's span in pixels. Headless runs draw no pixels, so the look is the preset's |
 | `scripts/weapon_model.gd`, the model fields of `attachment.gd`, `tools/blender/attachments.py` as imported under `assets/models/attachments/` | `pirate`; `tests/shots.sh attachments` | `pirate` (`tests/attachment_model_checks.gd`): all 34 gun-and-Attachment pairs show their model and hide the parts they replace, the Assault Rifle's muzzle with a Suppressor and a Long Barrel and the tracer from it, every Sight's (and the Shotgun Barrels' bead's) aim point on the camera axis when aimed, Magazines riding the magazine's bone through a reload, the Shotgun's Foregrip and Laser riding the pump and the Pistol's Reflex Sight the slide through a shot. `_check_viewmodel_materials` covers the Attachment meshes' material flags. Rebuilding the models needs Blender and is not part of the Gate |
 | `tools/blender/` gun scripts and `kit.py`, as imported under `assets/models/` | `pirate`; `tests/shots.sh viewmodel` | `pirate` (`tests/gun_model_checks.gd`): each gun's separate part meshes and `<Bone>Mesh` names, the mesh each bone carries, the mount markers, Muzzle and sights within 1 mm of their recorded places, and the bones each clip moves. Rebuilding a gun needs Blender and is not part of the Gate |
 | `scripts/main.gd`, `player.gd`, `crew.gd`, `door.gd`, `projectile.gd` (2D) | `layouts` | the 2D scene: Doors, shooting, crew, fog, navigation |
@@ -272,6 +273,7 @@ the Gate and not in `tests/run_all.sh`.
 tests/shots.sh viewmodel                     # hip, ads, low, tracer
 tests/shots.sh viewmodel wheel=1             # the same for the next weapon (Assault Rifle)
 tests/shots.sh attachments                   # each gun bare and in two builds, side-on and at the hip
+tests/shots.sh scoped                        # aimed through each scope's lens and the Reflex Sight, measured
 tests/shots.sh ship class=medium seed=1      # room_<i>_<role>.png per Room, overview.png
 tests/shots.sh crew                          # front.png, side.png: Guard left, Worker right
 tests/shots.sh hud                           # hud.png, hud_busy.png
@@ -292,6 +294,24 @@ tests/shots.sh scene path=res://scenes/props3d/prop_crate_3d.tscn cam=2,1.5,2 lo
   replaced part was, a part of the gun showing through its replacement, and
   the Shotgun's front sight only with its own barrel and no Sight. Scopes
   have dark glass here.
+- **scoped:** the Pirate down a lit hall 90 m long with a pure blue board
+  1 m wide at 50 m, aimed through the Long Scope (Marksman Rifle), the
+  Combat Scope (Assault Rifle) and the Reflex Sight (Assault Rifle):
+  `long_scope.png`, `combat_scope.png`, `reflex.png`, each again as
+  `<name>_shifted.png` with the gun 6 mm off its aimed pose (down and
+  right). Sights fully up, so the surround is at full strength. Beyond the
+  automatic checks it measures each frame and prints `SHOT_MEASURE` lines,
+  failing the frame (`SHOT_FAIL`) when the red reticle's centre (a centroid
+  of red within 12 px of the middle) is more than 2 px off the screen's
+  centre, or, in a lens, when the board's span along a row 5 px above the
+  middle (in linear light, part-covered edge pixels counting by their
+  share) is more than 5% off what the lens's zoom gives against the
+  unaimed 75° view (47.0 px at 5.01x, 23.3 px at 2.48x on 720 px). The
+  lens picture is 1024 px square, so a small target can be a texel wider or
+  narrower: about 3.5% at 2.48x. Read each lens shot for a black wedge at
+  the lens's edge, the scope's own tube seen inside the lens, and the
+  surround not blurred or not dark at the corners; each Reflex shot for a
+  clear window with one red dot and no second dot fixed to the gun.
 - **ship:** the generated ship of that Ship Class and seed, fully lit with
   every crew member held at their post: one shot per Room (Corridors
   included) from the corner of its largest rect clearest of props, at eye

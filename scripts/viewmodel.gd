@@ -48,6 +48,11 @@ extends Node3D
 ## Wall clipping is handled by material flags: every surface is squashed
 ## toward the camera in depth and drawn with its own narrow FOV, so the
 ## weapon never pokes through a wall he stands against. No SubViewport.
+## Everything it draws is on its own render layer ([constant LAYER]), which
+## a scope's lens camera ([ScopedView]) leaves out.
+
+## Emitted when a gun or a Built Weapon is newly mounted and fitted.
+signal mounted
 
 @export_group("Poses")
 ## Holder rotation for each pose, in camera space. The mesh faces +Z, so
@@ -97,6 +102,13 @@ extends Node3D
 @export var z_clip_scale := 0.35
 @export var fov_override := 50.0
 
+## The render layer everything the Viewmodel draws is on, alone.
+const LAYER := 2
+## Aimed through a scope, the eye is this far behind its rear glass, in
+## metres; a gun's own sights and a Reflex Sight keep the weapon's
+## `ads_distance`.
+const EYE_TO_GLASS := 0.06
+
 ## Below this the feet are not really moving, so no bob.
 const BOB_MIN_SPEED := 0.3
 const RELOAD_CLIPS: Array[StringName] = [&"reload_tactical", &"reload_empty"]
@@ -107,7 +119,7 @@ var descope_roll := 0.0
 
 ## Holder position for each pose, in camera space: the mounted weapon's.
 ## The sights pose is worked out from its SightTip, so the front sight sits
-## on the camera axis.
+## on the camera axis; a scope's SightTip is the middle of its rear glass.
 var pose_hip := Vector3(0.16, -0.18, -0.30)
 var pose_ads := Vector3(0.0, -0.1076, -0.32)
 var pose_low := Vector3(0.20, -0.26, -0.30)
@@ -336,6 +348,8 @@ func _mount(weapon: WeaponProfile) -> void:
 			# Every Attachment model comes in with the gun, so all get the flags.
 			WeaponModel.of(model)
 			_flag_materials(model)
+			for found in model.find_children("*", "VisualInstance3D", true, false):
+				(found as VisualInstance3D).layers = 1 << (LAYER - 1)
 		_mounted = _models[weapon.model]
 		_mounted.visible = true
 		model_clips = _mounted.find_child("AnimationPlayer", true, false)
@@ -353,7 +367,9 @@ func _mount(weapon: WeaponProfile) -> void:
 	pose_hip = weapon.pose_hip
 	pose_low = weapon.pose_low
 	var sight := Basis.from_euler(rotation_hip * PI / 180.0) * _sight_tip.position
-	pose_ads = Vector3(-sight.x, -sight.y, -weapon.ads_distance)
+	var distance := EYE_TO_GLASS + sight.z if weapon.aims_through_lens else weapon.ads_distance
+	pose_ads = Vector3(-sight.x, -sight.y, -distance)
+	mounted.emit()
 
 
 func _on_melee_swung(_target: Node3D, _killed: bool) -> void:
