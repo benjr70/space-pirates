@@ -1,0 +1,11 @@
+PROTOTYPE picks from the sound booth, 2026-11-24: the suppressed shot of each
+gun that takes the Suppressor. All three are real recordings from "The Free
+Firearm Sound Library", CC0,
+https://opengameart.org/content/the-free-firearm-sound-library. Each is the
+first event of its source, mono 44.1 kHz, 1.2 s with a 0.12 s fade, peaking
+at -9.5 dB (8 dB under the unsuppressed shots), cut by ../audition/cut.py.
+
+pistol_suppressed.ogg          Walther PPQ 9 mm, mid distance (Walther PPQ/X_31P.wav)
+assault_rifle_suppressed.ogg   Ruger Single Six .22, near (Ruger Single Six/S_14P.wav)
+marksman_rifle_suppressed.ogg  Savage 10 .300 Blackout, mid distance
+                               (Savage 10 .300 Blackout/T_17P.wav), low-passed at 5 kHz
