@@ -363,8 +363,9 @@ have a head to hit: nothing that strikes the Pirate is a Headshot.
 ## Weapon Wheel
 
 How the Pirate changes what he holds: the mouse wheel turns through the
-weapons he carries, either way round, and a number key picks one outright. A
-weapon keeps the rounds it had when it was put away. The swap takes a beat in
+weapons of his Loadout, either way round, and a number key picks one outright. A
+weapon keeps the rounds it had when it was put away. The swap takes a beat, as
+long as the weapon being drawn needs, in
 which he cannot shoot, aim or reload, and it drops a running reload with
 nothing gained, save the shells a Shotgun had already taken. A Clamber or a
 Melee refuses it.
@@ -372,7 +373,9 @@ Melee refuses it.
 ## Aim Down Sights
 
 Raising the weapon to its sights, held rather than toggled: the view zooms a
-little, the Pirate slows a little and shots land tighter. Any move that needs
+little, the Pirate slows a little and shots land tighter. The sights take a
+moment to come up, longer for a bigger gun, and what aiming gives comes in as
+they rise. Any move that needs
 the weapon elsewhere — a Sprint, a Slide, a Clamber, a Melee, a reload — ends
 it, and so does being hit, which is what makes a pistol duel swing. Jumping
 does not. Between aiming and sprinting the newer input wins: pressing aim ends
@@ -394,6 +397,40 @@ a new Profile, never new code; the Pistol is the first and the Assault Rifle
 the second. Modifiers for later
 weapon types are variations on a Profile's shot, which is why nothing is
 hitscan.
+
+## Attachment
+
+One part fitted to a weapon that changes how it behaves and how it looks: a
+scope, a longer barrel, a bigger magazine. Every Attachment costs something
+for what it gives, so none is simply better than going without. It never
+changes what kind of gun the weapon is: how hard a shot hits and how the gun
+fires and loads stay the weapon's own. An Attachment does the same thing to
+every weapon it fits. Only the Pirate's weapons take them; crew carry theirs
+bare.
+
+## Built Weapon
+
+A weapon as the Pirate carries it: its Weapon Profile with every fitted
+Attachment's changes applied. It is still a Weapon Profile, so nothing about
+shooting knows an Attachment was involved. It is worked out from the Loadout
+and never kept: change the weapon or an Attachment and it is built again.
+
+## Slot
+
+A place on a weapon an Attachment fits. There are five kinds: Sight, Barrel,
+Magazine, Underbarrel and Stock. A Slot holds one Attachment or none, and a
+weapon has only the Slots that make sense for it, so some weapons take more
+Attachments than others. The weapon says which Attachments fit each of its
+Slots. A weapon with every Slot empty is the weapon as it comes.
+
+## Loadout
+
+What the Pirate takes on a Raid: two different weapons, a first and a second,
+each as he has fitted it. The first is the one in his hands when the Raid
+starts. Every weapon remembers its own Attachments whether or not it is in the
+Loadout. It is set on the main menu, kept between sessions, and used by every
+Raid and Retry until he changes it there. Before he has ever set one it is the
+Pistol and the Assault Rifle, bare.
 
 ## Sandbox
 
