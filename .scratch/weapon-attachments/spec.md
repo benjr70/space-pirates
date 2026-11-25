@@ -190,7 +190,7 @@ The three suppressed shots are on `prototype/suppressed-sounds` under `assets/au
 9. [Attachments in the Sandbox sheet](issues/23-attachments-in-the-sandbox-sheet.md)
 10. [First balance pass of the Attachments](issues/24-first-balance-pass.md)
 
-## Prototypes (primary sources, local branches, never merged)
+## Prototypes (primary sources, branches pushed to origin on 2026-11-24, never merged)
 
 | Branch | Holds |
 |---|---|

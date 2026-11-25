@@ -33,5 +33,5 @@ The two patches of fog left on the map were settled in the writing: how the suit
 
 **For whoever builds**
 
-- The prototypes are on local branches that were never pushed. The build needs them, `prototype/attachment-look` and `prototype/suppressed-sounds` above all, so it must run on this machine or the branches must be pushed first.
+- The build needs the prototypes, `prototype/attachment-look` and `prototype/suppressed-sounds` above all. All six prototype branches were pushed to origin on 2026-11-24 (the tickets' own answers still say "not pushed", as written at the time); they are never merged. Read from them with `git show origin/prototype/<name>:<path>` or check files out of them.
 - Some numbers in the acceptance criteria are derived, not measured: the muzzle offsets in ticket 19 come from the prototype's marker positions, and the Awareness and hearing checks in ticket 16 from the factors. A builder who finds one wrong against the spec's tables should say so in the ticket and not bend the check.
