@@ -1,0 +1,9 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="PackedScene" path="res://scenes/main_menu.tscn" id="1"]
+[ext_resource type="Script" path="res://scripts/proto/proto_loadout_screen.gd" id="2"]
+
+[node name="MainMenu" instance=ExtResource("1")]
+
+[node name="ProtoLoadoutScreen" type="Node" parent="."]
+script = ExtResource("2")
