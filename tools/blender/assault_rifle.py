@@ -122,7 +122,12 @@ body.append(butt)
 body.append(kit.box("stock_latch", (0.014, 0.034, 0.006), (0, 0.262, 0.031), bare(), bevel=0.002, rot=(0.12, 0, 0)))
 body.append(kit.pin("sling_swivel", (0.017, 0.300, 0.058), 0.005, proud=0.002, material=bare()))
 
-assault_rifle = kit.join("AssaultRifle", body)
+# The parts an Attachment can replace are meshes of their own on the body.
+assault_rifle, pieces = kit.split("AssaultRifle", body, {
+    "Barrel": {"barrel", "emitter"},
+    "Sights": {"sight_base", "front_ear", "front_post", "front_dot", "rear_stem", "aperture"},
+    "Stock": {"stock", "butt_pad", "stock_latch", "sling_swivel"},
+})
 
 # The power cell is its own mesh so a reload clip can drop and seat it.
 cell = kit.join("Cell", [
@@ -143,10 +148,10 @@ bolt = kit.join("Bolt", [
 ])
 
 kit.report()
-kit.bake("assault_rifle", [assault_rifle, cell, bolt])
+kit.bake("assault_rifle", [assault_rifle, *pieces.values(), cell, bolt])
 
 # Skeleton and the clips the Viewmodel plays, named in the Weapon Profile.
-armature = kit.rig("AssaultRifle", assault_rifle, {"Bolt": bolt, "Cell": cell})
+armature = kit.rig("AssaultRifle", assault_rifle, {"Bolt": bolt, "Cell": cell}, pieces)
 STROKE = (0, 0.050, 0)  # the bolt's travel, straight back
 REST = (0, 0, 0)
 
@@ -167,6 +172,11 @@ kit.clip(armature, "rack", {"Bolt": [(1, REST), (5, STROKE), (8, STROKE), (11, R
 kit.marker("Muzzle", (0, -0.522, BORE), assault_rifle)
 kit.marker("SightTip", (0, FRONT_SIGHT, SIGHT), assault_rifle)
 kit.marker("SightRear", (0, REAR_SIGHT, SIGHT), assault_rifle)
+# Where shared Attachments go: the top of the rail, the muzzle's tip and the
+# underside of the handguard ahead of the trigger.
+kit.marker("MountSight", (0, 0.060, 0.088), assault_rifle)
+kit.marker("MountMuzzle", (0, -0.522, BORE), assault_rifle)
+kit.marker("MountUnder", (0, -0.250, 0.028), assault_rifle)
 
 kit.export("assault_rifle")
 kit.render("assault_rifle")

@@ -141,7 +141,16 @@ body.append(kit.box("counter_bezel", (0.003, 0.040, 0.014), (0.0205, 0.050, 0.06
 for i in range(6):
     body.append(kit.box("counter_pip", (0.0034, 0.004, 0.008), (0.0205, 0.036 + i * 0.0056, 0.060), glow()))
 
-shotgun = kit.join("Shotgun", body)
+# The parts an Attachment can replace are meshes of their own on the body.
+# The barrel carries the magazine tube, its clamp and the heat shield. The
+# front sight is apart from it: a Sight hides it, and a Barrel that brings
+# its own bead hides it too.
+shotgun, pieces = kit.split("Shotgun", body, {
+    "Barrel": {"barrel", "mag_tube", "clamp", "clamp_bolt", "sling_stud", "shield", "shield_strap"},
+    "FrontSight": {"front_wing", "front_base", "front_post", "front_dot"},
+    "Sights": {"rear_base", "ghost_ring", "rear_wing"},
+    "Stock": {"stock", "butt_plate", "butt_pad"},
+})
 
 # The fore-end and its action bars are their own mesh so a clip can rack them.
 forend = kit.loft("forend", [
@@ -168,11 +177,11 @@ shell = kit.join("Shell", [
 ])
 
 kit.report()
-kit.bake("shotgun", [shotgun, pump, shell])
+kit.bake("shotgun", [shotgun, *pieces.values(), pump, shell])
 
 # Skeleton and the clips the Viewmodel plays, named in the Weapon Profile.
 # Keyed at 60 frames a second so the pump's 0.15 s wait lands on a frame.
-armature = kit.rig("Shotgun", shotgun, {"Pump": pump, "Shell": shell})
+armature = kit.rig("Shotgun", shotgun, {"Pump": pump, "Shell": shell}, pieces)
 FPS = 60
 bpy.context.scene.render.fps = FPS
 
@@ -206,6 +215,10 @@ kit.clip(armature, "pump", {"Pump": [(f(0), REST), (f(0.15), BACK), (f(0.22), BA
 
 kit.marker("Muzzle", (0, -0.604, BORE), shotgun)
 kit.marker("SightTip", (0, -0.584, BORE + 0.051), shotgun)
+# Where shared Attachments go: the top of the rail and the pump's underside.
+# No muzzle mount: nothing goes on the Shotgun's muzzle.
+kit.marker("MountSight", (0, -0.030, 0.093), shotgun)
+kit.marker("MountUnder", (0, -0.330, 0.004), shotgun)
 
 kit.export("shotgun")
 kit.render("shotgun")
