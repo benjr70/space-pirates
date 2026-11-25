@@ -31,7 +31,10 @@ extends Node3D
 ## and changes the mesh while it is out of sight; each mesh brings its own
 ## `Muzzle` and `SightTip` markers and the Profile its own poses, so the shot
 ## leaves the right barrel and the right front sight centres in Aim Down
-## Sights with nothing calibrated by hand.
+## Sights with nothing calibrated by hand. A Built Weapon's Attachments go on
+## the mesh through [WeaponModel] ([member fitting]): each fitted model shows,
+## the parts it replaces hide, and a fitted Barrel's muzzle or Sight's aim
+## point stands in for the gun's. The poses stay the weapon's own.
 ##
 ## A weapon's mesh (built by the scripts under `tools/blender`) brings its own
 ## skeleton clips: the slide cycles on a
@@ -120,6 +123,12 @@ var _skeleton: Skeleton3D
 ## Every model mounted so far, by its scene; all but one are hidden.
 var _models := {}
 var _mounted: Node3D
+## The weapon whose Attachments the mounted model shows.
+var _fitted: WeaponProfile
+## The mounted model's Attachments: [method WeaponModel.model_of] finds a
+## fitted Attachment's model (a scope's `<Model>_RearGlass`, the Laser's
+## `Laser_Origin`).
+var fitting: WeaponModel
 ## Seconds of swap dip left, and how long the whole dip is.
 var _swap_left := 0.0
 var _swap_time := 0.0
@@ -307,31 +316,40 @@ func _on_weapon_changed(_profile: WeaponProfile) -> void:
 		_mount(profile)
 
 
-## Puts [param weapon]'s model under the holder in place of the last one and
-## takes its markers and poses. A Profile with no model keeps what is there.
+## Puts [param weapon]'s model under the holder in place of the last one,
+## shows its Attachments ([WeaponModel]) and takes its markers and poses: a
+## fitted Barrel's muzzle and a fitted Sight's aim point in place of the
+## gun's. Two Built Weapons of one gun share its model, so what shows follows
+## the weapon in hand. A Profile with no model keeps what is there.
 func _mount(weapon: WeaponProfile) -> void:
-	if weapon.model == null or (_mounted != null and _mounted == _models.get(weapon.model)):
+	if weapon.model == null or (_mounted != null and _mounted == _models.get(weapon.model) and _fitted == weapon):
 		return
 	_stop_clip()
-	if _mounted != null:
-		_mounted.visible = false
-		model_clips.animation_finished.disconnect(_on_model_clip_finished)
-	if not _models.has(weapon.model):
-		var model: Node3D = weapon.model.instantiate()
-		holder.add_child(model)
-		_models[weapon.model] = model
-		_flag_materials(model)
-	_mounted = _models[weapon.model]
-	_mounted.visible = true
-	model_clips = _mounted.find_child("AnimationPlayer", true, false)
-	_skeleton = _mounted.find_child("Skeleton3D", true, false)
-	model_clips.animation_finished.connect(_on_model_clip_finished)
+	if _mounted == null or _mounted != _models.get(weapon.model):
+		if _mounted != null:
+			_mounted.visible = false
+			model_clips.animation_finished.disconnect(_on_model_clip_finished)
+		if not _models.has(weapon.model):
+			var model: Node3D = weapon.model.instantiate()
+			holder.add_child(model)
+			_models[weapon.model] = model
+			# Every Attachment model comes in with the gun, so all get the flags.
+			WeaponModel.of(model)
+			_flag_materials(model)
+		_mounted = _models[weapon.model]
+		_mounted.visible = true
+		model_clips = _mounted.find_child("AnimationPlayer", true, false)
+		_skeleton = _mounted.find_child("Skeleton3D", true, false)
+		model_clips.animation_finished.connect(_on_model_clip_finished)
+	_fitted = weapon
+	fitting = WeaponModel.of(_mounted)
+	fitting.fit(weapon)
 
-	# The holder is at rest, so the model's markers map straight into the
-	# Viewmodel's own space.
+	# The holder and the bones are at rest, so the markers map straight into
+	# the Viewmodel's own space.
 	var to_viewmodel := global_transform.affine_inverse()
-	_muzzle.position = to_viewmodel * (_mounted.find_child("Muzzle", true, false) as Node3D).global_position
-	_sight_tip.position = to_viewmodel * (_mounted.find_child("SightTip", true, false) as Node3D).global_position
+	_muzzle.position = to_viewmodel * fitting.muzzle().global_position
+	_sight_tip.position = to_viewmodel * fitting.sight_tip().global_position
 	pose_hip = weapon.pose_hip
 	pose_low = weapon.pose_low
 	var sight := Basis.from_euler(rotation_hip * PI / 180.0) * _sight_tip.position

@@ -7,3 +7,6 @@ script = ExtResource("1")
 slot = 2
 display_name = "Quick Magazine"
 changes = Dictionary[StringName, float]({&"reload_tactical": 0.7, &"reload_empty": 0.7, &"magazine_size": 0.8})
+models = Dictionary[StringName, StringName]({&"Pistol": &"Pistol_QuickMagazine", &"AssaultRifle": &"AssaultRifle_QuickMagazine", &"MarksmanRifle": &"MarksmanRifle_QuickMagazine"})
+hides = Dictionary[StringName, PackedStringArray]({&"Pistol": PackedStringArray("MagazineMesh"), &"AssaultRifle": PackedStringArray("CellMesh"), &"MarksmanRifle": PackedStringArray("MagazineMesh")})
+rides = Dictionary[StringName, StringName]({&"Pistol": &"Magazine", &"AssaultRifle": &"Cell", &"MarksmanRifle": &"Magazine"})

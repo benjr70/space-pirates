@@ -7,3 +7,5 @@ script = ExtResource("1")
 slot = 4
 display_name = "Heavy Stock"
 changes = Dictionary[StringName, float]({&"ads_sway_degrees": 0.6, &"ads_moving_spread": 0.8, &"aim_time": 1.2, &"ads_speed": 0.85})
+models = Dictionary[StringName, StringName]({&"AssaultRifle": &"AssaultRifle_HeavyStock", &"Shotgun": &"Shotgun_HeavyStock", &"MarksmanRifle": &"MarksmanRifle_HeavyStock"})
+hides = Dictionary[StringName, PackedStringArray]({&"AssaultRifle": PackedStringArray("Stock"), &"Shotgun": PackedStringArray("Stock"), &"MarksmanRifle": PackedStringArray("Stock")})

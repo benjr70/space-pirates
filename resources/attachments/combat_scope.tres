@@ -7,3 +7,6 @@ script = ExtResource("1")
 display_name = "Combat Scope"
 changes = Dictionary[StringName, float]({&"ads_zoom": 1.55, &"ads_spread": 0.75, &"aim_time": 1.3, &"ads_speed": 0.85})
 lens = true
+model = &"CombatScope"
+mount = &"MountSight"
+hides = Dictionary[StringName, PackedStringArray]({&"AssaultRifle": PackedStringArray("Sights")})

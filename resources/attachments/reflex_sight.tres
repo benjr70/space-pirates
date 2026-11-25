@@ -6,3 +6,7 @@
 script = ExtResource("1")
 display_name = "Reflex Sight"
 changes = Dictionary[StringName, float]({&"aim_time": 0.8, &"ads_speed": 1.1, &"ads_zoom": 0.85})
+model = &"ReflexSight"
+mount = &"MountSight"
+hides = Dictionary[StringName, PackedStringArray]({&"AssaultRifle": PackedStringArray("Sights"), &"Shotgun": PackedStringArray("Sights", "FrontSight")})
+rides = Dictionary[StringName, StringName]({&"Pistol": &"Slide"})
