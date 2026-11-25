@@ -21,8 +21,10 @@ extends SceneTree
 ##              corner at eye height, room_<i>_<role>.png, plus overview.png.
 ##   crew       one of each crew type side by side, front.png and side.png.
 ##   hud        the in-Raid HUD with known values: hud.png, hud_busy.png.
-##   menu       the main menu's screens (home, classes) and the Raid's own
-##              (pause, death, extracted).
+##   menu       the main menu's screens (home, classes), the Loadout screen
+##              (loadout: bare; loadout_slot: a fitted Assault Rifle with its
+##              Underbarrel list open) and the Raid's own (pause, death,
+##              extracted).
 ##   scene      path=<res://...> cam=x,y,z look=x,y,z [fov=<deg>] [name=<png>]
 ##   sheet      the Sandbox sheet (F1) open in a Raid carrying a fitted Loadout:
 ##              sheet.png (strip and Weapons), sheet_attachments.png and
@@ -393,13 +395,14 @@ func _hud() -> void:
 
 
 func _menu() -> void:
-	_expect(["home", "classes", "pause", "death", "extracted"])
+	_expect(["home", "classes", "loadout", "loadout_slot", "pause", "death", "extracted"])
 	var menu: Node3D = load(Raid.MENU_SCENE).instantiate()
 	root.add_child(menu)
 	await _snap("home")
 	var column := menu.get_node("UI/Root/Column")
 	(column.get_node("Home/Play") as Button).pressed.emit()
 	await _snap("classes")
+	await _loadout_shots(menu)
 	root.remove_child(menu)
 	menu.free()
 
@@ -417,6 +420,24 @@ func _menu() -> void:
 	await _snap("death", 0.8)
 	end.show_extracted("Out in 3:12\n+240 gold  +400 XP")
 	await _snap("extracted", 0.8)
+
+
+## The Loadout screen opened from the home list: the default Loadout bare,
+## then the Assault Rifle fitted all round with its Underbarrel list open.
+## Saves only into the preset's throwaway Profile.
+func _loadout_shots(menu: Node) -> void:
+	(menu.get_node("UI/Root/Column/Classes/Back") as Button).pressed.emit()
+	(menu.get_node("UI/Root/Column/Home/Loadout") as Button).pressed.emit()
+	await _snap("loadout")
+	var screen: LoadoutScreen = menu.get_node("UI/LoadoutScreen")
+	screen.choose_place(1)
+	for fit: Array in [[Attachment.Slot.SIGHT, "combat_scope"], [Attachment.Slot.BARREL, "suppressor"],
+			[Attachment.Slot.MAGAZINE, "drum"], [Attachment.Slot.UNDERBARREL, "laser"], [Attachment.Slot.STOCK, "light_stock"]]:
+		screen.toggle_slot(fit[0])
+		screen.fit(load("res://resources/attachments/%s.tres" % fit[1]))
+	screen.toggle_slot(Attachment.Slot.UNDERBARREL)
+	await _snap("loadout_slot")
+	screen.leave()
 
 
 # --- sheet -----------------------------------------------------------------

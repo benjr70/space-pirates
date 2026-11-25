@@ -1,7 +1,8 @@
 class_name MainMenu
 extends Node3D
 ## The game's one entry point: the title over a ship drifting in space, Play
-## to pick which Ship Class to raid (a fresh seed every time), and Exit.
+## to pick which Ship Class to raid (a fresh seed every time), Loadout to set
+## the two guns he carries and their Attachments ([LoadoutScreen]), and Exit.
 
 ## Where the camera sits, off the ship's bow quarter, and how far it turns
 ## away from the ship so it is framed right of the title.
@@ -17,6 +18,8 @@ const SUN_DIR := Vector3(0.9, -0.5, -0.1)
 
 var _home: Control
 var _classes: Control
+var _root: Control
+var _loadout_screen: LoadoutScreen
 
 
 func _ready() -> void:
@@ -29,6 +32,7 @@ func _ready() -> void:
 	root.name = "Root"
 	root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	ui.add_child(root)
+	_root = root
 
 	# A soft dark band down the left so the title reads over any star.
 	var shade := TextureRect.new()
@@ -67,7 +71,7 @@ func _ready() -> void:
 	gap_after.custom_minimum_size = Vector2(0, 24)
 	column.add_child(gap_after)
 
-	_home = _menu(column, "Home", [["Play", _show_classes], ["Exit", _quit]])
+	_home = _menu(column, "Home", [["Play", _show_classes], ["Loadout", _show_loadout], ["Exit", _quit]])
 	_classes = _menu(column, "Classes", [
 		["Small Ship", Raid.start.bind(&"small")],
 		["Medium Ship", Raid.start.bind(&"medium")],
@@ -78,6 +82,11 @@ func _ready() -> void:
 	pick.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	_classes.add_child(pick)
 	_classes.move_child(pick, 0)
+	_loadout_screen = LoadoutScreen.new()
+	_loadout_screen.name = "LoadoutScreen"
+	_loadout_screen.visible = false
+	_loadout_screen.closed.connect(_on_loadout_closed)
+	ui.add_child(_loadout_screen)
 	_show_home()
 
 
@@ -141,6 +150,18 @@ func _show_classes() -> void:
 	_home.visible = false
 	_classes.visible = true
 	_classes.get_node("MediumShip").grab_focus()
+
+
+## The Loadout screen in place of the menu, over the darkened backdrop.
+func _show_loadout() -> void:
+	_root.visible = false
+	_loadout_screen.open(Loadout.load_saved())
+
+
+func _on_loadout_closed() -> void:
+	_root.visible = true
+	_show_home()
+	_home.get_node("Loadout").grab_focus()
 
 
 func _quit() -> void:

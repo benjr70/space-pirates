@@ -861,12 +861,14 @@ func _check_weapon_keys() -> void:
 	await _clear_dummy()
 	await _place(RUNWAY)
 
-## The Loadout and a Raid from the menu carrying it (`LoadoutChecks`). The
+## The Loadout and a Raid from the menu carrying it (`LoadoutChecks`), and
+## the Loadout screen that sets it (`LoadoutScreenChecks`). The
 ## course is switched off meanwhile, so the number keys and the wheel reach
 ## only the Raid's Pirate.
 func _check_loadout() -> void:
 	world.process_mode = Node.PROCESS_MODE_DISABLED
 	await LoadoutChecks.run(_expect, self)
+	await LoadoutScreenChecks.run(_expect, self)
 	world.process_mode = Node.PROCESS_MODE_INHERIT
 	await _place(RUNWAY)
 

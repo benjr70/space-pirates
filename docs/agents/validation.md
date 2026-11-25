@@ -216,7 +216,7 @@ inside a suite with nothing asserted about it, does not count. `static`
 covers every file below for loading and is left out of the table.
 Helper files fold into the suite that calls them: `tests/raid_checks.gd`,
 `tests/generated_ship_checks.gd`, `tests/two_rect_room_checks.gd` and
-`tests/built_sample_checks.gd` run inside `ship_3d`; `tests/loadout_checks.gd` runs inside `pirate`; `tests/room_data_checks.gd`
+`tests/built_sample_checks.gd` run inside `ship_3d`; `tests/loadout_checks.gd` and `tests/loadout_screen_checks.gd` run inside `pirate`; `tests/room_data_checks.gd`
 runs inside both `layouts` and `ship_3d`. Verified 2026-11-22 by grepping the
 suites and helpers for each script's class name and `res://` path, then
 reading the checks that use it.
@@ -228,7 +228,7 @@ reading the checks that use it.
 | `scripts/gen/` | `generator`; `ship_3d` in part | `generator`: the sweep, distributions, determinism and `ShipInvariants` (with its self-test) over everything `ShipGenerator` calls. `ship_3d`: generated ships built in 3D, `ShipNamer` prefixes, `Interiors` props in the built sample. `generator` also checks `ShipDumper` (`_check_dumper`: glyph set, one listing line per Room and Door). **Uncovered:** `dump_ship.gd` (command-line wrapper, debug output only; loaded by `static`, run by hand in ticket `.scratch/agent-verification/issues/10-ship-dumper-checks.md`) |
 | `scripts/layouts/` | `layouts`, `ship_3d` | `PlayerShipLayout` is the built sample both suites walk |
 | `scripts/ship/` | `ship_3d` (3D), `layouts` (2D) | `ship_3d`: `ShipBuilder3D` geometry, `BoardingPod`, `RoomReveal`, `RoomTracker`, `ShipNavigator`. `layouts`: `ShipBuilder` and `RoomFog`. `crew` builds on `ShipBuilder3D` too. `ship_3d` also checks `HazardStripes` (texture, material, and on sealed Hatches and the Boarding Pod collar) |
-| `scripts/ui/` | `ship_3d`, `pirate`, `crew`, `raid_smoke` | `ship_3d` (`RaidChecks`): `MainMenu`, `MenuBackdrop`, `PauseMenu`, `RaidEndScreen`, `MenuStyle`, the `Hud` hidden on death. `pirate`: `Hud` crosshair, ammo, dry click, hit markers. `crew`: `AwarenessMarkers`. `raid_smoke`: the `RaidEndScreen` heading and tally on both endings (gold banked or left behind, XP, kills, the Ghost bonus if and only if the Alarm was never raised), the `Hud` hidden at the end, its Alarm banner every frame, Loot line, spotted stings and Door and search prompts, in whole Raids |
+| `scripts/ui/` | `ship_3d`, `pirate`, `crew`, `raid_smoke` | `ship_3d` (`RaidChecks`): `MainMenu`, `MenuBackdrop`, `PauseMenu`, `RaidEndScreen`, `MenuStyle`, the `Hud` hidden on death. `pirate`: `Hud` crosshair, ammo, dry click, hit markers. `pirate` (`tests/loadout_screen_checks.gd`): the `LoadoutScreen` from the menu's Loadout button (the home list's order, the places and the swap, "no Slot" tags, a Slot's list, the bars and their colours against the bare gun, the bench gun's Attachments and materials, drag and double click, the keyboard alone, a fitted Drum carried into a Raid) and `WeaponAttributes` (every Attachment's line made from its changes). `crew`: `AwarenessMarkers`. `raid_smoke`: the `RaidEndScreen` heading and tally on both endings (gold banked or left behind, XP, kills, the Ghost bonus if and only if the Alarm was never raised), the `Hud` hidden at the end, its Alarm banner every frame, Loot line, spotted stings and Door and search prompts, in whole Raids |
 | `scripts/raid.gd`, `raid_ledger.gd`, `extraction.gd`, `profile.gd`, `loadout.gd` | `ship_3d`, `raid_smoke`, `pirate` | `RaidChecks`: levels, the ledger and Ghost bonus, a Raid's seed, pause, death, Extraction, banking to the Profile. `raid_smoke`: the same end to end, a seeded Raid boarded, played and extracted from (or died on), with the XP and gold banked checked against the ledger on either ending, and sweep floors on Ghost Extractions, Extractions with a kill and Loot banked. `pirate` (`LoadoutChecks`): the `Loadout`'s default, set and swap of the two places, fitting, save and load in the profile file beside XP and gold, the stale-entry fallbacks, and a Raid from the menu carrying its two Built Weapons (keys 1 and 2, the wheel, a Retry carrying the same two). `raid_smoke` plays every Raid with a fitted Loadout given through `Raid.arm` |
 | `scripts/main_3d.gd`, `door_3d.gd` | `ship_3d`, `raid_smoke`; `crew` for doors | the Raid scene, open and locked Doors, Hatches, boarding, a Door's prompt offered only to the Pirate in its reach (`test_ship_3d.gd::_physics_door_prompt`, with a crew member at a Door across the ship). `raid_smoke`: Doors and the boarding Hatch worked with the interact key, a Container searched with it (and the HUD offering the search there), a Door's prompt offered only with the Pirate in a Door's reach, checked every frame, the home door worked to extract |
 | `scripts/container_3d.gd` | `ship_3d`, `crew`, `raid_smoke` | searching a Container (`RaidChecks`; the interact key searching one while crew stand at a distant Door, `test_ship_3d.gd::_physics_door_prompt`; `raid_smoke` with the interact key in a live Raid, failing if the key does nothing at a Container in reach), an emptied Container as a trace (`crew`) |
@@ -278,7 +278,7 @@ tests/shots.sh attachments                   # each gun bare and in two builds, 
 tests/shots.sh ship class=medium seed=1      # room_<i>_<role>.png per Room, overview.png
 tests/shots.sh crew                          # front.png, side.png: Guard left, Worker right
 tests/shots.sh hud                           # hud.png, hud_busy.png
-tests/shots.sh menu                          # home, classes, pause, death, extracted
+tests/shots.sh menu                          # home, classes, loadout, loadout_slot, pause, death, extracted
 tests/shots.sh sheet                         # sheet, sheet_attachments, sheet_attachments_end
 tests/shots.sh scene path=res://scenes/props3d/prop_crate_3d.tscn cam=2,1.5,2 look=0,0.5,0
 ```
@@ -308,7 +308,10 @@ tests/shots.sh scene path=res://scenes/props3d/prop_crate_3d.tscn cam=2,1.5,2 lo
 - **hud:** a Raid on small seed 1, the Pirate in his Boarding Pod, the HUD set
   to known values (health 2 short of full, ammo 5, Loot 240); `hud_busy` adds
   the Alarm, an XP toast and an empty magazine.
-- **menu:** the main menu and Play's Ship Class screen, then the pause, death
+- **menu:** the main menu and Play's Ship Class screen, the Loadout screen
+  (`loadout`: the default Loadout, the bare Pistol on the bench;
+  `loadout_slot`: the Assault Rifle with a Combat Scope, Suppressor, Drum,
+  Laser and Light Stock, its Underbarrel list open), then the pause, death
   and extracted screens over the same Raid. The preset uses a throwaway
   Profile, so the menu shows a fresh level 1 pirate and nothing is written
   to the player's own.
