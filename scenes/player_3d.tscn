@@ -1,4 +1,4 @@
-[gd_scene load_steps=8 format=3]
+[gd_scene load_steps=9 format=3]
 
 [ext_resource type="Script" path="res://scripts/player_3d.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/health.gd" id="2"]
@@ -6,6 +6,7 @@
 [ext_resource type="AnimationLibrary" path="res://resources/animations/viewmodel_clips.tres" id="5"]
 [ext_resource type="Script" path="res://scripts/pirate_audio.gd" id="6"]
 [ext_resource type="Script" path="res://scripts/scoped_view.gd" id="7"]
+[ext_resource type="Script" path="res://scripts/laser_dot.gd" id="8"]
 
 [sub_resource type="CapsuleShape3D" id="capsule"]
 radius = 0.35
@@ -52,3 +53,6 @@ script = ExtResource("6")
 
 [node name="ScopedView" type="Node" parent="."]
 script = ExtResource("7")
+
+[node name="LaserDot" type="Node" parent="."]
+script = ExtResource("8")

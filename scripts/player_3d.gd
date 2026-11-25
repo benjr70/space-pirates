@@ -208,6 +208,8 @@ const BODY_LAYER := 2
 @onready var viewmodel: Viewmodel = $Head/Camera3D/Weapon
 ## The lens, the Reflex Sight's window and the blur round a scope.
 @onready var scoped_view: ScopedView = $ScopedView
+## The fitted Laser's red dot on whatever the gun points at.
+@onready var laser_dot: LaserDot = $LaserDot
 @onready var audio: PirateAudio = $Audio
 @onready var health: Health = $Health
 @onready var collider: CollisionShape3D = $CollisionShape3D
