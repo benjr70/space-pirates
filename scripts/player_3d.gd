@@ -1004,7 +1004,16 @@ func _on_shot_hit(target: Node3D, on_head: bool, struck: Dictionary, bonus: bool
 		hit_landed.emit(target, true, report.headshot)
 
 
-## Makes hit report [param id] once: going down makes it early, and the
+## Reports at once every shot hit still waiting out its report delay, so a
+## kill he has made counts before the Raid settles, whichever way it ends:
+## going down (_on_died), the pod casting off or walking away to the menu
+## (main_3d.gd). The timers find nothing left to do after.
+func report_hits_now() -> void:
+	for id in _pending_reports.keys():
+		_report_shot_hit(id)
+
+
+## Makes hit report [param id] once: report_hits_now makes it early, and the
 ## timer finds nothing left to do after that.
 func _report_shot_hit(id: int) -> void:
 	if not _pending_reports.has(id):
@@ -1169,8 +1178,7 @@ func _on_died(_from: Node) -> void:
 	for shot in _shot_parent().get_children():
 		if shot is Projectile3D and (shot as Projectile3D).shooter == self:
 			(shot as Projectile3D).disarm()
-	for id in _pending_reports.keys():
-		_report_shot_hit(id)
+	report_hits_now()
 	died.emit()
 	velocity = Vector3.ZERO
 	visible = false

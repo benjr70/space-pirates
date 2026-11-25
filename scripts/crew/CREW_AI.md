@@ -511,6 +511,12 @@ The crew's Awareness feeds the Pirate's XP (`RaidLedger`):
   combat (HUNT, FIGHT, COVER, FLEE, COWER) and not spotted. A kill on one is
   worth **150 XP** against 100, and its toast reads "+150 XP unaware". A shot
   that only wounds spots the Pirate, so the kill that follows is a normal one.
+- A kill counts through the Pirate's hit report, which waits a step and a
+  half after a shot's first strike (`SHOT_REPORT_DELAY`) so a Shotgun's late
+  pellets join it. Every way a Raid settles reports the waiting hits first
+  (`report_hits_now` in `scripts/player_3d.gd`): going down, the pod casting off, walking away
+  to the menu. A crew member felled in the step the pod casts off in is still
+  his kill.
 - **Ghost**: extracting with the Alarm never raised this Raid adds 150 / 250 /
   350 XP for a small / medium / large ship. The EXTRACTED tally shows unaware
   kills and the Ghost bonus when earned. Avoiding kills earns nothing extra.

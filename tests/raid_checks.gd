@@ -142,6 +142,7 @@ static func _check_raid(expect: Callable, root: Node) -> void:
 	root.remove_child(main)
 	main.free()
 	_check_extraction(expect, root)
+	_check_kill_as_he_extracts(expect, root)
 	Raid.seed = 0
 	Raid.ship_class = &""
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
@@ -183,6 +184,51 @@ static func _check_extraction(expect: Callable, root: Node) -> void:
 	expect.call(root.get_tree().paused and not main.get_node("PauseMenu").enabled, "extract: the ship kept running under the extracted screen")
 	expect.call(_has_button(screen, "NewRaid") and _has_button(screen, "Menu"), "extract: no New Raid or Main Menu")
 	expect.call(not (screen.find_child("Retry", true, false) as Button).visible, "extract: offers a Retry after getting out")
+	root.get_tree().paused = false
+	root.remove_child(main)
+	main.free()
+
+
+## A kill in the last instant of the countdown is his: a bolt of his that
+## fells a crew member in the physics step the pod casts off in is reported
+## before the Raid is settled, not after the shot's report delay, when the
+## settled ledger would drop it (raid-smoke-bugs ticket 09). The bolt is a
+## real one from the Pirate's `fire()`, struck on the victim the way its
+## sweep strikes, so it goes through the Pirate's own hit report.
+static func _check_kill_as_he_extracts(expect: Callable, root: Node) -> void:
+	var main: Node3D = load(Raid.RAID_SCENE).instantiate()
+	root.add_child(main)
+	var player: CharacterBody3D = main.get_node("Player")
+	var extraction: Extraction = main.extraction
+	var pod: BoardingPod = main.get_node("Ship/BoardingPod")
+	var screen: RaidEndScreen = main.get_node("RaidEndScreen")
+	player.global_position = pod.to_global(Vector3(0, 0, BoardingPod.COLLAR_Z + BoardingPod.DEPTH - 0.4))
+	extraction.boarded = true
+	extraction.begin()
+	extraction._process(extraction.duration * 0.5)
+	var victim: Crew3D = root.get_tree().get_nodes_in_group(&"crew")[0]
+	victim.health.current = 1
+	var shot: Projectile3D = player.fire()
+	expect.call(shot != null, "extract: no shot for the kill in the countdown's last step")
+	if shot != null:
+		shot._strike(victim)
+	# This suite's own projectiles container is the first in the group, so
+	# the bolt lives outside the Raid scene: nothing of it outlives the check.
+	for pellet: Projectile3D in player.last_pellets:
+		if is_instance_valid(pellet):
+			pellet.disarm()
+	expect.call(not victim.is_alive(), "extract: the bolt did not fell the crew member")
+	var xp_before := Profile.xp
+	extraction._process(extraction.duration)
+	expect.call(extraction.is_done, "extract: the countdown ran out without extracting after the kill")
+	expect.call(main.ledger.kills == 1, "extract: a kill in the step the pod cast off in counted %d kills, want 1"
+			% main.ledger.kills)
+	var banked: int = Profile.xp - xp_before
+	var want: int = main.ledger.kill_xp() + main.ledger.extract_xp() + main.ledger.ghost_xp()
+	expect.call(main.ledger.kill_xp() > 0 and banked == want, "extract: banked %d XP with a kill in the last step, want %d with %d kill XP"
+			% [banked, want, main.ledger.kill_xp()])
+	expect.call(screen.detail_text().contains("(1 kill"), "extract: the tally does not show the kill in the last step: %s"
+			% screen.detail_text().replace("\n", " / "))
 	root.get_tree().paused = false
 	root.remove_child(main)
 	main.free()

@@ -135,6 +135,7 @@ func _wire_raid_end() -> void:
 	end_screen.menu_pressed.connect(Raid.to_menu)
 	# Walking away is a Raid lost: the XP is kept, the gold is not.
 	pause_menu.menu_pressed.connect(func() -> void:
+		player.report_hits_now()
 		ledger.settle_lost()
 		Raid.to_menu())
 
@@ -148,6 +149,8 @@ func _wire_extraction(pod: BoardingPod) -> void:
 	extraction.setup(pod, player)
 	tracker.room_changed.connect(func(_room: int, _previous: int) -> void: extraction.boarded = true)
 	extraction.extracted.connect(func() -> void:
+		# A kill in the step the pod casts off in is still his.
+		player.report_hits_now()
 		ledger.settle_extracted()
 		_close_raid()
 		get_tree().paused = true
