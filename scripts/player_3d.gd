@@ -190,8 +190,8 @@ const FALL_LIMIT := -10.0
 const CAMERA_LERP := 12.0
 ## How far short of a wall a bolt starts when the barrel is through it.
 const MUZZLE_WALL_GAP := 0.05
-## Seconds a shell-reload or break-out timer may sit above zero and still
-## count as up, so 0.55 s is 33 physics steps and not 34.
+## Seconds a timer may sit above zero and still count as up, so 0.55 s is
+## 33 physics steps and not 34 (see _count_down).
 const TIMER_SLOP := 0.0001
 ## Seconds from a shot's first strike on a target to reporting it: a step
 ## and a half, so pellets a step behind still count toward the kill.
@@ -519,7 +519,7 @@ func _ads_allowed() -> bool:
 ## press skips the recovery.
 func _update_ads(delta: float) -> void:
 	# The Descope recovers on the clock, whatever else he is doing.
-	_descope_left = maxf(_descope_left - delta, 0.0)
+	_descope_left = _count_down(_descope_left, delta)
 	var want := Input.is_action_pressed("aim")
 	if Input.is_action_just_pressed("aim"):
 		_descope_left = 0.0
@@ -712,14 +712,14 @@ func _animate_camera(delta: float) -> void:
 
 func _tick_gunnery_timers(delta: float) -> void:
 	_cooldown = maxf(_cooldown - delta, 0.0)
-	_swap_left = maxf(_swap_left - delta, 0.0)
+	_swap_left = _count_down(_swap_left, delta)
 	_melee_cycle_left = maxf(_melee_cycle_left - delta, 0.0)
 	if weapon.bloom_decay_seconds > 0.0:
 		_bloom = maxf(_bloom - weapon.bloom_per_shot_degrees / weapon.bloom_decay_seconds * delta, 0.0)
 	else:
 		_bloom = 0.0
 	if _reload_timer > 0.0:
-		_reload_timer = maxf(_reload_timer - delta, 0.0)
+		_reload_timer = _count_down(_reload_timer, delta)
 		if _reload_timer == 0.0:
 			ammo = weapon.magazine_size
 			ammo_changed.emit(ammo)
@@ -728,6 +728,14 @@ func _tick_gunnery_timers(delta: float) -> void:
 		_tick_shell_reload(delta)
 	if _break_out_queued:
 		_tick_break_out(delta)
+
+
+## [param left] seconds less [param delta], and zero once within TIMER_SLOP
+## of it: float slop leaves a 0.50 s timer a hair above zero after its 30th
+## step at 60 a second, which would hold it one step too long.
+static func _count_down(left: float, delta: float) -> float:
+	left -= delta
+	return left if left > TIMER_SLOP else 0.0
 
 
 ## A shell counts when its time is up; the next one's time starts from there,

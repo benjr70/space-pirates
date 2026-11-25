@@ -2119,8 +2119,8 @@ func _seconds_until_fire() -> float:
 
 
 ## A swap takes the swap time of the weapon being drawn: Pistol to Marksman
-## Rifle blocks fire for 0.50 s, and back to the Pistol for 0.30 s, each
-## within 0.02 s.
+## Rifle blocks fire for 0.50 s, and back to the Pistol for 0.30 s, each to
+## the frame: fire comes back on the frame the swap time is up, not one late.
 func _check_swap_time_of_drawn() -> void:
 	var pistol: WeaponProfile = player.weapons[0]
 	await _hold(pistol)
@@ -2128,12 +2128,14 @@ func _check_swap_time_of_drawn() -> void:
 	player.select_weapon(player.weapons.find(MARKSMAN_RIFLE))
 	_expect(player.weapon == MARKSMAN_RIFLE, "no swap to the Marksman Rifle")
 	var blocked := await _seconds_until_fire()
-	_expect(absf(blocked - 0.5) <= 0.02, "Pistol to Marksman Rifle blocked fire %.3f s, wanted 0.50 +-0.02" % blocked)
+	_expect(absf(blocked - MARKSMAN_RIFLE.swap_time) < FRAME / 2.0,
+			"Pistol to Marksman Rifle blocked fire %.3f s, wanted its swap time %.3f s to the frame" % [blocked, MARKSMAN_RIFLE.swap_time])
 	await _seconds(MARKSMAN_RIFLE.fire_interval + 0.05)
 	player.select_weapon(0)
 	_expect(player.weapon == pistol, "no swap back to the Pistol")
 	blocked = await _seconds_until_fire()
-	_expect(absf(blocked - 0.3) <= 0.02, "Marksman Rifle to Pistol blocked fire %.3f s, wanted 0.30 +-0.02" % blocked)
+	_expect(absf(blocked - pistol.swap_time) < FRAME / 2.0,
+			"Marksman Rifle to Pistol blocked fire %.3f s, wanted its swap time %.3f s to the frame" % [blocked, pistol.swap_time])
 	_clear_shots()
 	await _place(RUNWAY)
 
