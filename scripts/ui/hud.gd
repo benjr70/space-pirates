@@ -4,7 +4,9 @@ extends CanvasLayer
 ## interact prompt and a damage vignette. Built in code so it stays one file.
 ##
 ## The crosshair's four lines open and close with the Pirate's live spread,
-## and collapse to a dot while he Aims Down Sights. A landed hit flashes an
+## and collapse to a dot while he Aims Down Sights; aimed through a Sight
+## Attachment (a scope's lens or the Reflex Sight) the crosshair hides, the
+## glass carrying its own reticle. A landed hit flashes an
 ## X of four short diagonals around it, red when it killed, fading in a
 ## quarter second; the playtest wanted to know when a shot landed. The ammo
 ## counter reads `n / ∞` and turns red at zero, and a dry pull rings
@@ -60,6 +62,9 @@ var _magazine := 0
 var _reloading := false
 var _spread_degrees := 0.0
 var _ads := false
+## The Pirate the HUD watches, whose weapon says whether he aims through a
+## Sight Attachment.
+var _player: Node
 var _loot_label: Label
 var _alarm_label: Label
 ## Crew Awareness bars over heads, and the spotted sting.
@@ -195,11 +200,13 @@ func _ready() -> void:
 ## Everything the HUD reports on the Pirate, in one place for the main scene
 ## and the headless suite alike.
 func watch(player: Node) -> void:
+	_player = player
 	set_ammo(player.ammo)
 	player.ammo_changed.connect(set_ammo)
 	player.reloading_changed.connect(set_reloading)
 	player.spread_changed.connect(set_spread)
 	player.ads_changed.connect(set_ads)
+	player.weapon_changed.connect(func(_profile: WeaponProfile) -> void: _layout_crosshair())
 	player.dry_fired.connect(dry_fire)
 	player.hit_landed.connect(flash_hitmarker)
 
@@ -300,13 +307,19 @@ func crosshair_is_dot() -> bool:
 	return _ads
 
 
+## Any of the crosshair's lines or its dot is drawn.
+func crosshair_shown() -> bool:
+	return _dot.visible or _lines.any(func(line: ColorRect) -> bool: return line.visible)
+
+
 func _layout_crosshair() -> void:
-	_dot.visible = _ads
+	var through_sight: bool = _ads and _player != null and _player.weapon.aims_through_sight()
+	_dot.visible = _ads and not through_sight
 	var gap := crosshair_gap()
 	for i in _lines.size():
 		var line := _lines[i]
 		var direction := CROSSHAIR_DIRECTIONS[i]
-		line.visible = not _ads
+		line.visible = not _ads and not through_sight
 		# The near end sits `gap` out along the direction (a rect's origin
 		# is its top-left, so the left and up lines step back their own
 		# length), centred across.

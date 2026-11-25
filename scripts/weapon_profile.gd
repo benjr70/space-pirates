@@ -8,6 +8,10 @@ extends Resource
 ## An exponential ease at this many per aim time is 95% (1 - e^-3) of the
 ## way there at the aim time.
 const AIM_EASE := 3.0
+## How much the view around a scope's lens zooms aimed: the lens itself
+## magnifies by `ads_zoom` (`.scratch/weapon-attachments/spec.md`, "Scoped
+## view").
+const VIEW_AROUND_LENS := 1.25
 
 @export_group("Trigger")
 ## One shot per press: holding the trigger never repeats. Off, the trigger
@@ -77,7 +81,8 @@ const AIM_EASE := 3.0
 ## Degrees the aim drifts while aimed, in a slow figure of eight laid over
 ## wherever he looks: 0 holds dead still.
 @export var ads_sway_degrees := 0.0
-## Magnification while aimed.
+## Magnification while aimed: of the whole view, or of a scope's lens
+## alone ([method view_zoom]).
 @export var ads_zoom := 1.3
 ## Multiplier on walking speed while aimed.
 @export var ads_speed := 0.8
@@ -301,6 +306,19 @@ func seconds_empty_to_full() -> float:
 ## rack clip and the reload is long enough to hold one.
 func racks_after(from_empty: bool) -> bool:
 	return from_empty and model_rack_clip != &"" and reload_empty > rack_time
+
+
+## How much the Pirate's own view zooms aimed: by `ads_zoom` with a gun's
+## own sights or a Reflex Sight, by [constant VIEW_AROUND_LENS] through a
+## scope's lens, which magnifies by `ads_zoom` itself.
+func view_zoom() -> float:
+	return VIEW_AROUND_LENS if aims_through_lens else ads_zoom
+
+
+## Aimed through a Sight Attachment (a scope's lens or the Reflex Sight)
+## rather than the gun's own sights.
+func aims_through_sight() -> bool:
+	return attachments.any(func(a: Attachment) -> bool: return a.slot == Attachment.Slot.SIGHT)
 
 
 ## How fast the Viewmodel's pose and the zoom ease toward the sights and

@@ -6,6 +6,7 @@
 #
 #   tests/shots.sh viewmodel [wheel=1] [hip=x,y,z ...]
 #   tests/shots.sh attachments
+#   tests/shots.sh scoped
 #   tests/shots.sh ship class=medium seed=1
 #   tests/shots.sh crew | hud | menu
 #   tests/shots.sh scene path=res://scenes/props3d/prop_crate_3d.tscn cam=2,1.5,2 look=0,0.5,0

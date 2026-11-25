@@ -206,6 +206,8 @@ const BODY_LAYER := 2
 ## Rides the Viewmodel, so a shot leaves wherever the weapon is posed.
 @onready var muzzle: Node3D = $Head/Camera3D/Weapon/Muzzle
 @onready var viewmodel: Viewmodel = $Head/Camera3D/Weapon
+## The lens, the Reflex Sight's window and the blur round a scope.
+@onready var scoped_view: ScopedView = $ScopedView
 @onready var audio: PirateAudio = $Audio
 @onready var health: Health = $Health
 @onready var collider: CollisionShape3D = $CollisionShape3D
@@ -282,6 +284,12 @@ func _ready() -> void:
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 
+## The camera's field of view unaimed, in degrees: what every zoom is
+## measured against.
+func hip_fov() -> float:
+	return _hip_fov
+
+
 func get_team() -> StringName:
 	return TEAM
 
@@ -352,7 +360,8 @@ func _unhandled_input(event: InputEvent) -> void:
 
 ## Turns the view by a mouse movement of [param relative] pixels. Aimed, the
 ## turn is divided by the held weapon's zoom from the moment the sights are
-## up, so a hand movement covers the same distance on screen.
+## up, so a hand movement covers the same distance on screen; through a
+## scope that is the lens's magnification, not the view around it.
 func look(relative: Vector2) -> void:
 	var sensitivity := mouse_sensitivity / (weapon.ads_zoom if ads else 1.0)
 	rotate_y(-relative.x * sensitivity)
@@ -687,7 +696,7 @@ func _sway_aim(delta: float) -> void:
 
 
 func _animate_camera(delta: float) -> void:
-	var zoom := weapon.ads_zoom if ads else 1.0
+	var zoom := weapon.view_zoom() if ads else 1.0
 	var fov := rad_to_deg(2.0 * atan(tan(deg_to_rad(_hip_fov) / 2.0) / zoom))
 	camera.fov = lerpf(camera.fov, fov, 1.0 - exp(-weapon.aim_ease_rate() * delta))
 	_dip = move_toward(_dip, 0.0, clamber_dip / maxf(clamber_time, 0.01) * delta)
