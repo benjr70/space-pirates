@@ -234,6 +234,7 @@ reading the checks that use it.
 | `scripts/container_3d.gd` | `ship_3d`, `crew`, `raid_smoke` | searching a Container (`RaidChecks`; the interact key searching one while crew stand at a distant Door, `test_ship_3d.gd::_physics_door_prompt`; `raid_smoke` with the interact key in a live Raid, failing if the key does nothing at a Container in reach), an emptied Container as a trace (`crew`) |
 | `scripts/attachment.gd`, `resources/attachments/`, and the Slots, fits and `build` in `weapon_profile.gd` | `attachments`; `crew` in part | `attachments`: the fourteen Attachment files (Slot, name, factors, lens, Suppressor), each gun's Slots and what fits them, every gun with every Attachment it takes built against the catalogue's factors and limits, the Built Weapon numbers of `.scratch/weapon-attachments/issues/13-starting-numbers.md`, stacking, the suppressed shot per gun, building leaving the bare Profile and the Attachment files alone, and refusals. `crew`: a Laser's conspicuous on Awareness (`_check_conspicuous`), a suppressed shot's reach (`_check_suppressed`) |
 | `scripts/player_3d.gd`, `viewmodel.gd`, `weapon_profile.gd`, `pirate_audio.gd`, `health.gd`, `projectile_3d.gd`, `sound_at.gd` | `pirate`; `ship_3d`, `raid_smoke` in part | `pirate`: movement course, weapons and the wheel, ADS, melee, Viewmodel poses and clips, sounds, bolts, damage. `ship_3d`: walking, ammo and shooting on a built ship. `raid_smoke`: the Pirate never leaves the Hull or drops below the floor while walked through generated ships by input actions, and goes down under crew fire (Caught, every Raid) |
+| `scripts/sandbox/` | `sandbox`; `crew` in part | `sandbox`: `docs/sandbox.md` against the resources (the stale check, a hand edit to a weapon, a Gunnery, the Sandbox or an Attachment file failing it), every table (the four weapon columns, the fourteen Attachment columns with each file's factors), edit, Save and Revert over scratch copies (a factor too), and in Raids: F1 and Esc, live edits on the next shot, a menu Raid's Built Weapon values beside the bare ones, a dialled factor or bare number rebuilding the gun in hand (`WeaponProfile.rebuild`), and the debug Loadout strip applied on close without writing the saved Loadout. `crew`: the loudness row |
 | `tools/blender/` gun scripts and `kit.py`, as imported under `assets/models/` | `pirate`; `tests/shots.sh viewmodel` | `pirate` (`tests/gun_model_checks.gd`): each gun's separate part meshes and `<Bone>Mesh` names, the mesh each bone carries, the mount markers, Muzzle and sights within 1 mm of their recorded places, and the bones each clip moves. Rebuilding a gun needs Blender and is not part of the Gate |
 | `scripts/main.gd`, `player.gd`, `crew.gd`, `door.gd`, `projectile.gd` (2D) | `layouts` | the 2D scene: Doors, shooting, crew, fog, navigation |
 | `scripts/proto/` | none, by design | prototypes; excluded |
@@ -276,6 +277,7 @@ tests/shots.sh ship class=medium seed=1      # room_<i>_<role>.png per Room, ove
 tests/shots.sh crew                          # front.png, side.png: Guard left, Worker right
 tests/shots.sh hud                           # hud.png, hud_busy.png
 tests/shots.sh menu                          # home, classes, pause, death, extracted
+tests/shots.sh sheet                         # sheet, sheet_attachments, sheet_attachments_end
 tests/shots.sh scene path=res://scenes/props3d/prop_crate_3d.tscn cam=2,1.5,2 look=0,0.5,0
 ```
 
@@ -298,6 +300,11 @@ tests/shots.sh scene path=res://scenes/props3d/prop_crate_3d.tscn cam=2,1.5,2 lo
   and extracted screens over the same Raid. The preset uses a throwaway
   Profile, so the menu shows a fresh level 1 pirate and nothing is written
   to the player's own.
+- **sheet:** the Sandbox sheet (F1) open over a Raid carrying the Assault
+  Rifle with a Suppressor and a Drum, then the Pistol: the debug Loadout
+  strip and the Weapons table with the Built Weapon values beside the bare
+  ones, then the Attachments table top and bottom with the Suppressor's
+  loudness dialled to 0.5 (amber). Nothing is saved; the dial is reverted.
 - **scene:** any scene under `res://` from `cam=` looking at `look=`
   (`fov=`, `name=` optional), lit by the shot script when the scene brings no
   WorldEnvironment of its own. For whatever a ticket adds.

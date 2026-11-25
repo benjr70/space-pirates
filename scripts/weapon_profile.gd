@@ -167,6 +167,9 @@ const AIM_EASE := 3.0
 var aims_through_lens := false
 ## Set only on a Built Weapon: the Attachments fitted to it, in Slot order.
 var attachments: Array[Attachment] = []
+## Set only on a Built Weapon: the bare Profile it was built from. Typed
+## Resource for the reason [method build] is.
+var bare: Resource
 
 ## What an Attachment may never change: how hard a shot hits and how the gun
 ## fires and loads stay the weapon's own.
@@ -231,6 +234,7 @@ func build(choice: Dictionary) -> Resource:
 	if why_refused(choice) != "":
 		return null
 	var built := duplicate()
+	built.bare = self
 	var factors := {}
 	for slot: Attachment.Slot in Attachment.Slot.values():
 		var attachment: Attachment = choice.get(slot)
@@ -253,6 +257,25 @@ func build(choice: Dictionary) -> Resource:
 		else:
 			built.set(key, value)
 	return built
+
+
+## Builds this Built Weapon again, in place, from its bare Profile and the
+## Attachments fitted to it, so a number changed on either since is in it
+## and everything holding it (the Pirate's hand, the Raid) sees it at once.
+## Does nothing on a bare Profile, or if the build is now refused.
+func rebuild() -> void:
+	if bare == null:
+		return
+	var choice := {}
+	for attachment in attachments:
+		choice[attachment.slot] = attachment
+	var fresh: Resource = bare.build(choice)
+	if fresh == null:
+		return
+	for p: Dictionary in get_property_list():
+		if p.usage & PROPERTY_USAGE_SCRIPT_VARIABLE and p.usage & PROPERTY_USAGE_STORAGE:
+			set(p.name, fresh.get(p.name))
+	aims_through_lens = fresh.aims_through_lens
 
 
 ## What one bolt of [param damage] does on a head zone with

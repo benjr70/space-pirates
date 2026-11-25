@@ -1,8 +1,8 @@
 class_name SandboxSheet
 extends RefCounted
-## Every Sandbox number as tables: the Weapon Profiles side by side with
-## their derived rows, the [Sandbox] resource's Health and Melee, and each
-## crew type's [Gunnery]. One
+## Every Sandbox number as tables: the four Weapon Profiles side by side
+## with their derived rows, the [Sandbox] resource's Health and Melee, each
+## crew type's [Gunnery], and every [Attachment]'s factors. One
 ## generator for both views of it: the in-Raid sheet ([SandboxSheetView])
 ## edits these tables live and Saves them, and `docs/sandbox.md` is
 ## [method to_markdown] of them, written on Save and by
@@ -16,18 +16,28 @@ const DOC_PATH := "res://docs/sandbox.md"
 const WEAPONS := "Weapons"
 const HEALTH := "Health and Melee"
 const GUNNERY := "Gunnery"
+const ATTACHMENTS := "Attachments"
+const ATTACHMENT_DIR := "res://resources/attachments/"
 const REGENERATE := "flatpak run org.godotengine.Godot --headless --path . --script res://scripts/sandbox/write_sandbox_doc.gd"
 
 var tables: Array[SheetTable] = []
 var sandbox: Sandbox
 ## Where Save writes the Markdown view.
 var doc_path := DOC_PATH
+## The Built Weapons the Pirate carries, set by the in-Raid sheet: each
+## shown beside the bare Profile it was built from ([method built_value]),
+## and rebuilt when that Profile or an Attachment is dialled ([method
+## rebuild_carried]). Never written to `docs/sandbox.md`.
+var carried: Array[WeaponProfile] = []
 
 
 ## The sheet over these live Resources: the ones the Raid is playing with.
 ## [param gunneries] are one [Gunnery] per crew type, in [constant
 ## Gunnery.NAMES] order; none, and the sheet has no Gunnery table.
-static func build(weapons: Array, sandbox_resource: Sandbox, gunneries: Array = []) -> SandboxSheet:
+## [param attachments] are every [Attachment], in [method attachment_paths]
+## order; none, and no Attachments table.
+static func build(weapons: Array, sandbox_resource: Sandbox, gunneries: Array = [],
+		attachments: Array = []) -> SandboxSheet:
 	var sheet := SandboxSheet.new()
 	sheet.sandbox = sandbox_resource
 	var names := PackedStringArray()
@@ -46,21 +56,36 @@ static func build(weapons: Array, sandbox_resource: Sandbox, gunneries: Array = 
 				+ "Each crew member draws its own rhythm at spawn: a Guard's burst a round either way, and %s-%sx on time between shots and pause."
 				% [SheetTable.format(CrewCombat.JITTER.x), SheetTable.format(CrewCombat.JITTER.y)])
 		sheet.add_table(gunnery)
+	if not attachments.is_empty():
+		var names_of := PackedStringArray()
+		for attachment: Resource in attachments:
+			names_of.append(attachment.display_name)
+		var order := PackedStringArray()
+		for p: Dictionary in weapon_table.targets[0].get_property_list() if not weapons.is_empty() else []:
+			order.append(p.name)
+		var table := SheetTable.from_factors(ATTACHMENTS, names_of, attachments, order)
+		table.add_note("Each cell multiplies that attribute of the gun the Attachment is fitted to; blank changes nothing. "
+				+ "Two on one attribute multiply. A whole-number attribute rounds and never goes under 1; times and spreads never go under 0; zoom never under 1.")
+		sheet.add_table(table)
 	return sheet
 
 
 ## The sheet over what is on disk, loaded apart from anything the game has
 ## cached: what the stale check compares `docs/sandbox.md` against.
-static func from_disk(weapon_paths: PackedStringArray = carried_weapon_paths(),
-		sandbox_path: String = Sandbox.PATH, gunnery_paths: PackedStringArray = Gunnery.PATHS) -> SandboxSheet:
+static func from_disk(weapon_paths: PackedStringArray = all_weapon_paths(),
+		sandbox_path: String = Sandbox.PATH, gunnery_paths: PackedStringArray = Gunnery.PATHS,
+		attachment_files: PackedStringArray = attachment_paths()) -> SandboxSheet:
 	var weapons := []
 	for path in weapon_paths:
 		weapons.append(ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE))
 	var gunneries := []
 	for path in gunnery_paths:
 		gunneries.append(ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE))
+	var attachments := []
+	for path in attachment_files:
+		attachments.append(ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE))
 	var sandbox_resource: Sandbox = ResourceLoader.load(sandbox_path, "", ResourceLoader.CACHE_MODE_IGNORE)
-	var sheet := build(weapons, sandbox_resource, gunneries)
+	var sheet := build(weapons, sandbox_resource, gunneries, attachments)
 	# Loaded apart from the cache, so give each column back its file.
 	for table in sheet.tables:
 		if table.title == WEAPONS:
@@ -69,16 +94,42 @@ static func from_disk(weapon_paths: PackedStringArray = carried_weapon_paths(),
 			table.paths = PackedStringArray([sandbox_path])
 		elif table.title == GUNNERY:
 			table.paths = gunnery_paths
+		elif table.title == ATTACHMENTS:
+			table.paths = attachment_files
 		table.reload_disk()
 	return sheet
 
 
-## The weapons the Pirate carries, in his wheel order.
-static func carried_weapon_paths() -> PackedStringArray:
+## The four weapons, in wheel order, whatever the Pirate carries.
+static func all_weapon_paths() -> PackedStringArray:
 	var paths := PackedStringArray()
-	for weapon: Resource in _player_default(&"weapons"):
+	for weapon in Loadout.all_weapons():
 		paths.append(weapon.resource_path)
 	return paths
+
+
+## Every Attachment file, by Slot and then by file name: the Attachments
+## table's column order.
+static func attachment_paths() -> PackedStringArray:
+	var by_slot := []
+	for file in DirAccess.get_files_at(ATTACHMENT_DIR):
+		file = file.trim_suffix(".remap")
+		if file.ends_with(".tres"):
+			by_slot.append([load(ATTACHMENT_DIR + file).slot, file])
+	by_slot.sort()
+	var paths := PackedStringArray()
+	for pair: Array in by_slot:
+		paths.append(ATTACHMENT_DIR + pair[1])
+	return paths
+
+
+## Every Attachment, the live ones the game builds with, in
+## [method attachment_paths] order.
+static func all_attachments() -> Array[Attachment]:
+	var out: Array[Attachment] = []
+	for path in attachment_paths():
+		out.append(load(path))
+	return out
 
 
 ## "assault_rifle.tres" reads "Assault Rifle".
@@ -121,6 +172,28 @@ static func _add_weapon_derived(table: SheetTable, sandbox: Sandbox) -> void:
 ## With every pellet landing.
 static func _shots_to_kill_crew(w: WeaponProfile, sandbox: Sandbox) -> int:
 	return ceili(float(sandbox.crew_health) / maxi(w.damage * w.pellet_count, 1))
+
+
+## The carried Built Weapon's value on a Weapons row, for the column of the
+## bare Profile it was built from; null where none is carried, where it is
+## the same as bare, and on rows that are not numbers.
+func built_value(key: StringName, column: int) -> Variant:
+	var weapons := table(WEAPONS)
+	var r := weapons.row(key)
+	if r.is_empty() or r.kind == SheetTable.Kind.READ_ONLY:
+		return null
+	for built in carried:
+		if built.bare == weapons.targets[column]:
+			var v: Variant = weapons.value_of(key, built)
+			return null if SheetTable.same(v, weapons.value(key, column)) else v
+	return null
+
+
+## Rebuilds every carried Built Weapon from its bare Profile and its
+## Attachments as they are now in the sheet.
+func rebuild_carried() -> void:
+	for built in carried:
+		built.rebuild()
 
 
 func add_table(table: SheetTable) -> void:
@@ -170,7 +243,7 @@ func write_doc(path: String = doc_path) -> Error:
 
 func to_markdown() -> String:
 	var parts := PackedStringArray()
-	parts.append("# Sandbox\n\nEvery Sandbox number, generated from `resources/weapons/`, `resources/sandbox.tres` and `resources/gunnery/`. "
+	parts.append("# Sandbox\n\nEvery Sandbox number, generated from `resources/weapons/`, `resources/sandbox.tres`, `resources/gunnery/` and `resources/attachments/`. "
 			+ "Do not edit by hand: change numbers in the in-Raid sheet (F1, debug builds) and Save, or edit the "
 			+ "resources and run `%s`. Rows marked `=` are derived.\n" % REGENERATE)
 	for t in tables:

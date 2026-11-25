@@ -1,6 +1,6 @@
 # Sandbox
 
-Every Sandbox number, generated from `resources/weapons/`, `resources/sandbox.tres` and `resources/gunnery/`. Do not edit by hand: change numbers in the in-Raid sheet (F1, debug builds) and Save, or edit the resources and run `flatpak run org.godotengine.Godot --headless --path . --script res://scripts/sandbox/write_sandbox_doc.gd`. Rows marked `=` are derived.
+Every Sandbox number, generated from `resources/weapons/`, `resources/sandbox.tres`, `resources/gunnery/` and `resources/attachments/`. Do not edit by hand: change numbers in the in-Raid sheet (F1, debug builds) and Save, or edit the resources and run `flatpak run org.godotengine.Godot --headless --path . --script res://scripts/sandbox/write_sandbox_doc.gd`. Rows marked `=` are derived.
 
 ## Weapons
 
@@ -105,3 +105,28 @@ Melee from behind (inside the 120.0 degree cone behind the target's facing) kill
 | Engage Range | 10.6 | 10.6 |
 
 Crew fire the Pistol: its damage, bolt and time between shots. Aim error adds to the Pistol's base cone. Each crew member draws its own rhythm at spawn: a Guard's burst a round either way, and 0.75-1.35x on time between shots and pause.
+
+## Attachments
+
+| | Combat Scope | Long Scope | Reflex Sight | Long Barrel | Short Barrel | Suppressor | Drum | Extended Magazine | Quick Magazine | Bipod | Foregrip | Laser | Heavy Stock | Light Stock |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| Magazine Size |  |  |  |  |  |  | 2.5 | 1.5 | 0.8 |  |  |  |  |  |
+| Reload Tactical |  |  |  |  |  |  | 1.6 | 1.25 | 0.7 |  |  |  |  |  |
+| Reload Empty |  |  |  |  |  |  | 1.6 | 1.25 | 0.7 |  |  |  |  |  |
+| Projectile Speed |  |  |  | 1.25 | 0.85 | 0.8 |  |  |  |  |  |  |  |  |
+| Spread Base Degrees |  |  |  | 0.85 | 1.25 |  |  |  |  |  |  | 0.7 |  |  |
+| Spread Crouch |  |  |  |  |  |  |  |  |  | 0.5 |  |  |  |  |
+| Ads Spread | 0.75 |  |  |  |  |  |  |  |  |  |  | 1.4286 |  |  |
+| Ads Moving Spread |  |  |  |  |  |  |  |  |  |  |  | 1.4286 | 0.8 |  |
+| Ads Sway Degrees |  | 1.5 |  |  |  |  |  |  |  | 0.5 |  |  | 0.6 | 1.3 |
+| Ads Zoom | 1.55 | 1.67 | 0.85 |  |  |  |  |  |  |  |  |  |  |  |
+| Ads Speed | 0.85 |  | 1.1 |  |  |  |  |  |  |  |  |  | 0.85 | 1.15 |
+| Aim Time | 1.3 | 1.35 | 0.8 | 1.2 | 0.8 |  | 1.25 |  |  | 1.2 | 1.15 |  | 1.2 | 0.8 |
+| Swap Time |  |  |  | 1.2 | 0.8 |  | 1.3 |  |  | 1.2 |  |  |  | 0.8 |
+| Recoil Kick Degrees |  |  |  |  |  |  |  |  |  |  | 0.7 |  |  | 1.25 |
+| Ads Recoil Kick Degrees |  |  |  |  |  |  |  |  |  |  | 0.7 |  |  |  |
+| Camera Kick Degrees |  |  |  |  |  |  |  |  |  |  | 0.7 |  |  |  |
+| Loudness |  |  |  |  |  | 0.4 |  |  |  |  |  |  |  |  |
+| Conspicuous |  |  |  |  |  |  |  |  |  |  |  | 1.3 |  |  |
+
+Each cell multiplies that attribute of the gun the Attachment is fitted to; blank changes nothing. Two on one attribute multiply. A whole-number attribute rounds and never goes under 1; times and spreads never go under 0; zoom never under 1.

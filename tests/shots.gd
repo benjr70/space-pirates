@@ -22,6 +22,10 @@ extends SceneTree
 ##   menu       the main menu's screens (home, classes) and the Raid's own
 ##              (pause, death, extracted).
 ##   scene      path=<res://...> cam=x,y,z look=x,y,z [fov=<deg>] [name=<png>]
+##   sheet      the Sandbox sheet (F1) open in a Raid carrying a fitted Loadout:
+##              sheet.png (strip and Weapons), sheet_attachments.png and
+##              sheet_attachments_end.png (the Attachments table, top and
+##              bottom, the Suppressor's loudness dialled to 0.5).
 ##
 ## Every preset takes out=<dir> (default res://.godot/shots/<preset>).
 ## Output lines the wrapper reads: `SHOT_EXPECT <file>` for each frame the
@@ -74,8 +78,9 @@ func _run() -> void:
 		"hud": await _hud()
 		"menu": await _menu()
 		"scene": await _scene()
+		"sheet": await _sheet()
 		_:
-			printerr("shots: unknown preset '%s'; want viewmodel, ship, crew, hud, menu or scene" % preset)
+			printerr("shots: unknown preset '%s'; want viewmodel, ship, crew, hud, menu, scene or sheet" % preset)
 			failed = true
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(Profile.path))
 	print("SHOTS_DONE ", "fail" if failed else "ok")
@@ -335,6 +340,40 @@ func _menu() -> void:
 	await _snap("death", 0.8)
 	end.show_extracted("Out in 3:12\n+240 gold  +400 XP")
 	await _snap("extracted", 0.8)
+
+
+# --- sheet -----------------------------------------------------------------
+
+## The Sandbox sheet over a Raid carrying the Assault Rifle with a Suppressor
+## and a Drum, then the Pistol: Built Weapon values beside the bare ones.
+## Nothing is saved; the dialled factor is reverted before the end.
+func _sheet() -> void:
+	_expect(["sheet", "sheet_attachments", "sheet_attachments_end"])
+	var rifle: WeaponProfile = load("res://resources/weapons/assault_rifle.tres")
+	var loadout := Loadout.new()
+	loadout.set_first(rifle)
+	loadout.set_second(load("res://resources/weapons/pistol.tres"))
+	loadout.set_attachment(rifle, Attachment.Slot.BARREL, load("res://resources/attachments/suppressor.tres"))
+	loadout.set_attachment(rifle, Attachment.Slot.MAGAZINE, load("res://resources/attachments/drum.tres"))
+	Raid.ship_class = &"small"
+	Raid.seed = 1
+	Raid.arm(loadout)
+	var main := await _hud_raid()
+	var view: SandboxSheetView = main.get_node("SandboxSheet")
+	view.open()
+	await _snap("sheet")
+	var table := view.sheet.table(SandboxSheet.ATTACHMENTS)
+	(view.cell(SandboxSheet.ATTACHMENTS, &"loudness", table.columns.find("Suppressor")) as SpinBox).value = 0.5
+	var scroll: ScrollContainer = view.find_child("Scroll", true, false)
+	await process_frame
+	var tables := scroll.get_child(0)
+	scroll.scroll_vertical = int(tables.get_child(tables.get_child_count() - 1).position.y)
+	await _snap("sheet_attachments")
+	scroll.scroll_vertical = int(scroll.get_v_scroll_bar().max_value)
+	await _snap("sheet_attachments_end")
+	view.revert_button().pressed.emit()
+	Raid.seed = 0
+	Raid.weapons = []
 
 
 # --- scene -----------------------------------------------------------------
