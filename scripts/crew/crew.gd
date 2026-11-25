@@ -498,7 +498,10 @@ func _update_perception(delta: float) -> void:
 	var crouched: bool = target.has_method("is_crouched") and target.is_crouched()
 	if _in_view:
 		_noticed_at = target.global_position
-	if perception.sense(delta, _in_view, distance, crouched):
+	# The gun in his hands: a Laser's dot makes him easier to notice.
+	var held: WeaponProfile = target.get("weapon") as WeaponProfile
+	var conspicuous := held.conspicuous if held != null else 1.0
+	if perception.sense(delta, _in_view, distance, crouched, conspicuous):
 		_last_seen = target.global_position
 		_seen_ago = 0.0
 		_announce_spotted()

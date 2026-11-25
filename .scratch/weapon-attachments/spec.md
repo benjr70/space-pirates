@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: resolved
 Map: map.md
 
 # Spec: weapon Attachments and the Loadout

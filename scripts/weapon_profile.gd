@@ -5,6 +5,14 @@ extends Resource
 ## `resources/weapons/pistol.tres`; the Pirate reads whichever Profile he
 ## holds and never keeps a weapon number of his own.
 
+## An exponential ease at this many per aim time is 95% (1 - e^-3) of the
+## way there at the aim time.
+const AIM_EASE := 3.0
+## How much the view around a scope's lens zooms aimed: the lens itself
+## magnifies by `ads_zoom` (`.scratch/weapon-attachments/spec.md`, "Scoped
+## view").
+const VIEW_AROUND_LENS := 1.25
+
 @export_group("Trigger")
 ## One shot per press: holding the trigger never repeats. Off, the trigger
 ## fires again every `fire_interval` while held.
@@ -53,7 +61,8 @@ extends Resource
 @export var spread_base_degrees := 1.0
 ## Each shot widens the cone by this much.
 @export var bloom_per_shot_degrees := 0.5
-## Seconds for one shot's bloom to decay to nothing, linearly.
+## Seconds after the last shot for all the bloom to decay to nothing,
+## linearly, however many shots built it.
 @export var bloom_decay_seconds := 0.3
 ## Multipliers on the cone by what the Pirate is doing.
 @export var spread_crouch := 0.7
@@ -73,10 +82,21 @@ extends Resource
 ## Degrees the aim drifts while aimed, in a slow figure of eight laid over
 ## wherever he looks: 0 holds dead still.
 @export var ads_sway_degrees := 0.0
-## Magnification while aimed.
+## Magnification while aimed: of the whole view, or of a scope's lens
+## alone ([method view_zoom]).
 @export var ads_zoom := 1.3
 ## Multiplier on walking speed while aimed.
 @export var ads_speed := 0.8
+## Seconds for the sights to come up from the hip, and to drop again. The
+## Viewmodel and the zoom ease in and are 95% there at the aim time; what
+## aiming gives (`ads_spread`, `ads_moving_spread`, `ads_speed`) comes in
+## with the rise, in a straight line over it. He may fire while it rises.
+@export var aim_time := 0.15
+
+@export_group("Weapon Wheel")
+## Seconds a swap to this weapon keeps the trigger, the sights and the
+## reload busy: a swap takes the time of the weapon being drawn.
+@export var swap_time := 0.30
 
 @export_group("Recoil")
 ## A shot shoves the weapon this far back toward him and tips its muzzle up
@@ -106,8 +126,22 @@ extends Resource
 ## plays it again on the closing pump.
 @export var action_sound: AudioStream
 @export var action_sound_delay := 0.0
+## The takes a shot plays with a Suppressor fitted, one at random, in place
+## of `shot_sounds`: the gun's own, so the one Suppressor sounds right on
+## every gun. Blank on a gun that takes no Suppressor.
+@export var suppressed_shot_sounds: Array[AudioStream] = []
 ## Metres at which crew hear the shot.
 @export var loudness := 24.0
+
+@export_group("Crew")
+## How fast crew build Awareness of the Pirate while he holds this weapon:
+## a factor on how fast they spot him, 1 for every bare gun.
+@export var conspicuous := 1.0
+
+@export_group("Attachments")
+## Every Attachment that fits this weapon. Its Slots are the Slot kinds
+## these go in ([method slots]); a Slot nothing here goes in, it does not have.
+@export var fits: Array[Attachment] = []
 
 @export_group("Viewmodel")
 ## The mesh he holds: a scene under `scenes/weapons` that mounts the model
@@ -135,6 +169,121 @@ extends Resource
 @export var rack_time := 0.3
 
 
+## Set only on a Built Weapon: it aims through a scope's lens.
+var aims_through_lens := false
+## Set only on a Built Weapon: the Attachments fitted to it, in Slot order.
+var attachments: Array[Attachment] = []
+## Set only on a Built Weapon: the bare Profile it was built from. Typed
+## Resource for the reason [method build] is.
+var bare: Resource
+
+## What an Attachment may never change: how hard a shot hits and how the gun
+## fires and loads stay the weapon's own.
+const FIXED: Array[StringName] = [&"damage", &"headshot_multiplier", &"pellet_count", &"semi_auto", &"shell_reload"]
+## Times and spreads, which a Built Weapon never takes under 0.
+const NEVER_NEGATIVE: Array[StringName] = [&"fire_interval", &"reload_tactical", &"reload_empty",
+		&"first_shell_time", &"shell_time", &"closing_pump_time", &"break_out_time", &"projectile_lifetime",
+		&"bloom_decay_seconds", &"aim_time", &"swap_time", &"fire_cycle_time", &"rack_time",
+		&"spread_base_degrees", &"bloom_per_shot_degrees", &"spread_crouch", &"spread_still",
+		&"spread_walking", &"spread_slide", &"spread_air", &"ads_spread", &"ads_moving_spread"]
+
+
+## The Slot kinds this weapon has, in Slot order: those its [member fits] go in.
+func slots() -> Array[Attachment.Slot]:
+	var out: Array[Attachment.Slot] = []
+	for slot: Attachment.Slot in Attachment.Slot.values():
+		if not fits_in(slot).is_empty():
+			out.append(slot)
+	return out
+
+
+## The Attachments that fit this weapon's [param slot].
+func fits_in(slot: Attachment.Slot) -> Array[Attachment]:
+	var out: Array[Attachment] = []
+	for attachment in fits:
+		if attachment != null and attachment.slot == slot:
+			out.append(attachment)
+	return out
+
+
+## Why this bare Profile cannot be built with [param choice] (Slot to
+## Attachment, or null for an empty Slot); blank when it can.
+func why_refused(choice: Dictionary) -> String:
+	for slot: Variant in choice:
+		var attachment: Attachment = choice[slot]
+		if attachment == null:
+			continue
+		if attachment.slot != slot:
+			return "%s goes in Slot %s, not %s" % [attachment.display_name,
+					Attachment.Slot.find_key(attachment.slot), Attachment.Slot.find_key(slot)]
+		if not attachment in fits:
+			return "%s does not fit this weapon" % attachment.display_name
+		if attachment.suppresses and suppressed_shot_sounds.is_empty():
+			return "%s needs a suppressed shot this weapon does not have" % attachment.display_name
+		for key: StringName in attachment.changes:
+			if key in FIXED:
+				return "%s may not change %s" % [attachment.display_name, key]
+			if not typeof(get(key)) in [TYPE_INT, TYPE_FLOAT]:
+				return "%s changes %s, which is not a number on a Weapon Profile" % [attachment.display_name, key]
+	return ""
+
+
+## The Built Weapon: a fresh Weapon Profile, this one with every factor of
+## the Attachments in [param choice] (Slot to Attachment, or null for an
+## empty Slot) multiplied in, the limits applied, the lens mark and the
+## suppressed shot carried. Null if the choice is refused ([method
+## why_refused] says why). Neither this Profile nor any Attachment changes.
+## Typed Resource, not WeaponProfile: naming its own class here makes the
+## script hold itself, and a copy loaded apart from the cache (the Sandbox
+## sheet's [method SandboxSheet.from_disk]) then leaks at exit.
+func build(choice: Dictionary) -> Resource:
+	if why_refused(choice) != "":
+		return null
+	var built := duplicate()
+	built.bare = self
+	var factors := {}
+	for slot: Attachment.Slot in Attachment.Slot.values():
+		var attachment: Attachment = choice.get(slot)
+		if attachment == null:
+			continue
+		built.attachments.append(attachment)
+		built.aims_through_lens = built.aims_through_lens or attachment.lens
+		if attachment.suppresses:
+			built.shot_sounds = suppressed_shot_sounds.duplicate()
+		for key: StringName in attachment.changes:
+			factors[key] = factors.get(key, 1.0) * attachment.changes[key]
+	for key: StringName in factors:
+		var value: float = get(key) * factors[key]
+		if typeof(get(key)) == TYPE_INT:
+			built.set(key, maxi(roundi(value), 1))
+		elif key == &"ads_zoom":
+			built.set(key, maxf(value, 1.0))
+		elif key in NEVER_NEGATIVE:
+			built.set(key, maxf(value, 0.0))
+		else:
+			built.set(key, value)
+	return built
+
+
+## Builds this Built Weapon again, in place, from its bare Profile and the
+## Attachments fitted to it, so a number changed on either since is in it
+## and everything holding it (the Pirate's hand, the Raid) sees it at once.
+## Does nothing on a bare Profile, or if the build is now refused.
+func rebuild() -> void:
+	if bare == null:
+		return
+	var choice := {}
+	for attachment in attachments:
+		choice[attachment.slot] = attachment
+	var fresh: Resource = bare.build(choice)
+	if fresh == null:
+		return
+	for p: Dictionary in get_property_list():
+		if p.usage & PROPERTY_USAGE_SCRIPT_VARIABLE and p.usage & PROPERTY_USAGE_STORAGE:
+			set(p.name, fresh.get(p.name))
+	aims_through_lens = fresh.aims_through_lens
+
+
 ## What one bolt of [param damage] does on a head zone with
 ## [param multiplier]: the one rounding the Pirate's shots, crew shots and
 ## the Sandbox sheet share.
@@ -160,8 +309,27 @@ func racks_after(from_empty: bool) -> bool:
 	return from_empty and model_rack_clip != &"" and reload_empty > rack_time
 
 
+## How much the Pirate's own view zooms aimed: by `ads_zoom` with a gun's
+## own sights or a Reflex Sight, by [constant VIEW_AROUND_LENS] through a
+## scope's lens, which magnifies by `ads_zoom` itself.
+func view_zoom() -> float:
+	return VIEW_AROUND_LENS if aims_through_lens else ads_zoom
+
+
+## Aimed through a Sight Attachment (a scope's lens or the Reflex Sight)
+## rather than the gun's own sights.
+func aims_through_sight() -> bool:
+	return attachments.any(func(a: Attachment) -> bool: return a.slot == Attachment.Slot.SIGHT)
+
+
+## How fast the Viewmodel's pose and the zoom ease toward the sights and
+## back, per second: 95% of the way there in one aim time.
+func aim_ease_rate() -> float:
+	return AIM_EASE / maxf(aim_time, 0.001)
+
+
 ## How long the magazine swap itself takes: the reload, less the rack when
 ## there is one.
-func swap_time(from_empty: bool) -> float:
+func magazine_swap_time(from_empty: bool) -> float:
 	var total := reload_empty if from_empty else reload_tactical
 	return total - (rack_time if racks_after(from_empty) else 0.0)

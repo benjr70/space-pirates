@@ -1,4 +1,4 @@
-[gd_resource type="Resource" script_class="WeaponProfile" load_steps=9 format=3]
+[gd_resource type="Resource" script_class="WeaponProfile" load_steps=23 format=3]
 
 [ext_resource type="Script" path="res://scripts/weapon_profile.gd" id="1"]
 [ext_resource type="PackedScene" path="res://scenes/weapons/assault_rifle_model.tscn" id="2"]
@@ -8,6 +8,20 @@
 [ext_resource type="AudioStream" path="res://assets/audio/kurt_gunshots/shot_4.ogg" id="s4"]
 [ext_resource type="AudioStream" path="res://assets/audio/oga_reload/clipload1.ogg" id="r1"]
 [ext_resource type="AudioStream" path="res://assets/audio/oga_reload/clipload2.ogg" id="r2"]
+[ext_resource type="Resource" path="res://resources/attachments/reflex_sight.tres" id="at_reflex_sight"]
+[ext_resource type="Resource" path="res://resources/attachments/combat_scope.tres" id="at_combat_scope"]
+[ext_resource type="Resource" path="res://resources/attachments/suppressor.tres" id="at_suppressor"]
+[ext_resource type="Resource" path="res://resources/attachments/long_barrel.tres" id="at_long_barrel"]
+[ext_resource type="Resource" path="res://resources/attachments/short_barrel.tres" id="at_short_barrel"]
+[ext_resource type="Resource" path="res://resources/attachments/extended_magazine.tres" id="at_extended_magazine"]
+[ext_resource type="Resource" path="res://resources/attachments/quick_magazine.tres" id="at_quick_magazine"]
+[ext_resource type="Resource" path="res://resources/attachments/drum.tres" id="at_drum"]
+[ext_resource type="Resource" path="res://resources/attachments/foregrip.tres" id="at_foregrip"]
+[ext_resource type="Resource" path="res://resources/attachments/laser.tres" id="at_laser"]
+[ext_resource type="Resource" path="res://resources/attachments/bipod.tres" id="at_bipod"]
+[ext_resource type="Resource" path="res://resources/attachments/heavy_stock.tres" id="at_heavy_stock"]
+[ext_resource type="Resource" path="res://resources/attachments/light_stock.tres" id="at_light_stock"]
+[ext_resource type="AudioStream" path="res://assets/audio/suppressed_shots/assault_rifle_suppressed.ogg" id="ss1"]
 
 [resource]
 script = ExtResource("1")
@@ -31,6 +45,8 @@ ads_spread = 0.45
 ads_moving_spread = 0.585
 ads_zoom = 1.6
 ads_speed = 0.7
+aim_time = 0.22
+swap_time = 0.4
 recoil_push = 0.035
 recoil_kick_degrees = 3.0
 ads_recoil_push = 0.03
@@ -48,3 +64,5 @@ pose_low = Vector3(0.2, -0.3, -0.38)
 ads_distance = 0.265
 shot_sounds = Array[AudioStream]([ExtResource("s1"), ExtResource("s2"), ExtResource("s3"), ExtResource("s4")])
 reload_sounds = Array[AudioStream]([ExtResource("r1"), ExtResource("r2")])
+suppressed_shot_sounds = Array[AudioStream]([ExtResource("ss1")])
+fits = Array[Resource]([ExtResource("at_reflex_sight"), ExtResource("at_combat_scope"), ExtResource("at_suppressor"), ExtResource("at_long_barrel"), ExtResource("at_short_barrel"), ExtResource("at_extended_magazine"), ExtResource("at_quick_magazine"), ExtResource("at_drum"), ExtResource("at_foregrip"), ExtResource("at_laser"), ExtResource("at_bipod"), ExtResource("at_heavy_stock"), ExtResource("at_light_stock")])

@@ -164,7 +164,7 @@ func _on_dry_fired() -> void:
 func _on_reload_started(from_empty: bool) -> void:
 	_stop_reload_sequence()
 	var profile: WeaponProfile = _pirate.weapon
-	var swap := profile.swap_time(from_empty)
+	var swap := profile.magazine_swap_time(from_empty)
 	var reload := profile.reload_sounds
 	_play(_gun, &"mag_out", reload[0] if reload.size() > 0 else null)
 	_reload_sequence = create_tween()

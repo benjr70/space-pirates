@@ -149,6 +149,12 @@ kit.clip(armature, "rack", {
 
 kit.marker("Muzzle", (0, -0.131, BORE), pistol)
 kit.marker("SightTip", (0, -0.1125, 0.0330), pistol)
+# Where shared Attachments go: a Sight on the slide behind the rear sight, a
+# Suppressor on the muzzle, an Underbarrel on the rail. The magazine, the one
+# part an Attachment replaces, is already its own mesh on its own bone.
+kit.marker("MountSight", (0, 0.030, 0.0285), pistol)
+kit.marker("MountMuzzle", (0, -0.131, BORE), pistol)
+kit.marker("MountUnder", (0, -0.088, -0.0165), pistol)
 
 kit.export("pistol")
 kit.render("pistol")

@@ -15,13 +15,24 @@ extends SceneTree
 ##              low=x,y,z lowrot=x,y,z override the Viewmodel's poses;
 ##              pistol=1 scale=<f> rot=x,y,z pos=x,y,z hides the Holder and
 ##              mounts a fresh pistol.glb at that transform instead.
+##   attachments each gun bare and in two full builds of Attachments, held
+##              side-on and at the hip: <gun>_<bare|a|b>_<side|hip>.png.
+##   scoped     aimed through each scope's lens and the Reflex Sight down a
+##              long hall, each also with the gun 6 mm off its aimed pose;
+##              measures the reticle's centre and a 1 m target's span at 50 m.
 ##   ship       class=<small|medium|large> seed=<n>: one shot per Room from a
 ##              corner at eye height, room_<i>_<role>.png, plus overview.png.
 ##   crew       one of each crew type side by side, front.png and side.png.
 ##   hud        the in-Raid HUD with known values: hud.png, hud_busy.png.
-##   menu       the main menu's screens (home, classes) and the Raid's own
-##              (pause, death, extracted).
+##   menu       the main menu's screens (home, classes), the Loadout screen
+##              (loadout: bare; loadout_slot: a fitted Assault Rifle with its
+##              Underbarrel list open) and the Raid's own (pause, death,
+##              extracted).
 ##   scene      path=<res://...> cam=x,y,z look=x,y,z [fov=<deg>] [name=<png>]
+##   sheet      the Sandbox sheet (F1) open in a Raid carrying a fitted Loadout:
+##              sheet.png (strip and Weapons), sheet_attachments.png and
+##              sheet_attachments_end.png (the Attachments table, top and
+##              bottom, the Suppressor's loudness dialled to 0.5).
 ##
 ## Every preset takes out=<dir> (default res://.godot/shots/<preset>).
 ## Output lines the wrapper reads: `SHOT_EXPECT <file>` for each frame the
@@ -69,13 +80,16 @@ func _initialize() -> void:
 func _run() -> void:
 	match preset:
 		"viewmodel": await _viewmodel()
+		"attachments": await _attachments()
+		"scoped": await _scoped()
 		"ship": await _ship()
 		"crew": await _crew()
 		"hud": await _hud()
 		"menu": await _menu()
 		"scene": await _scene()
+		"sheet": await _sheet()
 		_:
-			printerr("shots: unknown preset '%s'; want viewmodel, ship, crew, hud, menu or scene" % preset)
+			printerr("shots: unknown preset '%s'; want viewmodel, attachments, scoped, ship, crew, hud, menu, scene or sheet" % preset)
 			failed = true
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(Profile.path))
 	print("SHOTS_DONE ", "fail" if failed else "ok")
@@ -109,7 +123,11 @@ func _viewmodel() -> void:
 		weapon.add_child(holder)
 	var wheel := int(args.get("wheel", "0"))
 	if wheel != 0:
-		player.swap_time = 0.0
+		# Drawn on the spot: a copy of the next weapon with no swap time.
+		var index := posmod(player.weapons.find(player.weapon) + wheel, player.weapons.size())
+		var drawn: WeaponProfile = player.weapons[index].duplicate()
+		drawn.swap_time = 0.0
+		player.weapons[index] = drawn
 		player.switch_weapon(wheel)
 	if args.has("hip"):
 		weapon.pose_hip = _v3(args.hip)
@@ -143,6 +161,246 @@ func _viewmodel() -> void:
 	await process_frame
 	await process_frame
 	_save("tracer")
+
+
+# --- attachments -----------------------------------------------------------
+
+## Per gun, two full builds (Slot to Attachment file stem) that between them
+## show every Attachment the gun takes but the Assault Rifle's Suppressor and
+## Extended Magazine, which the other guns show.
+const BUILDS := {
+	"pistol": [
+		["reflex_sight", "suppressor", "extended_magazine", "laser"],
+		["reflex_sight", "quick_magazine"],
+	],
+	"assault_rifle": [
+		["reflex_sight", "short_barrel", "quick_magazine", "laser", "heavy_stock"],
+		["combat_scope", "long_barrel", "drum", "bipod", "light_stock"],
+	],
+	"shotgun": [
+		["reflex_sight", "long_barrel", "foregrip", "heavy_stock"],
+		["short_barrel", "laser", "light_stock"],
+	],
+	"marksman_rifle": [
+		["long_scope", "suppressor", "extended_magazine", "foregrip", "heavy_stock"],
+		["long_scope", "long_barrel", "quick_magazine", "bipod", "light_stock"],
+	],
+}
+
+
+## Each gun bare and in its two builds, held side-on in front of the eye
+## (barrel left) and at the hip: `<gun>_<bare|a|b>_<side|hip>.png`.
+func _attachments() -> void:
+	var labels: Array = []
+	for gun: String in BUILDS:
+		for build in ["bare", "a", "b"]:
+			labels.append_array(["%s_%s_side" % [gun, build], "%s_%s_hip" % [gun, build]])
+	_expect(labels)
+	var world := _test_room()
+	var player: CharacterBody3D = load("res://scenes/player_3d.tscn").instantiate()
+	world.add_child(player)
+	player.position = Vector3.ZERO
+	var weapon: Viewmodel = player.get_node("Head/Camera3D/Weapon")
+	await process_frame
+	await process_frame
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	player.set_physics_process(false)
+	weapon.set_process(false)
+	for gun: String in BUILDS:
+		var bare: WeaponProfile = load("res://resources/weapons/%s.tres" % gun)
+		var at: int = player.weapons.find(bare)
+		var builds: Array = [[]]
+		builds.append_array(BUILDS[gun])
+		for i in builds.size():
+			var choice := {}
+			for file: String in builds[i]:
+				var attachment: Attachment = load("res://resources/attachments/%s.tres" % file)
+				choice[attachment.slot] = attachment
+			var built: WeaponProfile = bare.build(choice)
+			if built == null:
+				printerr("shots: %s refused %s" % [gun, builds[i]])
+				failed = true
+				continue
+			# Drawn on the spot: no swap dip.
+			built.swap_time = 0.0
+			player.weapons[at] = built
+			player.weapon = built
+			var label := "%s_%s" % [gun, ["bare", "a", "b"][i]]
+			# Side-on, barrel to the left, the long guns held further off.
+			var long_gun := gun != "pistol"
+			weapon.position = Vector3(0.12, -0.03, -1.45) if long_gun else Vector3(-0.05, 0.0, -0.66)
+			weapon.basis = Basis(Vector3.UP, -PI / 2)
+			await _snap(label + "_side")
+			weapon.position = weapon.pose_hip
+			weapon.rotation_degrees = weapon.rotation_hip
+			await _snap(label + "_hip")
+		player.weapons[at] = bare
+
+
+# --- scoped ----------------------------------------------------------------
+
+## Each Sight aimed through, by gun and Attachment file stem, as
+## `<label>.png` and `<label>_shifted.png`.
+const SCOPED := [
+	["long_scope", "marksman_rifle", "long_scope"],
+	["combat_scope", "assault_rifle", "combat_scope"],
+	["reflex", "assault_rifle", "reflex_sight"],
+]
+## How far the gun is pushed off its aimed pose for the shifted shots.
+const SCOPED_SHIFT := 0.006
+## The reticle's centre on the screen's centre within this many pixels, and
+## the target's span in the lens within this share of what the lens's zoom
+## gives (`.scratch/weapon-attachments/issues/20-scoped-view-and-reflex-sight.md`).
+const RETICLE_TOLERANCE := 2.0
+const SPAN_TOLERANCE := 0.05
+## The target: 1 m wide at 50 m, pure blue and unlit, at eye height.
+const TARGET_RANGE := 50.0
+const TARGET_WIDTH := 1.0
+
+
+## Down a long lit hall with a blue board 1 m wide at 50 m, aimed through the
+## Long Scope, the Combat Scope and the Reflex Sight, each also with the gun
+## shifted 6 mm off its aimed pose. Each frame's reticle centre is measured
+## against the screen's centre, and in the lens the board's span against what
+## the lens's zoom should give; either out of tolerance fails the frame.
+func _scoped() -> void:
+	var labels: Array = []
+	for case: Array in SCOPED:
+		labels.append_array([case[0], case[0] + "_shifted"])
+	_expect(labels)
+	var world := _hall()
+	var player: CharacterBody3D = load("res://scenes/player_3d.tscn").instantiate()
+	world.add_child(player)
+	player.position = Vector3.ZERO
+	var weapon: Viewmodel = player.get_node("Head/Camera3D/Weapon")
+	await process_frame
+	await process_frame
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	player.set_physics_process(false)
+	weapon.set_process(false)
+	var hip_tan := tan(deg_to_rad(player.hip_fov()) * 0.5)
+	for case: Array in SCOPED:
+		var bare: WeaponProfile = load("res://resources/weapons/%s.tres" % case[1])
+		var attachment: Attachment = load("res://resources/attachments/%s.tres" % case[2])
+		var built: WeaponProfile = bare.build({attachment.slot: attachment})
+		built.swap_time = 0.0
+		player.weapons[player.weapons.find(bare)] = built
+		player.weapon = built
+		# Sights all the way up, the view zoomed as aiming leaves it.
+		player.ads = true
+		player.aim_progress = 1.0
+		player.camera.fov = rad_to_deg(2.0 * atan(hip_tan / built.view_zoom()))
+		weapon.rotation_degrees = weapon.rotation_hip
+		for shifted in [false, true]:
+			var label: String = case[0] + ("_shifted" if shifted else "")
+			var shift := Vector3(1, -1, 0).normalized() * SCOPED_SHIFT if shifted else Vector3.ZERO
+			weapon.position = weapon.pose_ads + shift
+			print("shots: %s: %s with %s, view zoom %.2fx, lens zoom %s, gun shifted %s" % [label, case[1], case[2],
+					built.view_zoom(), "%.2fx" % built.ads_zoom if built.aims_through_lens else "none", shift])
+			await _snap(label)
+			var img := root.get_viewport().get_texture().get_image()
+			_measure_reticle(label, img)
+			if built.aims_through_lens:
+				var want := TARGET_WIDTH / TARGET_RANGE * built.ads_zoom / hip_tan * img.get_height() * 0.5
+				_measure_span(label, img, want)
+		player.weapons[player.weapons.find(built)] = bare
+		player.ads = false
+		player.aim_progress = 0.0
+
+
+## The red reticle's centre (a weighted centroid of red within 12 px of the
+## middle) on the screen's centre within RETICLE_TOLERANCE pixels.
+func _measure_reticle(label: String, img: Image) -> void:
+	var middle := Vector2(img.get_width(), img.get_height()) * 0.5
+	var sum := Vector2.ZERO
+	var weight := 0.0
+	for y in range(int(middle.y) - 12, int(middle.y) + 12):
+		for x in range(int(middle.x) - 12, int(middle.x) + 12):
+			var c := img.get_pixel(x, y)
+			var red := c.r - maxf(c.g, c.b)
+			if c.r > 0.5 and red > 0.3:
+				sum += Vector2(x + 0.5, y + 0.5) * red
+				weight += red
+	if weight == 0.0:
+		print("SHOT_FAIL %s.png: no red reticle within 12 px of the middle" % label)
+		failed = true
+		return
+	var centre := sum / weight
+	var off := centre.distance_to(middle)
+	print("SHOT_MEASURE %s.png: reticle centre %s, screen centre %s, off by %.2f px (want within %.1f)" % [
+			label, centre, middle, off, RETICLE_TOLERANCE])
+	if off > RETICLE_TOLERANCE:
+		print("SHOT_FAIL %s.png: the reticle's centre is %.2f px off the screen's centre" % [label, off])
+		failed = true
+
+
+## The blue target's span in the lens, read along a row 5 px above the
+## middle (clear of the cross's arms and centre dot), over the unbroken run
+## of blue pixels through the middle: each counts by how blue it is against
+## the bluest, in linear light, so a part-covered edge pixel counts by the
+## share it covers. Within SPAN_TOLERANCE of [param want] pixels.
+func _measure_span(label: String, img: Image, want: float) -> void:
+	var y := img.get_height() / 2 - 5
+	var middle := img.get_width() / 2
+	var bluest := _blueness(img.get_pixel(middle, y))
+	if bluest < 0.3:
+		print("SHOT_FAIL %s.png: no blue target in the middle of the lens" % label)
+		failed = true
+		return
+	var span := 0.0
+	for step in [-1, 1]:
+		var x: int = middle if step == 1 else middle - 1
+		while x >= 0 and x < img.get_width():
+			var blue := _blueness(img.get_pixel(x, y))
+			if blue < 0.05 * bluest:
+				break
+			span += blue / bluest
+			x += step
+	var share := span / want - 1.0
+	print("SHOT_MEASURE %s.png: target spans %.1f px in the lens, want %.1f, off by %.1f%% (want within %.0f%%)" % [
+			label, span, want, share * 100.0, SPAN_TOLERANCE * 100.0])
+	if absf(share) > SPAN_TOLERANCE:
+		print("SHOT_FAIL %s.png: the target spans %.1f px in the lens, want %.1f" % [label, span, want])
+		failed = true
+
+
+## How much bluer than red or green [param c] is, in linear light.
+static func _blueness(c: Color) -> float:
+	var linear := c.srgb_to_linear()
+	return maxf(linear.b - maxf(linear.r, linear.g), 0.0)
+
+
+## A lit hall 12 m wide running 90 m ahead (-Z), crates and two crew along
+## it, and the blue target board 1 m wide at 50 m on a pale wall just behind.
+func _hall() -> Node3D:
+	var world := Node3D.new()
+	root.add_child(world)
+	_box(world, Vector3(12, 0.2, 100), Vector3(0, -0.1, -40), Color(0.35, 0.36, 0.4))
+	_box(world, Vector3(12, 0.2, 100), Vector3(0, 4.1, -40), Color(0.3, 0.3, 0.32))
+	_box(world, Vector3(0.2, 4, 100), Vector3(-6, 2, -40), Color(0.45, 0.47, 0.5))
+	_box(world, Vector3(0.2, 4, 100), Vector3(6, 2, -40), Color(0.5, 0.48, 0.45))
+	_box(world, Vector3(12, 4, 0.2), Vector3(0, 2, -90), Color(0.5, 0.55, 0.6))
+	_box(world, Vector3(6, 3, 0.2), Vector3(0, 1.5, -(TARGET_RANGE + 1.0)), Color(0.8, 0.8, 0.78))
+	for at in [Vector3(-3.5, 0.5, -6), Vector3(3, 0.5, -14), Vector3(-2.5, 0.5, -25), Vector3(2.5, 0.5, -38)]:
+		_box(world, Vector3(1, 1, 1), at, Color(0.6, 0.45, 0.3))
+	for i in 2:
+		var crew: Crew3D = load("res://scenes/crew_3d.tscn").instantiate()
+		crew.position = Vector3(-1.6 + i * 3.4, 0.0, -9.0 - i * 9.0)
+		world.add_child(crew)
+		crew.set_physics_process(false)
+		crew.face_direction(Vector3.BACK)
+	var board := MeshInstance3D.new()
+	var quad := QuadMesh.new()
+	quad.size = Vector2(TARGET_WIDTH, 1.0)
+	board.mesh = quad
+	var unlit := StandardMaterial3D.new()
+	unlit.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	unlit.albedo_color = Color(0, 0, 1)
+	board.material_override = unlit
+	board.position = Vector3(0, 1.6, -TARGET_RANGE)
+	world.add_child(board)
+	_light(world)
+	return world
 
 
 # --- ship ------------------------------------------------------------------
@@ -307,13 +565,14 @@ func _hud() -> void:
 
 
 func _menu() -> void:
-	_expect(["home", "classes", "pause", "death", "extracted"])
+	_expect(["home", "classes", "loadout", "loadout_slot", "pause", "death", "extracted"])
 	var menu: Node3D = load(Raid.MENU_SCENE).instantiate()
 	root.add_child(menu)
 	await _snap("home")
 	var column := menu.get_node("UI/Root/Column")
 	(column.get_node("Home/Play") as Button).pressed.emit()
 	await _snap("classes")
+	await _loadout_shots(menu)
 	root.remove_child(menu)
 	menu.free()
 
@@ -331,6 +590,58 @@ func _menu() -> void:
 	await _snap("death", 0.8)
 	end.show_extracted("Out in 3:12\n+240 gold  +400 XP")
 	await _snap("extracted", 0.8)
+
+
+## The Loadout screen opened from the home list: the default Loadout bare,
+## then the Assault Rifle fitted all round with its Underbarrel list open.
+## Saves only into the preset's throwaway Profile.
+func _loadout_shots(menu: Node) -> void:
+	(menu.get_node("UI/Root/Column/Classes/Back") as Button).pressed.emit()
+	(menu.get_node("UI/Root/Column/Home/Loadout") as Button).pressed.emit()
+	await _snap("loadout")
+	var screen: LoadoutScreen = menu.get_node("UI/LoadoutScreen")
+	screen.choose_place(1)
+	for fit: Array in [[Attachment.Slot.SIGHT, "combat_scope"], [Attachment.Slot.BARREL, "suppressor"],
+			[Attachment.Slot.MAGAZINE, "drum"], [Attachment.Slot.UNDERBARREL, "laser"], [Attachment.Slot.STOCK, "light_stock"]]:
+		screen.toggle_slot(fit[0])
+		screen.fit(load("res://resources/attachments/%s.tres" % fit[1]))
+	screen.toggle_slot(Attachment.Slot.UNDERBARREL)
+	await _snap("loadout_slot")
+	screen.leave()
+
+
+# --- sheet -----------------------------------------------------------------
+
+## The Sandbox sheet over a Raid carrying the Assault Rifle with a Suppressor
+## and a Drum, then the Pistol: Built Weapon values beside the bare ones.
+## Nothing is saved; the dialled factor is reverted before the end.
+func _sheet() -> void:
+	_expect(["sheet", "sheet_attachments", "sheet_attachments_end"])
+	var rifle: WeaponProfile = load("res://resources/weapons/assault_rifle.tres")
+	var loadout := Loadout.new()
+	loadout.set_first(rifle)
+	loadout.set_second(load("res://resources/weapons/pistol.tres"))
+	loadout.set_attachment(rifle, Attachment.Slot.BARREL, load("res://resources/attachments/suppressor.tres"))
+	loadout.set_attachment(rifle, Attachment.Slot.MAGAZINE, load("res://resources/attachments/drum.tres"))
+	Raid.ship_class = &"small"
+	Raid.seed = 1
+	Raid.arm(loadout)
+	var main := await _hud_raid()
+	var view: SandboxSheetView = main.get_node("SandboxSheet")
+	view.open()
+	await _snap("sheet")
+	var table := view.sheet.table(SandboxSheet.ATTACHMENTS)
+	(view.cell(SandboxSheet.ATTACHMENTS, &"loudness", table.columns.find("Suppressor")) as SpinBox).value = 0.5
+	var scroll: ScrollContainer = view.find_child("Scroll", true, false)
+	await process_frame
+	var tables := scroll.get_child(0)
+	scroll.scroll_vertical = int(tables.get_child(tables.get_child_count() - 1).position.y)
+	await _snap("sheet_attachments")
+	scroll.scroll_vertical = int(scroll.get_v_scroll_bar().max_value)
+	await _snap("sheet_attachments_end")
+	view.revert_button().pressed.emit()
+	Raid.seed = 0
+	Raid.weapons = []
 
 
 # --- scene -----------------------------------------------------------------

@@ -13,17 +13,28 @@ const SEED_MAX := 999_999_999
 static var ship_class: StringName = &""
 ## Zero while no Raid is on: the ship scene then falls back to its own source.
 static var seed := 0
+## The two Built Weapons of the Loadout this Raid was started with, first in
+## hand. Empty when no Raid from the menu is on: the Pirate then keeps the
+## weapons his scene gives him.
+static var weapons: Array[WeaponProfile] = []
 
 
-## Rolls a fresh target of this Class and boards it.
+## Rolls a fresh target of this Class and boards it with the saved Loadout.
 static func start(chosen_class: StringName) -> void:
 	assert(chosen_class in ShipGenerator.CLASSES, "unknown ship class %s" % chosen_class)
 	ship_class = chosen_class
 	seed = randi_range(1, SEED_MAX)
+	arm(Loadout.load_saved())
 	_tree().change_scene_to_file(RAID_SCENE)
 
 
-## Boards the same target again, rebuilt from its seed.
+## Builds [param loadout]'s two Built Weapons for the Raid to carry.
+static func arm(loadout: Loadout) -> void:
+	weapons = loadout.build_weapons()
+
+
+## Boards the same target again, rebuilt from its seed, with the same two
+## Built Weapons.
 static func retry() -> void:
 	_tree().change_scene_to_file(RAID_SCENE)
 
@@ -38,6 +49,7 @@ static func new_raid() -> void:
 static func to_menu() -> void:
 	ship_class = &""
 	seed = 0
+	weapons = []
 	_tree().change_scene_to_file(MENU_SCENE)
 
 

@@ -130,6 +130,7 @@ func _run() -> void:
 	await _check_weapon_wheel()
 	await _check_swap_is_busy()
 	await _check_weapon_keys()
+	await _check_loadout()
 	await _check_assault_rifle_full_auto()
 	await _check_assault_rifle_model()
 	await _check_shotgun_pellets()
@@ -151,6 +152,12 @@ func _run() -> void:
 	await _check_aimed_sway()
 	await _check_mouse_slowed_by_zoom()
 	await _check_descope_recovery()
+	_check_aim_and_swap_numbers()
+	await _check_aim_time_pose()
+	await _check_aim_time_cone()
+	await _check_shot_halfway_up()
+	await _check_descope_full_aim_time()
+	await _check_swap_time_of_drawn()
 	await _check_melee_cone()
 	await _check_melee_lunge()
 	await _check_melee_back_hit()
@@ -164,6 +171,10 @@ func _run() -> void:
 	await _check_viewmodel_recoil()
 	await _check_viewmodel_descope()
 	_check_clips_exist()
+	GunModelChecks.run(_expect)
+	await AttachmentModelChecks.run(self)
+	await ScopedViewChecks.run(self)
+	await LaserDotChecks.run(self)
 	await _check_clips_play()
 	await _check_clips_follow_profile()
 	await _check_holder_model()
@@ -180,6 +191,7 @@ func _run() -> void:
 	await _check_crew_shot_sound()
 	await _check_bolt_reach()
 	await _check_hit_markers()
+	await _check_down_ends_his_kills()
 	await _check_tracer()
 	await _check_crew_models()
 	_report()
@@ -767,7 +779,7 @@ func _check_weapon_wheel() -> void:
 	await _wheel(&"weapon_next")
 	_expect(player.weapon == ASSAULT_RIFLE, "wheel down did not bring up the Assault Rifle")
 	_expect(player.ammo == ASSAULT_RIFLE.magazine_size, "the Assault Rifle came up with %d rounds, not a full %d" % [player.ammo, ASSAULT_RIFLE.magazine_size])
-	await _seconds(player.swap_time + 0.05)
+	await _seconds(player.weapon.swap_time + 0.05)
 	_expect(_fire_and_drop(), "no shot from the Assault Rifle after the swap")
 	await _wheel(&"weapon_next")
 	_expect(player.weapon == SHOTGUN, "a second turn did not bring up the Shotgun")
@@ -810,8 +822,8 @@ func _check_swap_is_busy() -> void:
 	_expect(player.fire() == null, "a shot went off mid-swap")
 	await _frames(3)
 	_expect(not player.ads, "the sights came up mid-swap")
-	await _seconds(player.swap_time + 0.1)
-	_expect(not player.is_swapping(), "the swap outlasted its %.1f s" % player.swap_time)
+	await _seconds(player.weapon.swap_time + 0.1)
+	_expect(not player.is_swapping(), "the swap outlasted its %.1f s" % player.weapon.swap_time)
 	_expect(player.ads, "held aim did not come back after the swap")
 	_expect(_fire_and_drop(), "no shot after the swap")
 	await _aim(false)
@@ -840,10 +852,10 @@ func _check_weapon_keys() -> void:
 		await _wheel(StringName("weapon_%d" % (i + 1)))
 		_expect(player.weapon == wanted[i], "key %d brought up %s" % [i + 1, player.weapon.resource_path.get_file()])
 		_expect(player.is_swapping() and player.fire() == null, "the swap to key %d was not busy" % (i + 1))
-		await _seconds(player.swap_time - 0.1)
-		_expect(player.is_swapping(), "the swap to key %d ended before %.1f s" % [i + 1, player.swap_time])
+		await _seconds(player.weapon.swap_time - 0.1)
+		_expect(player.is_swapping(), "the swap to key %d ended before %.1f s" % [i + 1, player.weapon.swap_time])
 		await _seconds(0.15)
-		_expect(not player.is_swapping(), "the swap to key %d outlasted %.1f s" % [i + 1, player.swap_time])
+		_expect(not player.is_swapping(), "the swap to key %d outlasted %.1f s" % [i + 1, player.weapon.swap_time])
 	await _dummy(100, 6.0)
 	await _swing()
 	await _wheel(&"weapon_4")
@@ -852,13 +864,25 @@ func _check_weapon_keys() -> void:
 	await _clear_dummy()
 	await _place(RUNWAY)
 
+## The Loadout and a Raid from the menu carrying it (`LoadoutChecks`), and
+## the Loadout screen that sets it (`LoadoutScreenChecks`). The
+## course is switched off meanwhile, so the number keys and the wheel reach
+## only the Raid's Pirate.
+func _check_loadout() -> void:
+	world.process_mode = Node.PROCESS_MODE_DISABLED
+	await LoadoutChecks.run(_expect, self)
+	await LoadoutScreenChecks.run(_expect, self)
+	world.process_mode = Node.PROCESS_MODE_INHERIT
+	await _place(RUNWAY)
+
+
 ## The Assault Rifle is fully automatic: a held trigger keeps firing at its
 ## interval, where the Pistol fires once.
 func _check_assault_rifle_full_auto() -> void:
 	var pistol: WeaponProfile = player.weapon
 	await _place(RUNWAY)
 	player.switch_weapon(1)
-	await _seconds(player.swap_time + 0.05)
+	await _seconds(player.weapon.swap_time + 0.05)
 	_expect(not ASSAULT_RIFLE.semi_auto, "the Assault Rifle's Profile is semi-automatic")
 	shots_fired = 0
 	Input.action_press("shoot")
@@ -867,6 +891,15 @@ func _check_assault_rifle_full_auto() -> void:
 	var wanted := int(1.0 / ASSAULT_RIFLE.fire_interval)
 	_expect(absi(shots_fired - wanted) <= 2, "a second of held trigger fired %d shots, about %d expected" % [shots_fired, wanted])
 	_expect(player.ammo == ASSAULT_RIFLE.magazine_size - shots_fired, "the Assault Rifle spent %d rounds on %d shots" % [ASSAULT_RIFLE.magazine_size - player.ammo, shots_fired])
+	# Held fire's bloom settles instead of piling up shot on shot, and all of
+	# it is gone `bloom_decay_seconds` after the last shot, however many came
+	# before.
+	var base := ASSAULT_RIFLE.spread_base_degrees * ASSAULT_RIFLE.spread_still
+	_expect(player.spread_degrees() < base + 5.0 * ASSAULT_RIFLE.bloom_per_shot_degrees,
+			"a second of held fire bloomed the cone to %.2f deg from %.2f" % [player.spread_degrees(), base])
+	await _seconds(ASSAULT_RIFLE.bloom_decay_seconds + 0.05)
+	_expect(is_equal_approx(player.spread_degrees(), base),
+			"%.2f s after a burst the cone is still %.2f deg, not %.2f" % [ASSAULT_RIFLE.bloom_decay_seconds, player.spread_degrees(), base])
 	await _frames(2)
 	_clear_shots()
 	player.switch_weapon(-1)
@@ -882,7 +915,7 @@ func _check_assault_rifle_model() -> void:
 	var pistol_clips: AnimationPlayer = weapon.model_clips
 	var pistol_muzzle: Vector3 = player.muzzle.position
 	player.switch_weapon(1)
-	await _seconds(player.swap_time + 0.3)
+	await _seconds(player.weapon.swap_time + 0.3)
 	var anim: AnimationPlayer = weapon.model_clips
 	_expect(anim != null and anim != pistol_clips, "the Assault Rifle did not bring its own clips")
 	if anim != null:
@@ -935,7 +968,7 @@ func _check_assault_rifle_model() -> void:
 	await _aim(false)
 	_clear_shots()
 	player.switch_weapon(-1)
-	await _seconds(player.swap_time + 0.3)
+	await _seconds(player.weapon.swap_time + 0.3)
 	_expect(player.weapon == pistol and weapon.model_clips == pistol_clips, "the pistol's mesh did not come back")
 	_expect(player.muzzle.position.is_equal_approx(pistol_muzzle), "the muzzle did not go back to the pistol's")
 	await _place(RUNWAY)
@@ -1280,7 +1313,7 @@ func _pellet_angles() -> Array[float]:
 ## Round the wheel to [param profile], and the swap waited out.
 func _hold(profile: WeaponProfile) -> void:
 	player.switch_weapon(player.weapons.find(profile) - player.weapons.find(player.weapon))
-	await _seconds(player.swap_time + 0.3)
+	await _seconds(player.weapon.swap_time + 0.3)
 	_expect(player.weapon == profile, "the wheel did not reach %s" % profile.resource_path.get_file())
 
 
@@ -1524,7 +1557,7 @@ func _check_shell_reload() -> void:
 	ended.clear()
 	player.switch_weapon(-1)
 	_expect(not player.is_reloading() and ended == [true], "the reload survived a swap (ended %s)" % [ended])
-	await _seconds(player.swap_time + 0.1)
+	await _seconds(player.weapon.swap_time + 0.1)
 	await _hold(SHOTGUN)
 	_expect(player.ammo == 2, "a swap left %d shells, not 2" % player.ammo)
 	_expect(shots_fired == 0, "a Melee or swap fired a shot")
@@ -1737,6 +1770,7 @@ func _stance_cones(profile: WeaponProfile) -> Dictionary:
 		await _place(RUNWAY)
 		if aimed:
 			await _aim(true)
+			await _seconds(profile.aim_time)
 		await _frames(2)
 		cones[tag + "still"] = player.spread_degrees()
 		Input.action_press("move_up")
@@ -1916,6 +1950,204 @@ func _check_descope_recovery() -> void:
 	_expect(player.ads, "the sights did not rise as the melee cycle ended")
 	await _aim(false)
 	await _clear_dummy()
+
+
+## --- aim time and swap time ---
+
+## Each bare gun's aim time and swap time, from the spec, exactly.
+func _check_aim_and_swap_numbers() -> void:
+	var wanted := [[player.weapons[0], "Pistol", 0.15, 0.30], [ASSAULT_RIFLE, "Assault Rifle", 0.22, 0.40],
+			[SHOTGUN, "Shotgun", 0.22, 0.45], [MARKSMAN_RIFLE, "Marksman Rifle", 0.32, 0.50]]
+	for row: Array in wanted:
+		var profile: WeaponProfile = row[0]
+		_expect(is_equal_approx(profile.aim_time, row[2]), "the %s's aim time is %.3f s, spec says %.2f" % [row[1], profile.aim_time, row[2]])
+		_expect(is_equal_approx(profile.swap_time, row[3]), "the %s's swap time is %.3f s, spec says %.2f" % [row[1], profile.swap_time, row[3]])
+	_expect(not "swap_time" in player, "the Pirate still keeps a swap time of his own")
+
+
+## Holds [param profile] at rest at the hip, presses aim and returns on the
+## first frame the sights are up: by then the Pirate and the Viewmodel have
+## each taken one frame of the rise, and each physics frame after is one more.
+func _start_aim(profile: WeaponProfile) -> void:
+	if player.weapon != profile:
+		await _hold(profile)
+	await _place(RUNWAY)
+	player.head.rotation.x = 0.0
+	await _seconds(0.3)
+	Input.action_press("aim")
+	for i in 10:
+		if player.ads:
+			break
+		await physics_frame
+	_expect(player.ads, "%s: the sights did not come up" % profile.resource_path.get_file())
+
+
+## Frames, counting the one already taken, until the Viewmodel is within 5%
+## of the aimed pose, measured from where it started.
+func _frames_to_aimed_pose(from: Vector3) -> int:
+	var aimed: Vector3 = weapon.pose_ads
+	var steps := 1
+	while weapon.position.distance_to(aimed) > 0.05 * from.distance_to(aimed) and steps < 120:
+		await physics_frame
+		steps += 1
+	return steps
+
+
+## Holding aim from the hip, each gun's Viewmodel is within 5% of its aimed
+## pose at its aim time, and the zoom with it, each within 10% of that time.
+func _check_aim_time_pose() -> void:
+	for profile: WeaponProfile in player.weapons:
+		var label := profile.resource_path.get_file()
+		await _start_aim(profile)
+		var hip: Vector3 = weapon.pose_hip
+		# The hip view is 75 degrees (`_check_ads_numbers`); the camera has
+		# already taken a frame of the zoom by now.
+		var hip_fov := 75.0
+		var zoomed_fov := rad_to_deg(2.0 * atan(tan(deg_to_rad(hip_fov) / 2.0) / profile.ads_zoom))
+		_expect(not weapon.position.is_equal_approx(hip), "%s: the Viewmodel had not started up with the sights" % label)
+		var pose_steps := -1
+		var zoom_steps := -1
+		for steps in range(1, 120):
+			if pose_steps < 0 and weapon.position.distance_to(weapon.pose_ads) <= 0.05 * hip.distance_to(weapon.pose_ads):
+				pose_steps = steps
+			if zoom_steps < 0 and absf(player.camera.fov - zoomed_fov) <= 0.05 * absf(hip_fov - zoomed_fov):
+				zoom_steps = steps
+			if pose_steps > 0 and zoom_steps > 0:
+				break
+			await physics_frame
+		var pose_t := pose_steps * FRAME
+		var zoom_t := zoom_steps * FRAME
+		_expect(absf(pose_t - profile.aim_time) <= 0.1 * profile.aim_time,
+				"%s: the Viewmodel came within 5%% of the sights in %.3f s, aim time %.2f s +-10%%" % [label, pose_t, profile.aim_time])
+		_expect(absf(zoom_t - profile.aim_time) <= 0.1 * profile.aim_time,
+				"%s: the zoom came within 5%% in %.3f s, aim time %.2f s +-10%%" % [label, zoom_t, profile.aim_time])
+		# And down again at the same rate.
+		Input.action_release("aim")
+		var aimed: Vector3 = weapon.position
+		await physics_frame
+		var down_steps := 1
+		while weapon.position.distance_to(hip) > 0.05 * aimed.distance_to(hip) and down_steps < 120:
+			await physics_frame
+			down_steps += 1
+		_expect(absf(down_steps * FRAME - profile.aim_time) <= 0.1 * profile.aim_time,
+				"%s: the Viewmodel came back within 5%% of the hip in %.3f s, aim time %.2f s" % [label, down_steps * FRAME, profile.aim_time])
+	await _hold(player.weapons[0])
+	await _place(RUNWAY)
+
+
+## The Assault Rifle's aimed-still cone rises in a straight line over its
+## aim time: 1.2 degrees at the hip, halfway (0.87) halfway up within 10%,
+## and the aimed 0.54 at the aim time within 2%; it falls back the same way.
+func _check_aim_time_cone() -> void:
+	var rifle := ASSAULT_RIFLE
+	await _hold(rifle)
+	await _place(RUNWAY)
+	await _seconds(0.3)
+	_expect(is_equal_approx(player.spread_degrees(), 1.2), "the Assault Rifle's hip cone is %.3f deg, not 1.2" % player.spread_degrees())
+	await _start_aim(rifle)
+	var half_steps := roundi(rifle.aim_time * 0.5 / FRAME)
+	var full_steps := roundi(rifle.aim_time / FRAME)
+	var cones := {}
+	for steps in range(1, full_steps + 1):
+		cones[steps] = player.spread_degrees()
+		await physics_frame
+	var halfway := (1.2 + 0.54) * 0.5
+	_expect(absf(cones[half_steps] - halfway) <= 0.1 * halfway,
+			"%.3f s up the Assault Rifle's cone is %.3f deg, halfway is %.3f +-10%%" % [half_steps * FRAME, cones[half_steps], halfway])
+	_expect(absf(cones[full_steps] - 0.54) <= 0.02 * 0.54,
+			"at its %.2f s aim time (%.3f s) the Assault Rifle's cone is %.3f deg, aimed is 0.54 +-2%%" % [rifle.aim_time, full_steps * FRAME, cones[full_steps]])
+	var rising := true
+	for steps in range(2, full_steps + 1):
+		rising = rising and cones[steps] < cones[steps - 1]
+	_expect(rising, "the Assault Rifle's cone did not narrow every frame of the rise: %s" % [cones.values()])
+	await _seconds(0.3)
+	Input.action_release("aim")
+	await _seconds(rifle.aim_time * 0.5)
+	var falling: float = player.spread_degrees()
+	_expect(falling > 0.6 and falling < 1.15, "half an aim time after the sights drop the cone is %.3f deg, not on its way back" % falling)
+	await _seconds(rifle.aim_time)
+	_expect(is_equal_approx(player.spread_degrees(), 1.2), "an aim time after the sights drop the cone is %.3f deg, not the hip's 1.2" % player.spread_degrees())
+	await _hold(player.weapons[0])
+	await _place(RUNWAY)
+
+
+## A shot fired halfway up is allowed and counts: it goes off, spends a
+## round, signals, lands on a body 6 m ahead, and leaves a cone halfway
+## between the hip's and the aimed one.
+func _check_shot_halfway_up() -> void:
+	var rifle := ASSAULT_RIFLE
+	await _hold(rifle)
+	await _dummy(100, 6.0)
+	await _start_aim(rifle)
+	await _frames(roundi(rifle.aim_time * 0.5 / FRAME) - 1)
+	var cone: float = player.spread_degrees()
+	var rounds: int = player.ammo
+	var shot: Projectile3D = player.fire()
+	_expect(shot != null, "a shot halfway up the sights was refused")
+	_expect(player.ammo == rounds - 1 and shots_fired == 1, "the shot halfway up spent %d rounds and signalled %d shots" % [rounds - player.ammo, shots_fired])
+	_expect(cone > 0.54 and cone < 1.2 and absf(cone - 0.87) <= 0.087, "the shot halfway up went off in a %.3f deg cone, not about 0.87" % cone)
+	await _seconds(0.3)
+	_expect(dummy.health.current == 75 and hits_landed.size() == 1, "the shot halfway up did not land (dummy at %d)" % dummy.health.current)
+	Input.action_release("aim")
+	await _clear_dummy()
+	_clear_shots()
+	await _hold(player.weapons[0])
+	await _place(RUNWAY)
+
+
+## After a Descope the sights wait out the recovery, then come up over the
+## Marksman Rifle's full 0.32 s aim time, within 10%.
+func _check_descope_full_aim_time() -> void:
+	var rifle := MARKSMAN_RIFLE
+	await _start_aim(rifle)
+	await _seconds(0.5)
+	player.take_damage(1)
+	await _frames(1)
+	_expect(not player.ads, "the hit did not descope")
+	var frames := 0
+	while not player.ads and frames < 120:
+		await physics_frame
+		frames += 1
+	_expect(absf(frames * FRAME - player.descope_recovery) <= 2 * FRAME,
+			"the sights came back %.3f s after the hit, the recovery is %.2f s" % [frames * FRAME, player.descope_recovery])
+	var steps: int = await _frames_to_aimed_pose(weapon.pose_hip)
+	_expect(absf(steps * FRAME - rifle.aim_time) <= 0.1 * rifle.aim_time,
+			"after the Descope the sights came back in %.3f s, aim time %.2f s +-10%%" % [steps * FRAME, rifle.aim_time])
+	Input.action_release("aim")
+	await _hold(player.weapons[0])
+	await _place(RUNWAY)
+
+
+## Seconds a fresh swap holds the trigger: fire is tried every frame until
+## one goes off.
+func _seconds_until_fire() -> float:
+	var frames := 0
+	while not _fire_and_drop() and frames < 120:
+		await physics_frame
+		frames += 1
+	return frames * FRAME
+
+
+## A swap takes the swap time of the weapon being drawn: Pistol to Marksman
+## Rifle blocks fire for 0.50 s, and back to the Pistol for 0.30 s, each to
+## the frame: fire comes back on the frame the swap time is up, not one late.
+func _check_swap_time_of_drawn() -> void:
+	var pistol: WeaponProfile = player.weapons[0]
+	await _hold(pistol)
+	await _place(RUNWAY)
+	player.select_weapon(player.weapons.find(MARKSMAN_RIFLE))
+	_expect(player.weapon == MARKSMAN_RIFLE, "no swap to the Marksman Rifle")
+	var blocked := await _seconds_until_fire()
+	_expect(absf(blocked - MARKSMAN_RIFLE.swap_time) < FRAME / 2.0,
+			"Pistol to Marksman Rifle blocked fire %.3f s, wanted its swap time %.3f s to the frame" % [blocked, MARKSMAN_RIFLE.swap_time])
+	await _seconds(MARKSMAN_RIFLE.fire_interval + 0.05)
+	player.select_weapon(0)
+	_expect(player.weapon == pistol, "no swap back to the Pistol")
+	blocked = await _seconds_until_fire()
+	_expect(absf(blocked - pistol.swap_time) < FRAME / 2.0,
+			"Marksman Rifle to Pistol blocked fire %.3f s, wanted its swap time %.3f s to the frame" % [blocked, pistol.swap_time])
+	_clear_shots()
+	await _place(RUNWAY)
 
 
 ## --- reporting ---
@@ -2687,7 +2919,7 @@ func _check_audio_events() -> void:
 	# The Assault Rifle sounds its own shot, not the Pistol's.
 	await _seconds(0.2)
 	player.switch_weapon(1)
-	await _seconds(player.swap_time + 0.05)
+	await _seconds(player.weapon.swap_time + 0.05)
 	_expect(player.weapon == ASSAULT_RIFLE, "the wheel did not reach the Assault Rifle")
 	_expect(_fire_and_drop(), "no Assault Rifle shot for the shot sound")
 	await _frames(1)
@@ -2698,7 +2930,7 @@ func _check_audio_events() -> void:
 		_expect(not stream in player.weapons[0].shot_sounds, "the Pistol and the Assault Rifle share %s" % stream.resource_path)
 	_expect(is_equal_approx(ASSAULT_RIFLE.loudness, 24.0), "the Assault Rifle is %.1f m loud, not 24" % ASSAULT_RIFLE.loudness)
 	player.switch_weapon(-1)
-	await _seconds(player.swap_time + 0.05)
+	await _seconds(player.weapon.swap_time + 0.05)
 	sounds.clear()
 	await _check_action_sound()
 	await _seconds(0.2)
@@ -3035,6 +3267,71 @@ func _check_hit_markers() -> void:
 	_expect(_sounds_of(&"hitmark") == 1, "a landed melee played %d hit ticks" % _sounds_of(&"hitmark"))
 	await _cycle()
 	await _clear_dummy()
+
+
+## Down is down: every kill the pirate makes is reported before or as he
+## goes down, never after, because the Raid's ledger settles on his death
+## and counts nothing later. A bolt still in flight and a lunge still closing
+## when he goes down hurt no one; a kill he made in the same instant he went
+## down is reported as he goes down, not after the shot's report delay.
+func _check_down_ends_his_kills() -> void:
+	await _clear_dummy()
+	await _place(RUNWAY)
+	_clear_shots()
+	player.auto_respawn = false
+	var at_down := [-1]
+	var on_down := func() -> void: at_down[0] = hits_landed.size()
+	player.died.connect(on_down)
+	player.head.rotation.x = -0.05
+
+	# A bolt in flight when he goes down.
+	await _dummy(1, 6.0)
+	hits_landed.clear()
+	_expect(player.fire() != null, "no shot for the bolt in flight")
+	player.take_damage(player.health.current)
+	await _seconds(0.3)
+	_expect(dummy.is_alive(), "a bolt fired before the pirate went down killed after it")
+	_expect(hits_landed.size() == at_down[0], "the pirate reported %s after he went down" % [hits_landed.slice(at_down[0])])
+	player.respawn()
+	await _place(RUNWAY)
+
+	# A kill in the instant he goes down: the target falls, then a crew
+	# bolt puts him down before the shot's report is due.
+	await _dummy(1, 6.0)
+	hits_landed.clear()
+	at_down[0] = -1
+	var put_down := func() -> void: player.take_damage(player.health.current)
+	dummy.health.died.connect(func(_from: Node) -> void: put_down.call_deferred())
+	_expect(player.fire() != null, "no shot for the kill as he goes down")
+	await _seconds(0.3)
+	_expect(not dummy.is_alive(), "the shot did not kill the dummy as he went down")
+	_expect(at_down[0] == 1 and hits_landed == [[dummy, true]],
+			"a kill as he went down was reported %s, %d of them by the time he was down" % [hits_landed, at_down[0]])
+	player.respawn()
+	await _place(RUNWAY)
+
+	# A lunge still closing when he goes down.
+	await _dummy(225, 1.5)
+	hits_landed.clear()
+	Input.action_press("melee")
+	await _frames(2)
+	Input.action_release("melee")
+	_expect(player.is_meleeing() and player.global_position.distance_to(RUNWAY) > 0.01,
+			"no lunge under way to put the pirate down in")
+	player.take_damage(player.health.current)
+	await _seconds(player.melee_lunge_time)
+	await _frames(3)
+	_expect(dummy.health.current == 225, "a lunge closing when the pirate went down still struck (dummy at %d)"
+			% dummy.health.current)
+	_expect(hits_landed.is_empty(), "a lunge closing when the pirate went down reported %s" % [hits_landed])
+
+	player.died.disconnect(on_down)
+	player.respawn()
+	player.auto_respawn = true
+	player.head.rotation.x = 0.0
+	_clear_shots()
+	await _clear_dummy()
+	await _place(RUNWAY)
 
 
 ## A bolt reads as a tracer: a thin streak at least a metre long, lying

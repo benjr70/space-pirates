@@ -74,6 +74,7 @@ func _initialize() -> void:
 
 	_check_behind()
 	_check_timings()
+	_check_conspicuous()
 	_check_decay()
 	await _check_investigate()
 	_check_shot()
@@ -83,6 +84,7 @@ func _initialize() -> void:
 	await _check_hearing()
 	_check_doorway()
 	_check_loudness()
+	_check_suppressed()
 	await _check_worker()
 	_check_on_edge()
 	await _check_share()
@@ -182,6 +184,21 @@ func _check_timings() -> void:
 		_place(pair[0], true)
 		var crouched := _time_to_spot(crew)
 		_expect(absf(crouched / t - 2.0) <= 0.25, "crouched at %.0f m took %.2f s, %.2f× standing" % [pair[0], crouched, crouched / t])
+	crew.free()
+
+
+## A Laser on the gun the Pirate holds makes him conspicuous x1.3: the time
+## to spotted at 10 m is the bare time divided by 1.3, within 10%.
+func _check_conspicuous() -> void:
+	var bare: WeaponProfile = player.weapon
+	var crew := _crew()
+	_place(10.0)
+	var bare_time := _time_to_spot(crew)
+	player.weapon = bare.build({Attachment.Slot.UNDERBARREL: load("res://resources/attachments/laser.tres")})
+	var laser_time := _time_to_spot(crew)
+	player.weapon = bare
+	var want := bare_time / 1.3
+	_expect(absf(laser_time - want) <= want * 0.1, "with a Laser spotted at 10 m in %.3f s, want %.3f (bare %.3f / 1.3) within 10%%" % [laser_time, want, bare_time])
 	crew.free()
 
 
@@ -365,6 +382,37 @@ func _check_doorway() -> void:
 	crew.perception.awareness = 0.0
 	CrewNoise.make(self, shot, CrewNoise.Kind.GUNSHOT, player.weapon.loudness, player)
 	_expect(crew.perception.band() == CrewPerception.Band.SUSPICIOUS, "a gunshot did not carry through an open door")
+	crew.free()
+
+
+## A suppressed Pistol shot (heard at 9.6 m) raises no suspicion in a crew
+## member 12 m off; the bare shot (24 m) does.
+func _check_suppressed() -> void:
+	var bare: WeaponProfile = player.weapon
+	var at := Vector3(200.0, 0.0, 200.0)
+	player.global_position = at
+	player.state = player.State.WALK
+	var crew := _crew()
+	crew.layout = null
+	crew.target = null
+	crew.global_position = at + Vector3.RIGHT * 12.0
+	var shots: Array[Projectile3D] = []
+	for suppressed in [true, false]:
+		player.weapon = bare.build({Attachment.Slot.BARREL: load("res://resources/attachments/suppressor.tres")}) if suppressed else bare
+		crew.perception.awareness = 0.0
+		player._cooldown = 0.0
+		player.ammo = player.weapon.magazine_size
+		var shot: Projectile3D = player.fire()
+		_expect(shot != null, "the Pirate did not fire (suppressed %s)" % suppressed)
+		shots.append(shot)
+		if suppressed:
+			_expect(crew.perception.awareness == 0.0, "a suppressed Pistol shot 12 m off raised Awareness to %.2f" % crew.perception.awareness)
+		else:
+			_expect(crew.perception.band() == CrewPerception.Band.SUSPICIOUS, "a bare Pistol shot 12 m off raised no suspicion")
+	player.weapon = bare
+	for shot in shots:
+		if shot != null:
+			shot.free()
 	crew.free()
 
 

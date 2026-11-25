@@ -1,0 +1,12 @@
+[gd_resource type="Resource" script_class="Attachment" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/attachment.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+slot = 1
+display_name = "Suppressor"
+changes = Dictionary[StringName, float]({&"loudness": 0.4, &"projectile_speed": 0.8})
+suppresses = true
+model = &"Suppressor"
+mount = &"MountMuzzle"

@@ -31,7 +31,10 @@ extends Node3D
 ## and changes the mesh while it is out of sight; each mesh brings its own
 ## `Muzzle` and `SightTip` markers and the Profile its own poses, so the shot
 ## leaves the right barrel and the right front sight centres in Aim Down
-## Sights with nothing calibrated by hand.
+## Sights with nothing calibrated by hand. A Built Weapon's Attachments go on
+## the mesh through [WeaponModel] ([member fitting]): each fitted model shows,
+## the parts it replaces hide, and a fitted Barrel's muzzle or Sight's aim
+## point stands in for the gun's. The poses stay the weapon's own.
 ##
 ## A weapon's mesh (built by the scripts under `tools/blender`) brings its own
 ## skeleton clips: the slide cycles on a
@@ -45,13 +48,20 @@ extends Node3D
 ## Wall clipping is handled by material flags: every surface is squashed
 ## toward the camera in depth and drawn with its own narrow FOV, so the
 ## weapon never pokes through a wall he stands against. No SubViewport.
+## Everything it draws is on its own render layer ([constant LAYER]), which
+## a scope's lens camera ([ScopedView]) leaves out.
+
+## Emitted when a gun or a Built Weapon is newly mounted and fitted.
+signal mounted
 
 @export_group("Poses")
 ## Holder rotation for each pose, in camera space. The mesh faces +Z, so
 ## every pose turns it round. The positions come from the Weapon Profile.
 @export var rotation_hip := Vector3(0.0, 180.0, 0.0)
 @export var rotation_low := Vector3(-35.0, 180.0, 15.0)
-## How fast the Viewmodel settles toward its target pose.
+## How fast the Viewmodel settles toward the sprint-low pose and out of it.
+## Between the hip and the sights it eases at the held weapon's
+## `aim_ease_rate()` instead, so it is 95% there in its aim time.
 @export var pose_lerp := 10.0
 
 @export_group("Sway")
@@ -92,6 +102,13 @@ extends Node3D
 @export var z_clip_scale := 0.35
 @export var fov_override := 50.0
 
+## The render layer everything the Viewmodel draws is on, alone.
+const LAYER := 2
+## Aimed through a scope, the eye is this far behind its rear glass, in
+## metres; a gun's own sights and a Reflex Sight keep the weapon's
+## `ads_distance`.
+const EYE_TO_GLASS := 0.06
+
 ## Below this the feet are not really moving, so no bob.
 const BOB_MIN_SPEED := 0.3
 const RELOAD_CLIPS: Array[StringName] = [&"reload_tactical", &"reload_empty"]
@@ -102,7 +119,7 @@ var descope_roll := 0.0
 
 ## Holder position for each pose, in camera space: the mounted weapon's.
 ## The sights pose is worked out from its SightTip, so the front sight sits
-## on the camera axis.
+## on the camera axis; a scope's SightTip is the middle of its rear glass.
 var pose_hip := Vector3(0.16, -0.18, -0.30)
 var pose_ads := Vector3(0.0, -0.1076, -0.32)
 var pose_low := Vector3(0.20, -0.26, -0.30)
@@ -118,6 +135,12 @@ var _skeleton: Skeleton3D
 ## Every model mounted so far, by its scene; all but one are hidden.
 var _models := {}
 var _mounted: Node3D
+## The weapon whose Attachments the mounted model shows.
+var _fitted: WeaponProfile
+## The mounted model's Attachments: [method WeaponModel.model_of] finds a
+## fitted Attachment's model (a scope's `<Model>_RearGlass`, the Laser's
+## `Laser_Origin`).
+var fitting: WeaponModel
 ## Seconds of swap dip left, and how long the whole dip is.
 var _swap_left := 0.0
 var _swap_time := 0.0
@@ -216,13 +239,15 @@ func _process(delta: float) -> void:
 	# each is already smooth or is meant to snap.
 	var pose_position: Vector3
 	var pose_rotation: Vector3
+	var t: float
 	if lowered:
 		pose_position = pose_low
 		pose_rotation = rotation_low
+		t = minf(pose_lerp * delta, 1.0)
 	else:
 		pose_position = pose_ads if aiming else pose_hip
 		pose_rotation = rotation_hip
-	var t := minf(pose_lerp * delta, 1.0)
+		t = 1.0 - exp(-profile.aim_ease_rate() * delta)
 	_pose_position = _pose_position.lerp(pose_position, t)
 	_pose_rotation = _pose_rotation.lerp(pose_rotation, t)
 	var recoil_push: float = profile.ads_recoil_push if aiming else profile.recoil_push
@@ -264,7 +289,7 @@ func _on_reload_started(from_empty: bool) -> void:
 	var wanted: float = profile.reload_empty if from_empty else profile.reload_tactical
 	_play_for(clips, RELOAD_CLIPS[1] if from_empty else RELOAD_CLIPS[0], wanted)
 	_rack_after_reload = profile.racks_after(from_empty)
-	_play_for(model_clips, profile.model_reload_clip, profile.swap_time(from_empty))
+	_play_for(model_clips, profile.model_reload_clip, profile.magazine_swap_time(from_empty))
 
 
 ## A shell-by-shell reload plays the reload clip once per shell, over that
@@ -297,41 +322,54 @@ func _on_model_clip_finished(clip: StringName) -> void:
 
 func _on_weapon_changed(_profile: WeaponProfile) -> void:
 	_stop_clip()
-	_swap_time = _pirate.swap_time
+	_swap_time = profile.swap_time
 	_swap_left = _swap_time
 	if _swap_time <= 0.0:
 		_mount(profile)
 
 
-## Puts [param weapon]'s model under the holder in place of the last one and
-## takes its markers and poses. A Profile with no model keeps what is there.
+## Puts [param weapon]'s model under the holder in place of the last one,
+## shows its Attachments ([WeaponModel]) and takes its markers and poses: a
+## fitted Barrel's muzzle and a fitted Sight's aim point in place of the
+## gun's. Two Built Weapons of one gun share its model, so what shows follows
+## the weapon in hand. A Profile with no model keeps what is there.
 func _mount(weapon: WeaponProfile) -> void:
-	if weapon.model == null or (_mounted != null and _mounted == _models.get(weapon.model)):
+	if weapon.model == null or (_mounted != null and _mounted == _models.get(weapon.model) and _fitted == weapon):
 		return
 	_stop_clip()
-	if _mounted != null:
-		_mounted.visible = false
-		model_clips.animation_finished.disconnect(_on_model_clip_finished)
-	if not _models.has(weapon.model):
-		var model: Node3D = weapon.model.instantiate()
-		holder.add_child(model)
-		_models[weapon.model] = model
-		_flag_materials(model)
-	_mounted = _models[weapon.model]
-	_mounted.visible = true
-	model_clips = _mounted.find_child("AnimationPlayer", true, false)
-	_skeleton = _mounted.find_child("Skeleton3D", true, false)
-	model_clips.animation_finished.connect(_on_model_clip_finished)
+	if _mounted == null or _mounted != _models.get(weapon.model):
+		if _mounted != null:
+			_mounted.visible = false
+			model_clips.animation_finished.disconnect(_on_model_clip_finished)
+		if not _models.has(weapon.model):
+			var model: Node3D = weapon.model.instantiate()
+			holder.add_child(model)
+			_models[weapon.model] = model
+			# Every Attachment model comes in with the gun, so all get the flags.
+			WeaponModel.of(model)
+			_flag_materials(model)
+			for found in model.find_children("*", "VisualInstance3D", true, false):
+				(found as VisualInstance3D).layers = 1 << (LAYER - 1)
+		_mounted = _models[weapon.model]
+		_mounted.visible = true
+		model_clips = _mounted.find_child("AnimationPlayer", true, false)
+		_skeleton = _mounted.find_child("Skeleton3D", true, false)
+		model_clips.animation_finished.connect(_on_model_clip_finished)
+	_fitted = weapon
+	fitting = WeaponModel.of(_mounted)
+	fitting.fit(weapon)
 
-	# The holder is at rest, so the model's markers map straight into the
-	# Viewmodel's own space.
+	# The holder and the bones are at rest, so the markers map straight into
+	# the Viewmodel's own space.
 	var to_viewmodel := global_transform.affine_inverse()
-	_muzzle.position = to_viewmodel * (_mounted.find_child("Muzzle", true, false) as Node3D).global_position
-	_sight_tip.position = to_viewmodel * (_mounted.find_child("SightTip", true, false) as Node3D).global_position
+	_muzzle.position = to_viewmodel * fitting.muzzle().global_position
+	_sight_tip.position = to_viewmodel * fitting.sight_tip().global_position
 	pose_hip = weapon.pose_hip
 	pose_low = weapon.pose_low
 	var sight := Basis.from_euler(rotation_hip * PI / 180.0) * _sight_tip.position
-	pose_ads = Vector3(-sight.x, -sight.y, -weapon.ads_distance)
+	var distance := EYE_TO_GLASS + sight.z if weapon.aims_through_lens else weapon.ads_distance
+	pose_ads = Vector3(-sight.x, -sight.y, -distance)
+	mounted.emit()
 
 
 func _on_melee_swung(_target: Node3D, _killed: bool) -> void:

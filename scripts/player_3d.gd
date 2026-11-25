@@ -127,10 +127,9 @@ const TEAM := &"pirate"
 @export_group("Aim Down Sights")
 ## Seconds from a sprint's lowered weapon to the sights.
 @export var ads_raise_time: float = 0.12
-## Seconds after a Descope before held aim brings the sights back.
+## Seconds after a Descope before held aim brings the sights back. They then
+## come up over the held weapon's full aim time.
 @export var descope_recovery: float = 0.35
-## How fast the FOV settles into and out of the zoom.
-@export var ads_zoom_speed: float = 14.0
 
 @export_group("Melee")
 ## The cone a target is picked from, measured on the floor plane.
@@ -175,8 +174,6 @@ const TEAM := &"pirate"
 	preload("res://resources/weapons/shotgun.tres"),
 	preload("res://resources/weapons/marksman_rifle.tres"),
 ]
-## Seconds a weapon swap keeps the trigger, the sights and the reload busy.
-@export var swap_time := 0.4
 @export var projectile_scene: PackedScene = preload("res://scenes/projectile_3d.tscn")
 ## How far ahead the crosshair ray looks for something to converge on.
 @export var aim_distance: float = 100.0
@@ -193,8 +190,8 @@ const FALL_LIMIT := -10.0
 const CAMERA_LERP := 12.0
 ## How far short of a wall a bolt starts when the barrel is through it.
 const MUZZLE_WALL_GAP := 0.05
-## Seconds a shell-reload or break-out timer may sit above zero and still
-## count as up, so 0.55 s is 33 physics steps and not 34.
+## Seconds a timer may sit above zero and still count as up, so 0.55 s is
+## 33 physics steps and not 34 (see _count_down).
 const TIMER_SLOP := 0.0001
 ## Seconds from a shot's first strike on a target to reporting it: a step
 ## and a half, so pellets a step behind still count toward the kill.
@@ -209,6 +206,10 @@ const BODY_LAYER := 2
 ## Rides the Viewmodel, so a shot leaves wherever the weapon is posed.
 @onready var muzzle: Node3D = $Head/Camera3D/Weapon/Muzzle
 @onready var viewmodel: Viewmodel = $Head/Camera3D/Weapon
+## The lens, the Reflex Sight's window and the blur round a scope.
+@onready var scoped_view: ScopedView = $ScopedView
+## The fitted Laser's red dot on whatever the gun points at.
+@onready var laser_dot: LaserDot = $LaserDot
 @onready var audio: PirateAudio = $Audio
 @onready var health: Health = $Health
 @onready var collider: CollisionShape3D = $CollisionShape3D
@@ -235,10 +236,18 @@ var _swap_left := 0.0
 var _stowed_ammo := {}
 ## Degrees of spread the last shots added, decaying back to zero.
 var _bloom := 0.0
+## Degrees a second the bloom drains at, set by each shot so that all of it,
+## however many shots built it, is gone `bloom_decay_seconds` after the last.
+## Held fire therefore settles at a ceiling instead of climbing shot on shot.
+var _bloom_drain := 0.0
 var _last_spread := -1.0
 var _rng := RandomNumberGenerator.new()
 ## The projectiles of the last shot: one, or a Shotgun's pellets.
 var last_pellets: Array[Projectile3D] = []
+## Hit reports still due, by id, as [target, struck], so going down can
+## make them at once (see _on_died).
+var _pending_reports := {}
+var _next_report := 0
 var _gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)
 
 var _capsule: CapsuleShape3D
@@ -255,6 +264,10 @@ var _clamber_tween: Tween
 var _ads_raise_left := 0.0
 ## Seconds of Descope still keeping held aim down.
 var _descope_left := 0.0
+## How far up the sights are: 0 at the hip, 1 aimed. It follows `ads` in a
+## straight line over the held weapon's aim time, both ways, and what aiming
+## gives (the tighter cone, the slower walk) blends in with it.
+var aim_progress := 0.0
 var _hip_fov := 75.0
 ## Seconds the current aimed sway has run, and the view offset it last laid
 ## on, which the next frame takes back.
@@ -279,6 +292,12 @@ func _ready() -> void:
 	_set_capsule(stand_height)
 	_hip_fov = camera.fov
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
+
+## The camera's field of view unaimed, in degrees: what every zoom is
+## measured against.
+func hip_fov() -> float:
+	return _hip_fov
 
 
 func get_team() -> StringName:
@@ -351,7 +370,8 @@ func _unhandled_input(event: InputEvent) -> void:
 
 ## Turns the view by a mouse movement of [param relative] pixels. Aimed, the
 ## turn is divided by the held weapon's zoom from the moment the sights are
-## up, so a hand movement covers the same distance on screen.
+## up, so a hand movement covers the same distance on screen; through a
+## scope that is the lens's magnification, not the view around it.
 func look(relative: Vector2) -> void:
 	var sensitivity := mouse_sensitivity / (weapon.ads_zoom if ads else 1.0)
 	rotate_y(-relative.x * sensitivity)
@@ -369,6 +389,7 @@ func _physics_process(delta: float) -> void:
 	if state == State.CLAMBER:
 		# The tween owns the body; nothing else is read until it lets go.
 		_lower_sights()
+		_tick_aim_progress(delta)
 		_sway_aim(delta)
 		_animate_camera(delta)
 		_report_spread()
@@ -399,6 +420,7 @@ func _physics_process(delta: float) -> void:
 			return
 
 	_update_ads(delta)
+	_tick_aim_progress(delta)
 	_sway_aim(delta)
 	_move(delta, direction)
 
@@ -484,8 +506,7 @@ func _move(delta: float, direction: Vector3) -> void:
 
 
 func _walk(flat: Vector3, direction: Vector3, multiplier: float, delta: float) -> Vector3:
-	if ads:
-		multiplier *= weapon.ads_speed
+	multiplier *= lerpf(1.0, weapon.ads_speed, aim_progress)
 	if direction != Vector3.ZERO:
 		return flat.move_toward(direction * max_speed * multiplier, acceleration * delta)
 	return flat.move_toward(Vector3.ZERO, friction * delta)
@@ -504,7 +525,7 @@ func _ads_allowed() -> bool:
 ## press skips the recovery.
 func _update_ads(delta: float) -> void:
 	# The Descope recovers on the clock, whatever else he is doing.
-	_descope_left = maxf(_descope_left - delta, 0.0)
+	_descope_left = _count_down(_descope_left, delta)
 	var want := Input.is_action_pressed("aim")
 	if Input.is_action_just_pressed("aim"):
 		_descope_left = 0.0
@@ -523,6 +544,11 @@ func _update_ads(delta: float) -> void:
 		_ads_raise_left = maxf(_ads_raise_left - delta, 0.0)
 		if _ads_raise_left == 0.0:
 			_set_ads(true)
+
+
+## The sights move a frame toward where `ads` says, over the aim time.
+func _tick_aim_progress(delta: float) -> void:
+	aim_progress = move_toward(aim_progress, 1.0 if ads else 0.0, delta / maxf(weapon.aim_time, 0.001))
 
 
 func _set_ads(on: bool) -> void:
@@ -680,9 +706,9 @@ func _sway_aim(delta: float) -> void:
 
 
 func _animate_camera(delta: float) -> void:
-	var zoom := weapon.ads_zoom if ads else 1.0
+	var zoom := weapon.view_zoom() if ads else 1.0
 	var fov := rad_to_deg(2.0 * atan(tan(deg_to_rad(_hip_fov) / 2.0) / zoom))
-	camera.fov = lerpf(camera.fov, fov, ads_zoom_speed * delta)
+	camera.fov = lerpf(camera.fov, fov, 1.0 - exp(-weapon.aim_ease_rate() * delta))
 	_dip = move_toward(_dip, 0.0, clamber_dip / maxf(clamber_time, 0.01) * delta)
 	head.position.y = lerpf(head.position.y, _head_target_y - _dip, CAMERA_LERP * delta)
 	var roll := deg_to_rad(slide_roll_degrees) if state == State.SLIDE else 0.0
@@ -692,14 +718,11 @@ func _animate_camera(delta: float) -> void:
 
 func _tick_gunnery_timers(delta: float) -> void:
 	_cooldown = maxf(_cooldown - delta, 0.0)
-	_swap_left = maxf(_swap_left - delta, 0.0)
+	_swap_left = _count_down(_swap_left, delta)
 	_melee_cycle_left = maxf(_melee_cycle_left - delta, 0.0)
-	if weapon.bloom_decay_seconds > 0.0:
-		_bloom = maxf(_bloom - weapon.bloom_per_shot_degrees / weapon.bloom_decay_seconds * delta, 0.0)
-	else:
-		_bloom = 0.0
+	_bloom = maxf(_bloom - _bloom_drain * delta, 0.0) if weapon.bloom_decay_seconds > 0.0 else 0.0
 	if _reload_timer > 0.0:
-		_reload_timer = maxf(_reload_timer - delta, 0.0)
+		_reload_timer = _count_down(_reload_timer, delta)
 		if _reload_timer == 0.0:
 			ammo = weapon.magazine_size
 			ammo_changed.emit(ammo)
@@ -708,6 +731,14 @@ func _tick_gunnery_timers(delta: float) -> void:
 		_tick_shell_reload(delta)
 	if _break_out_queued:
 		_tick_break_out(delta)
+
+
+## [param left] seconds less [param delta], and zero once within TIMER_SLOP
+## of it: float slop leaves a 0.50 s timer a hair above zero after its 30th
+## step at 60 a second, which would hold it one step too long.
+static func _count_down(left: float, delta: float) -> float:
+	left -= delta
+	return left if left > TIMER_SLOP else 0.0
 
 
 ## A shell counts when its time is up; the next one's time starts from there,
@@ -782,7 +813,8 @@ func is_swapping() -> bool:
 
 ## The next weapon he carries, [param step] places round the wheel. Each
 ## keeps the rounds it had; the swap drops a running reload and the sights,
-## and holds the trigger for `swap_time`. Refused mid-clamber and mid-swing.
+## and holds the trigger for the drawn weapon's `swap_time`. Refused
+## mid-clamber and mid-swing.
 func switch_weapon(step: int) -> void:
 	if weapons.is_empty() or state == State.CLAMBER or is_meleeing():
 		return
@@ -792,10 +824,26 @@ func switch_weapon(step: int) -> void:
 	cancel_reload()
 	_lower_sights()
 	_stowed_ammo[weapon] = ammo
-	_swap_left = swap_time
+	_swap_left = next.swap_time
 	_bloom = 0.0
 	ammo = _stowed_ammo.get(next, next.magazine_size)
 	weapon = next
+	ammo_changed.emit(ammo)
+
+
+## Carries [param list] in place of what he had, in that order, the first in
+## hand and every magazine full: a Raid's Loadout, given at its start.
+func carry(list: Array[WeaponProfile]) -> void:
+	if list.is_empty():
+		return
+	cancel_reload()
+	_lower_sights()
+	weapons = list.duplicate()
+	_stowed_ammo.clear()
+	_swap_left = 0.0
+	_bloom = 0.0
+	weapon = list[0]
+	ammo = weapon.magazine_size
 	ammo_changed.emit(ammo)
 
 
@@ -836,14 +884,13 @@ func spread_degrees() -> float:
 		_:
 			if flat_speed() <= 0.5:
 				multiplier = weapon.spread_still
-			elif ads:
-				# Aimed and walking has a multiplier of its own, in place of
-				# the aimed one times the walking one.
-				return (weapon.spread_base_degrees + _bloom) * weapon.ads_moving_spread
 			else:
-				multiplier = weapon.spread_walking
-	if ads:
-		multiplier *= weapon.ads_spread
+				# Aimed and walking has a multiplier of its own, in place of
+				# the aimed one times the walking one, blended from the
+				# walking one as the sights rise.
+				return (weapon.spread_base_degrees + _bloom) \
+						* lerpf(weapon.spread_walking, weapon.ads_moving_spread, aim_progress)
+	multiplier *= lerpf(1.0, weapon.ads_spread, aim_progress)
 	return (weapon.spread_base_degrees + _bloom) * multiplier
 
 
@@ -914,6 +961,8 @@ func fire() -> Projectile3D:
 		_shot_parent().add_child(shot)
 		last_pellets.append(shot)
 	_bloom += weapon.bloom_per_shot_degrees
+	if weapon.bloom_decay_seconds > 0.0:
+		_bloom_drain = _bloom / weapon.bloom_decay_seconds
 	fired.emit()
 	CrewNoise.make(get_tree(), global_position, CrewNoise.Kind.GUNSHOT, weapon.loudness, self)
 	return last_pellets[0]
@@ -944,7 +993,9 @@ func _on_shot_hit(target: Node3D, on_head: bool, struck: Dictionary, bonus: bool
 		return
 	if not struck.has(target):
 		struck[target] = {state = &"pending", headshot = false}
-		get_tree().create_timer(SHOT_REPORT_DELAY, true, true).timeout.connect(_report_shot_hit.bind(target, struck))
+		_next_report += 1
+		_pending_reports[_next_report] = [target, struck]
+		get_tree().create_timer(SHOT_REPORT_DELAY, true, true).timeout.connect(_report_shot_hit.bind(_next_report))
 	var report: Dictionary = struck[target]
 	if report.state == &"pending":
 		report.headshot = report.headshot or (on_head and bonus)
@@ -953,9 +1004,17 @@ func _on_shot_hit(target: Node3D, on_head: bool, struck: Dictionary, bonus: bool
 		hit_landed.emit(target, true, report.headshot)
 
 
-func _report_shot_hit(target: Node3D, struck: Dictionary) -> void:
-	if not is_instance_valid(target):
+## Makes hit report [param id] once: going down makes it early, and the
+## timer finds nothing left to do after that.
+func _report_shot_hit(id: int) -> void:
+	if not _pending_reports.has(id):
 		return
+	var entry: Array = _pending_reports[id]
+	_pending_reports.erase(id)
+	if not is_instance_valid(entry[0]):
+		return
+	var target: Node3D = entry[0]
+	var struck: Dictionary = entry[1]
 	var report: Dictionary = struck[target]
 	var killed := _is_dead(target)
 	report.state = &"killed" if killed else &"hit"
@@ -1100,7 +1159,18 @@ func _shot_parent() -> Node:
 	return container if container != null else get_parent()
 
 
+## Down is down: before [signal died] settles the Raid, every hit he landed
+## is reported, and nothing he set going can hurt anyone after: the bolts
+## still in flight are disarmed and a lunge still closing never strikes.
 func _on_died(_from: Node) -> void:
+	if _lunge_tween != null:
+		_lunge_tween.kill()
+		_lunge_tween = null
+	for shot in _shot_parent().get_children():
+		if shot is Projectile3D and (shot as Projectile3D).shooter == self:
+			(shot as Projectile3D).disarm()
+	for id in _pending_reports.keys():
+		_report_shot_hit(id)
 	died.emit()
 	velocity = Vector3.ZERO
 	visible = false
@@ -1140,6 +1210,7 @@ func respawn() -> void:
 	_melee_cycle_left = 0.0
 	_melee_lock_left = 0.0
 	_lower_sights()
+	aim_progress = 0.0
 	_sway_aim(0.0)
 	# Silence first: the state reset below must not sound like a landing.
 	audio.reset()

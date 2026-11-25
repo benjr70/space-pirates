@@ -14,8 +14,10 @@ extends RefCounted
 
 ## EDIT: a number or a switch, changed in the sheet. READ_ONLY: anything
 ## else (a model, a pose, a clip name, a sound), edited in the Inspector.
-## DERIVED: computed from the column, never stored.
-enum Kind { EDIT, READ_ONLY, DERIVED }
+## DERIVED: computed from the column, never stored. FACTOR: one entry of the
+## column's `changes` (an [Attachment]'s factor on that attribute), changed
+## in the sheet; blank, and not editable, where the column has none.
+enum Kind { EDIT, READ_ONLY, DERIVED, FACTOR }
 
 const DERIVED_GROUP := "Derived"
 
@@ -46,6 +48,34 @@ static func from_resources(table_title: String, column_names: PackedStringArray,
 		table.paths.append(resource.resource_path)
 	if not resources.is_empty():
 		table._rows_from(resources[0])
+	table.reload_disk()
+	return table
+
+
+## A table over [param resources] (each with a `changes` dictionary, as an
+## [Attachment] has), one column each, with a FACTOR row per key any of them
+## changes, in the order of [param order] (keys it lacks go last).
+static func from_factors(table_title: String, column_names: PackedStringArray,
+		resources: Array, order: PackedStringArray = PackedStringArray()) -> SheetTable:
+	var table := SheetTable.new()
+	table.title = table_title
+	table.columns = column_names
+	var keys: Array[StringName] = []
+	for resource: Resource in resources:
+		table.targets.append(resource)
+		table.paths.append(resource.resource_path)
+		for key: StringName in resource.changes:
+			if not key in keys:
+				keys.append(key)
+	keys.sort_custom(func(a: StringName, b: StringName) -> bool:
+		var ia := order.find(a)
+		var ib := order.find(b)
+		if ia < 0 or ib < 0:
+			return ia >= 0 if ia != ib else String(a) < String(b)
+		return ia < ib)
+	for key in keys:
+		table.rows.append({"key": key, "label": String(key).capitalize(), "group": "",
+				"kind": Kind.FACTOR, "type": TYPE_FLOAT, "compute": Callable()})
 	table.reload_disk()
 	return table
 
@@ -81,11 +111,28 @@ func row(key: StringName) -> Dictionary:
 
 func is_editable(key: StringName) -> bool:
 	var r := row(key)
-	return not r.is_empty() and r.kind == Kind.EDIT
+	return not r.is_empty() and r.kind in [Kind.EDIT, Kind.FACTOR]
+
+
+## Whether this one cell can be changed: an editable row, and for a FACTOR
+## row a column that has the factor.
+func is_cell_editable(key: StringName, column: int) -> bool:
+	var r := row(key)
+	if r.is_empty():
+		return false
+	if r.kind == Kind.FACTOR:
+		return targets[column].changes.has(key)
+	return r.kind == Kind.EDIT
 
 
 func value(key: StringName, column: int) -> Variant:
 	return _read(row(key), targets[column])
+
+
+## What row [param key] reads on [param resource], which need not be one of
+## the columns: a Built Weapon beside its bare Profile.
+func value_of(key: StringName, resource: Resource) -> Variant:
+	return _read(row(key), resource)
 
 
 func disk_value(key: StringName, column: int) -> Variant:
@@ -98,12 +145,21 @@ func _read(r: Dictionary, resource: Resource) -> Variant:
 		return null
 	if r.kind == Kind.DERIVED:
 		return r.compute.call(resource)
+	if r.kind == Kind.FACTOR:
+		return resource.changes.get(r.key)
 	return resource.get(r.key)
+
+
+func _write(key: StringName, column: int, new_value: Variant) -> void:
+	if row(key).kind == Kind.FACTOR:
+		targets[column].changes[key] = new_value
+	else:
+		targets[column].set(key, new_value)
 
 
 ## Whether an editable cell differs from what is on disk.
 func is_changed(key: StringName, column: int) -> bool:
-	if not is_editable(key) or _disk[column] == null:
+	if not is_cell_editable(key, column) or _disk[column] == null:
 		return false
 	return not same(value(key, column), disk_value(key, column))
 
@@ -120,15 +176,15 @@ func changed_count() -> int:
 ## or a value no different from the one already there.
 func set_value(key: StringName, column: int, new_value: Variant) -> bool:
 	var r := row(key)
-	if r.is_empty() or r.kind != Kind.EDIT:
+	if not is_cell_editable(key, column):
 		return false
 	match r.type:
 		TYPE_INT: new_value = int(new_value)
 		TYPE_FLOAT: new_value = float(new_value)
 		TYPE_BOOL: new_value = bool(new_value)
-	if same(targets[column].get(key), new_value):
+	if same(value(key, column), new_value):
 		return false
-	targets[column].set(key, new_value)
+	_write(key, column, new_value)
 	return true
 
 
@@ -139,7 +195,7 @@ func revert() -> Array:
 	for r in rows:
 		for c in columns.size():
 			if is_changed(r.key, c):
-				targets[c].set(r.key, disk_value(r.key, c))
+				_write(r.key, c, disk_value(r.key, c))
 				reverted.append([r.key, c])
 	return reverted
 
@@ -181,7 +237,9 @@ func to_markdown() -> String:
 			lines.append("| **%s** |%s" % [group, " |".repeat(columns.size())])
 		var cells := PackedStringArray()
 		for c in columns.size():
-			cells.append(format(value(r.key, c)))
+			var v: Variant = value(r.key, c)
+			# A factor an Attachment does not have is blank, not "-".
+			cells.append("" if v == null and r.kind == Kind.FACTOR else format(v))
 		lines.append("| %s%s | %s |" % ["= " if r.kind == Kind.DERIVED else "", r.label, " | ".join(cells)])
 	if not notes.is_empty():
 		lines.append("")

@@ -24,8 +24,10 @@ static func load_saved() -> void:
 	_loaded_from = path
 
 
+## Writes XP and gold, keeping what else is in the file (the [Loadout]).
 static func save() -> void:
 	var file := ConfigFile.new()
+	file.load(path)
 	file.set_value("pirate", "xp", xp)
 	file.set_value("pirate", "gold", gold)
 	file.save(path)

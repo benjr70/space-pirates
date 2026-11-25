@@ -1,4 +1,4 @@
-Status: ready-for-human
+Status: resolved
 Blocked by: 15, 16, 17, 18, 19, 20, 21, 22, 23
 
 # First balance pass of the Attachments
@@ -28,3 +28,8 @@ Look first at what the map flagged (`issues/13-starting-numbers.md`):
 - [ ] (agent) After the save, `tests/run_all.sh` passes with the catalogue checks updated to the saved numbers.
 
 ## Comments
+
+## Answer
+
+Closed 2026-11-25. The user played Raids on the built branch, said it "looks all good" and changed no numbers, so every Attachment factor and the four guns' aim and swap times stand as built. One fault came out of the playtest and was fixed (afbb85f): held fire piled bloom up without a ceiling, so a long magazine left the cone wide for many seconds; all bloom is now gone `bloom_decay_seconds` after the last shot.
+

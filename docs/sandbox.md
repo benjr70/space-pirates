@@ -1,6 +1,6 @@
 # Sandbox
 
-Every Sandbox number, generated from `resources/weapons/`, `resources/sandbox.tres` and `resources/gunnery/`. Do not edit by hand: change numbers in the in-Raid sheet (F1, debug builds) and Save, or edit the resources and run `flatpak run org.godotengine.Godot --headless --path . --script res://scripts/sandbox/write_sandbox_doc.gd`. Rows marked `=` are derived.
+Every Sandbox number, generated from `resources/weapons/`, `resources/sandbox.tres`, `resources/gunnery/` and `resources/attachments/`. Do not edit by hand: change numbers in the in-Raid sheet (F1, debug builds) and Save, or edit the resources and run `flatpak run org.godotengine.Godot --headless --path . --script res://scripts/sandbox/write_sandbox_doc.gd`. Rows marked `=` are derived.
 
 ## Weapons
 
@@ -39,6 +39,9 @@ Every Sandbox number, generated from `resources/weapons/`, `resources/sandbox.tr
 | Ads Sway Degrees | 0.0 | 0.0 | 0.0 | 0.25 |
 | Ads Zoom | 1.6 | 1.6 | 1.15 | 3.0 |
 | Ads Speed | 0.8 | 0.7 | 0.85 | 0.6 |
+| Aim Time | 0.15 | 0.22 | 0.22 | 0.32 |
+| **Weapon Wheel** | | | | |
+| Swap Time | 0.3 | 0.4 | 0.45 | 0.5 |
 | **Recoil** | | | | |
 | Recoil Push | 0.05 | 0.035 | 0.09 | 0.05 |
 | Recoil Kick Degrees | 7.0 | 3.0 | 11.0 | 5.0 |
@@ -51,7 +54,12 @@ Every Sandbox number, generated from `resources/weapons/`, `resources/sandbox.tr
 | Reload Sounds | oga_reload/clipload1.ogg, oga_reload/clipload2.ogg | oga_reload/clipload1.ogg, oga_reload/clipload2.ogg | oga_shotgun_reload/shell_in.ogg | oga_gun_reload_sounds/rifle_magazine_out.ogg, oga_gun_reload_sounds/rifle_magazine_in.ogg |
 | Action Sound | - | - | shotgun_pump.ogg | - |
 | Action Sound Delay | 0.0 | 0.0 | 0.2 | 0.0 |
+| Suppressed Shot Sounds | suppressed_shots/pistol_suppressed.ogg | suppressed_shots/assault_rifle_suppressed.ogg | - | suppressed_shots/marksman_rifle_suppressed.ogg |
 | Loudness | 24.0 | 24.0 | 32.0 | 24.0 |
+| **Crew** | | | | |
+| Conspicuous | 1.0 | 1.0 | 1.0 | 1.0 |
+| **Attachments** | | | | |
+| Fits | attachments/reflex_sight.tres, attachments/suppressor.tres, attachments/extended_magazine.tres, attachments/quick_magazine.tres, attachments/laser.tres | attachments/reflex_sight.tres, attachments/combat_scope.tres, attachments/suppressor.tres, attachments/long_barrel.tres, attachments/short_barrel.tres, attachments/extended_magazine.tres, attachments/quick_magazine.tres, attachments/drum.tres, attachments/foregrip.tres, attachments/laser.tres, attachments/bipod.tres, attachments/heavy_stock.tres, attachments/light_stock.tres | attachments/reflex_sight.tres, attachments/long_barrel.tres, attachments/short_barrel.tres, attachments/foregrip.tres, attachments/laser.tres, attachments/heavy_stock.tres, attachments/light_stock.tres | attachments/long_scope.tres, attachments/suppressor.tres, attachments/long_barrel.tres, attachments/extended_magazine.tres, attachments/quick_magazine.tres, attachments/foregrip.tres, attachments/bipod.tres, attachments/heavy_stock.tres, attachments/light_stock.tres |
 | **Viewmodel** | | | | |
 | Model | pistol_model.tscn | assault_rifle_model.tscn | shotgun_model.tscn | marksman_rifle_model.tscn |
 | Pose Hip | (0.16, -0.18, -0.3) | (0.13, -0.19, -0.4) | (0.15, -0.24, -0.34) | (0.15, -0.2, -0.36) |
@@ -97,3 +105,28 @@ Melee from behind (inside the 120.0 degree cone behind the target's facing) kill
 | Engage Range | 10.6 | 10.6 |
 
 Crew fire the Pistol: its damage, bolt and time between shots. Aim error adds to the Pistol's base cone. Each crew member draws its own rhythm at spawn: a Guard's burst a round either way, and 0.75-1.35x on time between shots and pause.
+
+## Attachments
+
+| | Combat Scope | Long Scope | Reflex Sight | Long Barrel | Short Barrel | Suppressor | Drum | Extended Magazine | Quick Magazine | Bipod | Foregrip | Laser | Heavy Stock | Light Stock |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| Magazine Size |  |  |  |  |  |  | 2.5 | 1.5 | 0.8 |  |  |  |  |  |
+| Reload Tactical |  |  |  |  |  |  | 1.6 | 1.25 | 0.7 |  |  |  |  |  |
+| Reload Empty |  |  |  |  |  |  | 1.6 | 1.25 | 0.7 |  |  |  |  |  |
+| Projectile Speed |  |  |  | 1.25 | 0.85 | 0.8 |  |  |  |  |  |  |  |  |
+| Spread Base Degrees |  |  |  | 0.85 | 1.25 |  |  |  |  |  |  | 0.7 |  |  |
+| Spread Crouch |  |  |  |  |  |  |  |  |  | 0.5 |  |  |  |  |
+| Ads Spread | 0.75 |  |  |  |  |  |  |  |  |  |  | 1.4286 |  |  |
+| Ads Moving Spread |  |  |  |  |  |  |  |  |  |  |  | 1.4286 | 0.8 |  |
+| Ads Sway Degrees |  | 1.5 |  |  |  |  |  |  |  | 0.5 |  |  | 0.6 | 1.3 |
+| Ads Zoom | 1.55 | 1.67 | 0.85 |  |  |  |  |  |  |  |  |  |  |  |
+| Ads Speed | 0.85 |  | 1.1 |  |  |  |  |  |  |  |  |  | 0.85 | 1.15 |
+| Aim Time | 1.3 | 1.35 | 0.8 | 1.2 | 0.8 |  | 1.25 |  |  | 1.2 | 1.15 |  | 1.2 | 0.8 |
+| Swap Time |  |  |  | 1.2 | 0.8 |  | 1.3 |  |  | 1.2 |  |  |  | 0.8 |
+| Recoil Kick Degrees |  |  |  |  |  |  |  |  |  |  | 0.7 |  |  | 1.25 |
+| Ads Recoil Kick Degrees |  |  |  |  |  |  |  |  |  |  | 0.7 |  |  |  |
+| Camera Kick Degrees |  |  |  |  |  |  |  |  |  |  | 0.7 |  |  |  |
+| Loudness |  |  |  |  |  | 0.4 |  |  |  |  |  |  |  |  |
+| Conspicuous |  |  |  |  |  |  |  |  |  |  |  | 1.3 |  |  |
+
+Each cell multiplies that attribute of the gun the Attachment is fitted to; blank changes nothing. Two on one attribute multiply. A whole-number attribute rounds and never goes under 1; times and spreads never go under 0; zoom never under 1.

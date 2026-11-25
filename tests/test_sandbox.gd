@@ -21,6 +21,7 @@ func _initialize() -> void:
 	_check_edit_save_revert(_scratch_copies())
 	_check_read_only()
 	await _check_in_raid()
+	await _check_menu_raid()
 	_check_release_has_no_sheet()
 	_remove_scratch()
 	_report()
@@ -51,17 +52,64 @@ func _check_doc_fresh() -> void:
 			"| = Reach (m) | 40.0 | 50.0 | 15.0 | 80.0 |", "| Pirate Health | 150 |", "| Crew Health | 100 |",
 			"| Melee Damage | 75 |", "kills outright", "## Gunnery", "| | Guard | Worker |", "| **Aim** |",
 			"| Aim Error Degrees | 6.0 | 11.0 |", "| Burst Length | 3 | 2 |", "| Pause Between Bursts | 1.1 | 1.1 |",
-			"| Engage Range | 10.6 | 10.6 |", "Crew fire the Pistol"]:
+			"| Engage Range | 10.6 | 10.6 |", "Crew fire the Pistol",
+			"| Aim Time | 0.15 | 0.22 | 0.22 | 0.32 |", "| Swap Time | 0.3 | 0.4 | 0.45 | 0.5 |"]:
 		_expect(doc.contains(heading), "docs/sandbox.md lacks \"%s\"" % heading)
+	# Aim time and swap time are each weapon's own, editable in the sheet.
+	var weapons := SandboxSheet.from_disk().table(SandboxSheet.WEAPONS)
+	for key: StringName in [&"aim_time", &"swap_time"]:
+		_expect(not weapons.row(key).is_empty() and weapons.is_editable(key), "the sheet has no editable %s row" % key)
+	_check_attachments_table(doc)
 
 
-## Fresh copies of the weapons, the Sandbox and the Gunnery under SCRATCH,
-## with their own Markdown view. Returns {weapons: PackedStringArray,
-## sandbox: String, gunnery: PackedStringArray, doc: String}.
+## The Attachments table: a column per Attachment file, a row per attribute
+## any of them changes, each cell that file's factor, blank elsewhere; and
+## the same table in `docs/sandbox.md`.
+func _check_attachments_table(doc: String) -> void:
+	var table := SandboxSheet.from_disk().table(SandboxSheet.ATTACHMENTS)
+	_expect(table != null, "the sheet has no Attachments table")
+	if table == null:
+		return
+	_expect(table.columns.size() == 14, "the Attachments table has %d columns, want 14" % table.columns.size())
+	var want_columns := PackedStringArray(["Combat Scope", "Long Scope", "Reflex Sight", "Long Barrel", "Short Barrel",
+			"Suppressor", "Drum", "Extended Magazine", "Quick Magazine", "Bipod", "Foregrip", "Laser", "Heavy Stock", "Light Stock"])
+	_expect(table.columns == want_columns, "Attachment columns are %s" % table.columns)
+	var files := DirAccess.get_files_at("res://resources/attachments/")
+	var keys := {}
+	var cells := 0
+	for file in files:
+		if not file.ends_with(".tres"):
+			continue
+		var attachment: Resource = ResourceLoader.load("res://resources/attachments/" + file, "", ResourceLoader.CACHE_MODE_IGNORE)
+		var column := table.columns.find(attachment.display_name)
+		_expect(column >= 0, "no column for %s" % attachment.display_name)
+		if column < 0:
+			continue
+		for row in table.rows:
+			var want: Variant = attachment.changes.get(row.key)
+			var have: Variant = table.value(row.key, column)
+			_expect((want == null and have == null) or (want != null and have != null and is_equal_approx(have, want)),
+					"%s's %s cell is %s, its file says %s" % [attachment.display_name, row.key, have, want])
+			cells += int(want != null)
+		for key: StringName in attachment.changes:
+			keys[key] = true
+			_expect(not table.row(key).is_empty(), "no Attachments row for %s, which %s changes" % [key, attachment.display_name])
+	_expect(table.rows.size() == keys.size(), "the Attachments table has %d rows; the files change %d attributes" % [table.rows.size(), keys.size()])
+	_expect(cells == 52, "%d factor cells, want 52 (the files' changes)" % cells)
+	for line in ["## Attachments", "| | %s |" % " | ".join(want_columns),
+			"| Loudness |  |  |  |  |  | 0.4 |  |  |  |  |  |  |  |  |",
+			"| Magazine Size |  |  |  |  |  |  | 2.5 | 1.5 | 0.8 |  |  |  |  |  |"]:
+		_expect(doc.contains(line), "docs/sandbox.md lacks \"%s\"" % line)
+
+
+## Fresh copies of the weapons, the Sandbox, the Gunnery and the
+## Attachments under SCRATCH, with their own Markdown view. Returns
+## {weapons: PackedStringArray, sandbox: String, gunnery: PackedStringArray,
+## attachments: PackedStringArray, doc: String}.
 func _scratch_copies() -> Dictionary:
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(SCRATCH))
 	var weapons := PackedStringArray()
-	for path in SandboxSheet.carried_weapon_paths():
+	for path in SandboxSheet.all_weapon_paths():
 		var copy := SCRATCH + path.get_file()
 		DirAccess.copy_absolute(ProjectSettings.globalize_path(path), ProjectSettings.globalize_path(copy))
 		weapons.append(copy)
@@ -72,15 +120,20 @@ func _scratch_copies() -> Dictionary:
 		var copy := SCRATCH + "gunnery_" + path.get_file()
 		DirAccess.copy_absolute(ProjectSettings.globalize_path(path), ProjectSettings.globalize_path(copy))
 		gunnery.append(copy)
-	var sheet := SandboxSheet.from_disk(weapons, sandbox, gunnery)
+	var attachments := PackedStringArray()
+	for path in SandboxSheet.attachment_paths():
+		var copy := SCRATCH + "attachment_" + path.get_file()
+		DirAccess.copy_absolute(ProjectSettings.globalize_path(path), ProjectSettings.globalize_path(copy))
+		attachments.append(copy)
+	var sheet := SandboxSheet.from_disk(weapons, sandbox, gunnery, attachments)
 	sheet.doc_path = SCRATCH + "sandbox.md"
 	sheet.write_doc()
-	return {"weapons": weapons, "sandbox": sandbox, "gunnery": gunnery, "doc": sheet.doc_path}
+	return {"weapons": weapons, "sandbox": sandbox, "gunnery": gunnery, "attachments": attachments, "doc": sheet.doc_path}
 
 
 ## Changing a number in a `.tres` by hand, without regenerating, fails it.
 func _check_stale_on_hand_edit(copies: Dictionary) -> void:
-	var report := SandboxSheet.from_disk(copies.weapons, copies.sandbox, copies.gunnery).stale_report(copies.doc)
+	var report := SandboxSheet.from_disk(copies.weapons, copies.sandbox, copies.gunnery, copies.attachments).stale_report(copies.doc)
 	_expect(report == "", "stale check fails on a freshly written view: %s" % report)
 	var pistol: String = copies.weapons[0]
 	_expect(pistol.get_file() == "pistol.tres", "the first carried weapon is %s, not the Pistol" % pistol.get_file())
@@ -91,21 +144,30 @@ func _check_stale_on_hand_edit(copies: Dictionary) -> void:
 	var file := FileAccess.open(pistol, FileAccess.WRITE)
 	file.store_string(edited)
 	file.close()
-	report = SandboxSheet.from_disk(copies.weapons, copies.sandbox, copies.gunnery).stale_report(copies.doc)
+	report = SandboxSheet.from_disk(copies.weapons, copies.sandbox, copies.gunnery, copies.attachments).stale_report(copies.doc)
 	_expect(report.contains("stale"), "stale check passed after the Pistol's damage was edited by hand")
-	SandboxSheet.from_disk(copies.weapons, copies.sandbox, copies.gunnery).write_doc(copies.doc)
+	SandboxSheet.from_disk(copies.weapons, copies.sandbox, copies.gunnery, copies.attachments).write_doc(copies.doc)
 	var worker_path: String = copies.gunnery[1]
 	var worker_text := FileAccess.get_file_as_string(worker_path).replace("burst_length = 2", "burst_length = 5")
 	file = FileAccess.open(worker_path, FileAccess.WRITE)
 	file.store_string(worker_text)
 	file.close()
-	report = SandboxSheet.from_disk(copies.weapons, copies.sandbox, copies.gunnery).stale_report(copies.doc)
+	report = SandboxSheet.from_disk(copies.weapons, copies.sandbox, copies.gunnery, copies.attachments).stale_report(copies.doc)
 	_expect(report.contains("stale"), "stale check passed after the Worker's Gunnery was edited by hand")
+	SandboxSheet.from_disk(copies.weapons, copies.sandbox, copies.gunnery, copies.attachments).write_doc(copies.doc)
+	var suppressor_path := _attachment_copy(copies, "suppressor.tres")
+	var suppressor_text := FileAccess.get_file_as_string(suppressor_path).replace("&\"loudness\": 0.4", "&\"loudness\": 0.45")
+	_expect(suppressor_text != FileAccess.get_file_as_string(suppressor_path), "the Suppressor file has no loudness 0.4 to edit")
+	file = FileAccess.open(suppressor_path, FileAccess.WRITE)
+	file.store_string(suppressor_text)
+	file.close()
+	report = SandboxSheet.from_disk(copies.weapons, copies.sandbox, copies.gunnery, copies.attachments).stale_report(copies.doc)
+	_expect(report.contains("stale"), "stale check passed after the Suppressor's loudness factor was edited by hand")
 	var sandbox_text := FileAccess.get_file_as_string(copies.sandbox).replace("crew_health = 100", "crew_health = 90")
 	file = FileAccess.open(copies.sandbox, FileAccess.WRITE)
 	file.store_string(sandbox_text)
 	file.close()
-	var fresh := SandboxSheet.from_disk(copies.weapons, copies.sandbox, copies.gunnery)
+	var fresh := SandboxSheet.from_disk(copies.weapons, copies.sandbox, copies.gunnery, copies.attachments)
 	fresh.write_doc(copies.doc)
 	_expect(fresh.stale_report(copies.doc) == "", "stale check still fails after regenerating")
 
@@ -120,7 +182,10 @@ func _check_edit_save_revert(copies: Dictionary) -> void:
 	var sandbox: Sandbox = load(copies.sandbox)
 	var guard: Gunnery = load(copies.gunnery[0])
 	var worker: Gunnery = load(copies.gunnery[1])
-	var sheet := SandboxSheet.build([pistol, rifle, shotgun, marksman], sandbox, [guard, worker])
+	var attachments := []
+	for path in copies.attachments:
+		attachments.append(load(path))
+	var sheet := SandboxSheet.build([pistol, rifle, shotgun, marksman], sandbox, [guard, worker], attachments)
 	sheet.doc_path = copies.doc
 	var weapons := sheet.table(SandboxSheet.WEAPONS)
 	var health := sheet.table(SandboxSheet.HEALTH)
@@ -181,9 +246,42 @@ func _check_edit_save_revert(copies: Dictionary) -> void:
 	var saved_worker: Gunnery = ResourceLoader.load(copies.gunnery[1], "", ResourceLoader.CACHE_MODE_IGNORE)
 	_expect(saved_worker.burst_length == 4 and is_equal_approx(saved_guard.engage_range, 12.5),
 			"Save wrote the Worker's burst as %d and the Guard's engage range as %s" % [saved_worker.burst_length, saved_guard.engage_range])
-	_expect(SandboxSheet.from_disk(copies.weapons, copies.sandbox, copies.gunnery).stale_report(copies.doc) == "",
+	_expect(SandboxSheet.from_disk(copies.weapons, copies.sandbox, copies.gunnery, copies.attachments).stale_report(copies.doc) == "",
 			"Save left the Markdown view stale")
 	_expect(FileAccess.get_file_as_string(copies.doc).contains("| Damage | 40 | 25 |"), "the saved view lacks the Pistol at 40")
+	_check_factor_save_revert(sheet, copies)
+
+
+## A factor is dialled like any number: the live Attachment changes, the
+## cell is marked against disk, Revert puts it back, Save writes the file.
+func _check_factor_save_revert(sheet: SandboxSheet, copies: Dictionary) -> void:
+	var table := sheet.table(SandboxSheet.ATTACHMENTS)
+	var column := table.columns.find("Suppressor")
+	var suppressor: Resource = table.targets[column]
+	_expect(suppressor.resource_path == _attachment_copy(copies, "suppressor.tres"), "the Suppressor column is not its scratch file")
+	_expect(not table.set_value(&"magazine_size", column, 2.0) and not suppressor.changes.has(&"magazine_size"),
+			"a blank factor cell took a value")
+	_expect(table.set_value(&"loudness", column, 0.5), "the Suppressor's loudness factor would not take 0.5")
+	_expect(is_equal_approx(suppressor.changes[&"loudness"], 0.5), "the live Suppressor's loudness factor is %s" % suppressor.changes[&"loudness"])
+	_expect(table.is_changed(&"loudness", column) and is_equal_approx(table.disk_value(&"loudness", column), 0.4),
+			"the factor cell is not marked against the disk value 0.4")
+	sheet.revert()
+	_expect(is_equal_approx(suppressor.changes[&"loudness"], 0.4) and sheet.changed_count() == 0,
+			"Revert left the Suppressor's loudness factor on %s" % suppressor.changes[&"loudness"])
+	table.set_value(&"loudness", column, 0.5)
+	_expect(sheet.save() == OK, "Save failed on a factor")
+	var saved: Resource = ResourceLoader.load(suppressor.resource_path, "", ResourceLoader.CACHE_MODE_IGNORE)
+	_expect(is_equal_approx(saved.changes[&"loudness"], 0.5) and is_equal_approx(saved.changes[&"projectile_speed"], 0.8)
+			and saved.suppresses and saved.display_name == "Suppressor",
+			"Save wrote the Suppressor as %s" % saved.changes)
+	_expect(FileAccess.get_file_as_string(copies.doc).contains("| Loudness |  |  |  |  |  | 0.5 |"), "the saved view lacks the Suppressor at 0.5")
+
+
+func _attachment_copy(copies: Dictionary, file: String) -> String:
+	for path: String in copies.attachments:
+		if path.ends_with("_" + file):
+			return path
+	return ""
 
 
 ## Model, poses, clip names are shown, never edited.
@@ -294,6 +392,122 @@ func _check_in_raid() -> void:
 	paused = false
 	main.free()
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+
+
+## A Raid from the menu, carrying Built Weapons: the weapon columns stay
+## four, a carried gun's Built Weapon value sits beside the bare one, a
+## dialled factor or bare number reaches the gun in hand while the sheet is
+## still open, and the debug strip swaps the Loadout on close without
+## writing the saved one.
+func _check_menu_raid() -> void:
+	var profile := "user://sandbox_profile_%d.cfg" % OS.get_process_id()
+	var saved_profile_path := Profile.path
+	Profile.path = profile
+	var rifle: Resource = load("res://resources/weapons/assault_rifle.tres")
+	var pistol: Resource = load("res://resources/weapons/pistol.tres")
+	var shotgun: Resource = load("res://resources/weapons/shotgun.tres")
+	var suppressor: Resource = load("res://resources/attachments/suppressor.tres")
+	var drum: Resource = load("res://resources/attachments/drum.tres")
+	var short_barrel: Resource = load("res://resources/attachments/short_barrel.tres")
+	var loadout := Loadout.new()
+	loadout.set_first(rifle)
+	loadout.set_second(pistol)
+	loadout.set_attachment(rifle, Attachment.Slot.BARREL, suppressor)
+	loadout.set_attachment(rifle, Attachment.Slot.MAGAZINE, drum)
+	loadout.save()
+	var profile_before := FileAccess.get_file_as_string(profile)
+	_expect(profile_before.contains("suppressor"), "the test Loadout did not save")
+	Raid.ship_class = &"small"
+	Raid.seed = 1
+	Raid.arm(Loadout.load_saved())
+	var main: Node3D = load("res://scenes/main_3d.tscn").instantiate()
+	root.add_child(main)
+	for i in 3:
+		await process_frame
+	var player: CharacterBody3D = main.get_node("Player")
+	player.set_physics_process(false)
+	var view: Node = main.get_node("SandboxSheet")
+	var held: Resource = player.weapon
+	_expect(player.weapons.size() == 2 and held.attachments == [suppressor, drum] and is_equal_approx(held.loudness, 9.6),
+			"the menu Raid does not carry the suppressed Assault Rifle with a Drum in hand")
+	player.fire()
+	_key(KEY_F1)
+	_expect(view.is_open(), "F1 did not open the sheet in a menu Raid")
+
+	var weapons: SheetTable = view.sheet.table(SandboxSheet.WEAPONS)
+	_expect(weapons.columns == PackedStringArray(["Pistol", "Assault Rifle", "Shotgun", "Marksman Rifle"]),
+			"with two guns carried the weapon columns are %s" % weapons.columns)
+	_expect((view.cell(SandboxSheet.WEAPONS, &"magazine_size", 1) as SpinBox).value == 30.0
+			and view.built_shown(SandboxSheet.WEAPONS, &"magazine_size", 1) == "75",
+			"the Assault Rifle's magazine reads %s, beside it \"%s\"; want 30 and 75"
+			% [(view.cell(SandboxSheet.WEAPONS, &"magazine_size", 1) as SpinBox).value, view.built_shown(SandboxSheet.WEAPONS, &"magazine_size", 1)])
+	_expect(view.built_shown(SandboxSheet.WEAPONS, &"damage", 1) == "", "the Built Weapon's damage, the same as bare, is shown beside it")
+	_expect(view.built_shown(SandboxSheet.WEAPONS, &"magazine_size", 0) == "", "the bare carried Pistol shows a Built Weapon value")
+	_expect(view.built_shown(SandboxSheet.WEAPONS, &"magazine_size", 2) == "", "the Shotgun, not carried, shows a Built Weapon value")
+	_expect(view.built_shown(SandboxSheet.WEAPONS, &"seconds_empty_to_full", 1) != "", "a derived row shows no Built Weapon value")
+
+	var column: int = view.sheet.table(SandboxSheet.ATTACHMENTS).columns.find("Suppressor")
+	var factor := view.cell(SandboxSheet.ATTACHMENTS, &"loudness", column) as SpinBox
+	_expect(factor != null, "the Suppressor's loudness factor is not a number field")
+	if factor != null:
+		factor.value = 0.5
+		_expect(view.is_open() and is_equal_approx(player.weapon.loudness, 12.0),
+				"with the Suppressor's factor at 0.5 the gun in hand is %s loud, want 12.0" % player.weapon.loudness)
+		_expect(player.weapon == held, "the rebuild swapped the gun in hand for another object")
+		_expect(view.built_shown(SandboxSheet.WEAPONS, &"loudness", 1) == "12.0", "the loudness beside the bare 24 reads \"%s\", want 12.0"
+				% view.built_shown(SandboxSheet.WEAPONS, &"loudness", 1))
+		(view.cell(SandboxSheet.WEAPONS, &"magazine_size", 1) as SpinBox).value = 40
+		_expect(player.weapon.magazine_size == 100, "a bare magazine of 40 with a Drum built %d, want 100" % player.weapon.magazine_size)
+		view.revert_button().pressed.emit()
+		_expect(is_equal_approx(suppressor.changes[&"loudness"], 0.4) and is_equal_approx(player.weapon.loudness, 9.6)
+				and player.weapon.magazine_size == 75,
+				"Revert left the factor %s, the gun %s loud with %d rounds"
+				% [suppressor.changes[&"loudness"], player.weapon.loudness, player.weapon.magazine_size])
+
+	# The debug strip: Shotgun first with a Short Barrel, applied on close.
+	_pick(view.strip_gun(0), "Shotgun")
+	var barrel: OptionButton = view.strip_slot(0, Attachment.Slot.BARREL)
+	_expect(barrel != null, "the strip has no Barrel picker under the Shotgun")
+	if barrel != null:
+		var offered := PackedStringArray()
+		for i in barrel.item_count:
+			offered.append(barrel.get_item_text(i))
+		_expect(offered == PackedStringArray(["no Barrel", "Long Barrel", "Short Barrel"]), "the Shotgun's Barrel picker offers %s" % offered)
+		_pick(barrel, "Short Barrel")
+	_expect(view.strip_slot(0, Attachment.Slot.MAGAZINE) == null, "the strip offers a Magazine on the Shotgun, which has none")
+	_expect(player.weapon == held, "the strip changed the gun before the sheet closed")
+	_key(KEY_F1)
+	var now: Resource = player.weapon
+	_expect(not view.is_open() and now.bare == shotgun and now.attachments == [short_barrel],
+			"closing the sheet put %s with %s in hand, want the Shotgun with a Short Barrel" % [now.bare, now.attachments])
+	_expect(player.ammo == now.magazine_size and player.ammo == 6, "the new gun's magazine holds %d, want full (6)" % player.ammo)
+	_expect(player.weapons.size() == 2 and player.weapons[1].bare == pistol, "the second gun is no longer the Pistol")
+	_expect(FileAccess.get_file_as_string(profile) == profile_before, "the debug strip wrote the saved Loadout")
+	# Opening and closing again with no change leaves the guns alone.
+	_key(KEY_F1)
+	_key(KEY_F1)
+	_expect(player.weapon == now, "closing the sheet without a strip change rebuilt the guns")
+
+	paused = false
+	main.free()
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	Raid.seed = 0
+	Raid.ship_class = &""
+	Raid.weapons = []
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(profile))
+	Profile.path = saved_profile_path
+
+
+func _pick(option: OptionButton, text: String) -> void:
+	_expect(option != null, "no picker to pick %s in" % text)
+	if option == null:
+		return
+	for i in option.item_count:
+		if option.get_item_text(i) == text:
+			option.select(i)
+			option.item_selected.emit(i)
+			return
+	_expect(false, "the picker does not offer %s" % text)
 
 
 ## A release build gets no sheet.
