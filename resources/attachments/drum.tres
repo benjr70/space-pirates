@@ -1,0 +1,9 @@
+[gd_resource type="Resource" script_class="Attachment" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/attachment.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+slot = 2
+display_name = "Drum"
+changes = Dictionary[StringName, float]({&"magazine_size": 2.5, &"reload_tactical": 1.6, &"reload_empty": 1.6, &"aim_time": 1.25, &"swap_time": 1.3})

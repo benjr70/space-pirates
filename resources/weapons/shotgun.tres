@@ -1,10 +1,17 @@
-[gd_resource type="Resource" script_class="WeaponProfile" load_steps=6 format=3]
+[gd_resource type="Resource" script_class="WeaponProfile" load_steps=13 format=3]
 
 [ext_resource type="Script" path="res://scripts/weapon_profile.gd" id="1"]
 [ext_resource type="PackedScene" path="res://scenes/weapons/shotgun_model.tscn" id="2"]
 [ext_resource type="AudioStream" path="res://assets/audio/firearm_library_shotgun/shot.ogg" id="s1"]
 [ext_resource type="AudioStream" path="res://assets/audio/oga_shotgun_reload/shell_in.ogg" id="r1"]
 [ext_resource type="AudioStream" path="res://assets/audio/oga_gun_reload_sounds/shotgun_pump.ogg" id="a1"]
+[ext_resource type="Resource" path="res://resources/attachments/reflex_sight.tres" id="at_reflex_sight"]
+[ext_resource type="Resource" path="res://resources/attachments/long_barrel.tres" id="at_long_barrel"]
+[ext_resource type="Resource" path="res://resources/attachments/short_barrel.tres" id="at_short_barrel"]
+[ext_resource type="Resource" path="res://resources/attachments/foregrip.tres" id="at_foregrip"]
+[ext_resource type="Resource" path="res://resources/attachments/laser.tres" id="at_laser"]
+[ext_resource type="Resource" path="res://resources/attachments/heavy_stock.tres" id="at_heavy_stock"]
+[ext_resource type="Resource" path="res://resources/attachments/light_stock.tres" id="at_light_stock"]
 
 [resource]
 script = ExtResource("1")
@@ -55,3 +62,4 @@ model_fire_clip = &"fire"
 model_reload_clip = &"shell"
 model_rack_clip = &"pump"
 fire_cycle_time = 0.55
+fits = Array[Resource]([ExtResource("at_reflex_sight"), ExtResource("at_long_barrel"), ExtResource("at_short_barrel"), ExtResource("at_foregrip"), ExtResource("at_laser"), ExtResource("at_heavy_stock"), ExtResource("at_light_stock")])

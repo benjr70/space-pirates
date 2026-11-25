@@ -3,7 +3,8 @@
 # script, scene and resource loads), then the generator sweep with its
 # distributions and self-test, the 2D layout suite, the 3D suite with the
 # built sample, the pirate's movement course, the crew's Awareness, the
-# Sandbox sheet with its stale check on docs/sandbox.md, and the whole-Raid
+# Sandbox sheet with its stale check on docs/sandbox.md, the Attachment
+# catalogue and the Built Weapon, and the whole-Raid
 # smoke run (scripted Pirates playing Raids end to end). Each suite prints
 # its own per-Class results; this prints one line per suite at the end, with
 # its check count and wall time in seconds, then the total, and fails if any
@@ -21,7 +22,8 @@
 #   tests/run_all.sh only=raid_smoke seeds=20  # wider smoke sweep: 20 ships per Class
 #
 # only= takes a comma-separated list of suite names, each a file stem without
-# `test_`: static, generator, layouts, ship_3d, pirate, crew, sandbox, raid_smoke. They
+# `test_`: static, generator, layouts, ship_3d, pirate, crew, sandbox, attachments,
+# raid_smoke. They
 # run in the gate's order whatever order they are given in. An unknown or empty name is
 # an error (exit 2), not a no-op.
 #
@@ -56,7 +58,7 @@ ALLOWED=(
 	'ERROR: Parameter "material" is null\.'
 )
 
-SUITES=(static generator layouts ship_3d pirate crew sandbox raid_smoke)
+SUITES=(static generator layouts ship_3d pirate crew sandbox attachments raid_smoke)
 # Suites that advance physics run on a fixed frame step: every frame is
 # exactly 1/60 s of game time, one physics tick (physics_ticks_per_second is
 # the default 60) and one process frame, with no real-time sync. Results then
@@ -146,6 +148,7 @@ run ship_3d "3D ship and built sample" tests/test_ship_3d.gd "seed=$run_seed"
 run pirate "pirate movement and gunplay" tests/test_pirate.gd "seed=$run_seed"
 run crew "crew awareness" tests/test_crew.gd "seed=$run_seed"
 run sandbox "sandbox sheet and docs/sandbox.md" tests/test_sandbox.gd
+run attachments "Attachments and the Built Weapon" tests/test_attachments.gd
 run raid_smoke "whole-Raid smoke run" tests/test_raid_smoke.gd "seed=$run_seed" "${pass[@]}"
 echo "=== summary"
 printf '%s\n' "${summary[@]}"

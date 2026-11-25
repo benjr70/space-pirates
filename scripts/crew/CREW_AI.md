@@ -243,7 +243,9 @@ in the open, square in view:
 
 Linear between those points. A crouched or sliding Pirate (`is_crouched()`)
 takes **2×** as long. The rate follows the current distance, so closing in
-mid-fill speeds it up.
+mid-fill speeds it up. The weapon he holds multiplies the rate by its
+`conspicuous` (1.0 on every bare gun; a Laser's x1.3 makes every time above
+1.3× shorter).
 
 **Draining**: out of view, Awareness falls by 0.2 a second (spotted to zero in
 5 s).

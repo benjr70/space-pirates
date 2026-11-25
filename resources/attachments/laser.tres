@@ -1,0 +1,9 @@
+[gd_resource type="Resource" script_class="Attachment" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/attachment.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+slot = 3
+display_name = "Laser"
+changes = Dictionary[StringName, float]({&"spread_base_degrees": 0.7, &"ads_spread": 1.4285714285714286, &"ads_moving_spread": 1.4285714285714286, &"conspicuous": 1.3})

@@ -120,8 +120,22 @@ const AIM_EASE := 3.0
 ## plays it again on the closing pump.
 @export var action_sound: AudioStream
 @export var action_sound_delay := 0.0
+## The takes a shot plays with a Suppressor fitted, one at random, in place
+## of `shot_sounds`: the gun's own, so the one Suppressor sounds right on
+## every gun. Blank on a gun that takes no Suppressor.
+@export var suppressed_shot_sounds: Array[AudioStream] = []
 ## Metres at which crew hear the shot.
 @export var loudness := 24.0
+
+@export_group("Crew")
+## How fast crew build Awareness of the Pirate while he holds this weapon:
+## a factor on how fast they spot him, 1 for every bare gun.
+@export var conspicuous := 1.0
+
+@export_group("Attachments")
+## Every Attachment that fits this weapon. Its Slots are the Slot kinds
+## these go in ([method slots]); a Slot nothing here goes in, it does not have.
+@export var fits: Array[Attachment] = []
 
 @export_group("Viewmodel")
 ## The mesh he holds: a scene under `scenes/weapons` that mounts the model
@@ -147,6 +161,98 @@ const AIM_EASE := 3.0
 @export var fire_cycle_time := 0.15
 ## The empty reload ends with the rack; this much of it is the rack.
 @export var rack_time := 0.3
+
+
+## Set only on a Built Weapon: it aims through a scope's lens.
+var aims_through_lens := false
+## Set only on a Built Weapon: the Attachments fitted to it, in Slot order.
+var attachments: Array[Attachment] = []
+
+## What an Attachment may never change: how hard a shot hits and how the gun
+## fires and loads stay the weapon's own.
+const FIXED: Array[StringName] = [&"damage", &"headshot_multiplier", &"pellet_count", &"semi_auto", &"shell_reload"]
+## Times and spreads, which a Built Weapon never takes under 0.
+const NEVER_NEGATIVE: Array[StringName] = [&"fire_interval", &"reload_tactical", &"reload_empty",
+		&"first_shell_time", &"shell_time", &"closing_pump_time", &"break_out_time", &"projectile_lifetime",
+		&"bloom_decay_seconds", &"aim_time", &"swap_time", &"fire_cycle_time", &"rack_time",
+		&"spread_base_degrees", &"bloom_per_shot_degrees", &"spread_crouch", &"spread_still",
+		&"spread_walking", &"spread_slide", &"spread_air", &"ads_spread", &"ads_moving_spread"]
+
+
+## The Slot kinds this weapon has, in Slot order: those its [member fits] go in.
+func slots() -> Array[Attachment.Slot]:
+	var out: Array[Attachment.Slot] = []
+	for slot: Attachment.Slot in Attachment.Slot.values():
+		if not fits_in(slot).is_empty():
+			out.append(slot)
+	return out
+
+
+## The Attachments that fit this weapon's [param slot].
+func fits_in(slot: Attachment.Slot) -> Array[Attachment]:
+	var out: Array[Attachment] = []
+	for attachment in fits:
+		if attachment != null and attachment.slot == slot:
+			out.append(attachment)
+	return out
+
+
+## Why this bare Profile cannot be built with [param choice] (Slot to
+## Attachment, or null for an empty Slot); blank when it can.
+func why_refused(choice: Dictionary) -> String:
+	for slot: Variant in choice:
+		var attachment: Attachment = choice[slot]
+		if attachment == null:
+			continue
+		if attachment.slot != slot:
+			return "%s goes in Slot %s, not %s" % [attachment.display_name,
+					Attachment.Slot.find_key(attachment.slot), Attachment.Slot.find_key(slot)]
+		if not attachment in fits:
+			return "%s does not fit this weapon" % attachment.display_name
+		if attachment.suppresses and suppressed_shot_sounds.is_empty():
+			return "%s needs a suppressed shot this weapon does not have" % attachment.display_name
+		for key: StringName in attachment.changes:
+			if key in FIXED:
+				return "%s may not change %s" % [attachment.display_name, key]
+			if not typeof(get(key)) in [TYPE_INT, TYPE_FLOAT]:
+				return "%s changes %s, which is not a number on a Weapon Profile" % [attachment.display_name, key]
+	return ""
+
+
+## The Built Weapon: a fresh Weapon Profile, this one with every factor of
+## the Attachments in [param choice] (Slot to Attachment, or null for an
+## empty Slot) multiplied in, the limits applied, the lens mark and the
+## suppressed shot carried. Null if the choice is refused ([method
+## why_refused] says why). Neither this Profile nor any Attachment changes.
+## Typed Resource, not WeaponProfile: naming its own class here makes the
+## script hold itself, and a copy loaded apart from the cache (the Sandbox
+## sheet's [method SandboxSheet.from_disk]) then leaks at exit.
+func build(choice: Dictionary) -> Resource:
+	if why_refused(choice) != "":
+		return null
+	var built := duplicate()
+	var factors := {}
+	for slot: Attachment.Slot in Attachment.Slot.values():
+		var attachment: Attachment = choice.get(slot)
+		if attachment == null:
+			continue
+		built.attachments.append(attachment)
+		built.aims_through_lens = built.aims_through_lens or attachment.lens
+		if attachment.suppresses:
+			built.shot_sounds = suppressed_shot_sounds.duplicate()
+		for key: StringName in attachment.changes:
+			factors[key] = factors.get(key, 1.0) * attachment.changes[key]
+	for key: StringName in factors:
+		var value: float = get(key) * factors[key]
+		if typeof(get(key)) == TYPE_INT:
+			built.set(key, maxi(roundi(value), 1))
+		elif key == &"ads_zoom":
+			built.set(key, maxf(value, 1.0))
+		elif key in NEVER_NEGATIVE:
+			built.set(key, maxf(value, 0.0))
+		else:
+			built.set(key, value)
+	return built
 
 
 ## What one bolt of [param damage] does on a head zone with

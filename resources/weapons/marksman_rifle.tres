@@ -1,10 +1,20 @@
-[gd_resource type="Resource" script_class="WeaponProfile" load_steps=6 format=3]
+[gd_resource type="Resource" script_class="WeaponProfile" load_steps=16 format=3]
 
 [ext_resource type="Script" path="res://scripts/weapon_profile.gd" id="1"]
 [ext_resource type="PackedScene" path="res://scenes/weapons/marksman_rifle_model.tscn" id="2"]
 [ext_resource type="AudioStream" path="res://assets/audio/firearm_library_marksman/shot.ogg" id="s1"]
 [ext_resource type="AudioStream" path="res://assets/audio/oga_gun_reload_sounds/rifle_magazine_out.ogg" id="r1"]
 [ext_resource type="AudioStream" path="res://assets/audio/oga_gun_reload_sounds/rifle_magazine_in.ogg" id="r2"]
+[ext_resource type="Resource" path="res://resources/attachments/long_scope.tres" id="at_long_scope"]
+[ext_resource type="Resource" path="res://resources/attachments/suppressor.tres" id="at_suppressor"]
+[ext_resource type="Resource" path="res://resources/attachments/long_barrel.tres" id="at_long_barrel"]
+[ext_resource type="Resource" path="res://resources/attachments/extended_magazine.tres" id="at_extended_magazine"]
+[ext_resource type="Resource" path="res://resources/attachments/quick_magazine.tres" id="at_quick_magazine"]
+[ext_resource type="Resource" path="res://resources/attachments/foregrip.tres" id="at_foregrip"]
+[ext_resource type="Resource" path="res://resources/attachments/bipod.tres" id="at_bipod"]
+[ext_resource type="Resource" path="res://resources/attachments/heavy_stock.tres" id="at_heavy_stock"]
+[ext_resource type="Resource" path="res://resources/attachments/light_stock.tres" id="at_light_stock"]
+[ext_resource type="AudioStream" path="res://assets/audio/suppressed_shots/marksman_rifle_suppressed.ogg" id="ss1"]
 
 [resource]
 script = ExtResource("1")
@@ -51,3 +61,5 @@ model_reload_clip = &"reload"
 model_rack_clip = &"rack"
 fire_cycle_time = 0.15
 rack_time = 0.3
+suppressed_shot_sounds = Array[AudioStream]([ExtResource("ss1")])
+fits = Array[Resource]([ExtResource("at_long_scope"), ExtResource("at_suppressor"), ExtResource("at_long_barrel"), ExtResource("at_extended_magazine"), ExtResource("at_quick_magazine"), ExtResource("at_foregrip"), ExtResource("at_bipod"), ExtResource("at_heavy_stock"), ExtResource("at_light_stock")])

@@ -54,7 +54,12 @@ Every Sandbox number, generated from `resources/weapons/`, `resources/sandbox.tr
 | Reload Sounds | oga_reload/clipload1.ogg, oga_reload/clipload2.ogg | oga_reload/clipload1.ogg, oga_reload/clipload2.ogg | oga_shotgun_reload/shell_in.ogg | oga_gun_reload_sounds/rifle_magazine_out.ogg, oga_gun_reload_sounds/rifle_magazine_in.ogg |
 | Action Sound | - | - | shotgun_pump.ogg | - |
 | Action Sound Delay | 0.0 | 0.0 | 0.2 | 0.0 |
+| Suppressed Shot Sounds | suppressed_shots/pistol_suppressed.ogg | suppressed_shots/assault_rifle_suppressed.ogg | - | suppressed_shots/marksman_rifle_suppressed.ogg |
 | Loudness | 24.0 | 24.0 | 32.0 | 24.0 |
+| **Crew** | | | | |
+| Conspicuous | 1.0 | 1.0 | 1.0 | 1.0 |
+| **Attachments** | | | | |
+| Fits | attachments/reflex_sight.tres, attachments/suppressor.tres, attachments/extended_magazine.tres, attachments/quick_magazine.tres, attachments/laser.tres | attachments/reflex_sight.tres, attachments/combat_scope.tres, attachments/suppressor.tres, attachments/long_barrel.tres, attachments/short_barrel.tres, attachments/extended_magazine.tres, attachments/quick_magazine.tres, attachments/drum.tres, attachments/foregrip.tres, attachments/laser.tres, attachments/bipod.tres, attachments/heavy_stock.tres, attachments/light_stock.tres | attachments/reflex_sight.tres, attachments/long_barrel.tres, attachments/short_barrel.tres, attachments/foregrip.tres, attachments/laser.tres, attachments/heavy_stock.tres, attachments/light_stock.tres | attachments/long_scope.tres, attachments/suppressor.tres, attachments/long_barrel.tres, attachments/extended_magazine.tres, attachments/quick_magazine.tres, attachments/foregrip.tres, attachments/bipod.tres, attachments/heavy_stock.tres, attachments/light_stock.tres |
 | **Viewmodel** | | | | |
 | Model | pistol_model.tscn | assault_rifle_model.tscn | shotgun_model.tscn | marksman_rifle_model.tscn |
 | Pose Hip | (0.16, -0.18, -0.3) | (0.13, -0.19, -0.4) | (0.15, -0.24, -0.34) | (0.15, -0.2, -0.36) |

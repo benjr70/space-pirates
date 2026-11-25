@@ -1,0 +1,9 @@
+[gd_resource type="Resource" script_class="Attachment" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/attachment.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+slot = 1
+display_name = "Short Barrel"
+changes = Dictionary[StringName, float]({&"aim_time": 0.8, &"swap_time": 0.8, &"spread_base_degrees": 1.25, &"projectile_speed": 0.85})

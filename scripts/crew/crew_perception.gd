@@ -71,11 +71,12 @@ func band() -> Band:
 
 
 ## One tick. [param in_view] means in the cone, in range and in line of
-## sight. Returns true on the tick Awareness tips into spotted.
-func sense(delta: float, in_view: bool, distance: float, crouched := false) -> bool:
+## sight. [param conspicuous] is the held weapon's: Awareness builds that
+## many times as fast. Returns true on the tick Awareness tips into spotted.
+func sense(delta: float, in_view: bool, distance: float, crouched := false, conspicuous := 1.0) -> bool:
 	var was_spotted := awareness >= 1.0
 	if in_view:
-		var time := spot_time(distance, crouched) * (ON_EDGE_FACTOR if on_edge else 1.0)
+		var time := spot_time(distance, crouched) * (ON_EDGE_FACTOR if on_edge else 1.0) / maxf(conspicuous, 0.001)
 		awareness = minf(awareness + delta / time, 1.0)
 	else:
 		awareness = maxf(awareness - DECAY_PER_SECOND * delta, 0.0)

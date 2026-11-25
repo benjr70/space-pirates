@@ -71,7 +71,7 @@ tests/run_all.sh only=raid_smoke seeds=20   # and the smoke run: 20 ships per Sh
 ```
 
 Suite names are the file stem without `test_`: `static`, `generator`,
-`layouts`, `ship_3d`, `pirate`, `crew`, `raid_smoke`. An unknown or empty
+`layouts`, `ship_3d`, `pirate`, `crew`, `sandbox`, `attachments`, `raid_smoke`. An unknown or empty
 name stops the run with exit 2 and the list of known names. `seeds=10`
 narrows the generator sweep for a quick look, but its distribution checks
 then run on too few seeds to be a verdict; the same `seeds=<n>` sets how
@@ -129,6 +129,7 @@ summary line and the total at the end, so a later run shows drift:
 | `ship_3d` | `tests/test_ship_3d.gd` | 3681 | 9–10 s |
 | `pirate` | `tests/test_pirate.gd` | 597 | 3–4 s |
 | `crew` | `tests/test_crew.gd` | 107 | 11–13 s |
+| `attachments` | `tests/test_attachments.gd` | 1674 | 6 s |
 | `raid_smoke` | `tests/test_raid_smoke.gd` | about 920 | 75–105 s |
 | full gate | `tests/run_all.sh` | | 145–176 s |
 
@@ -229,6 +230,7 @@ reading the checks that use it.
 | `scripts/raid.gd`, `raid_ledger.gd`, `extraction.gd`, `profile.gd` | `ship_3d`, `raid_smoke` | `RaidChecks`: levels, the ledger and Ghost bonus, a Raid's seed, pause, death, Extraction, banking to the Profile. `raid_smoke`: the same end to end, a seeded Raid boarded, played and extracted from (or died on), with the XP and gold banked checked against the ledger on either ending, and sweep floors on Ghost Extractions, Extractions with a kill and Loot banked |
 | `scripts/main_3d.gd`, `door_3d.gd` | `ship_3d`, `raid_smoke`; `crew` for doors | the Raid scene, open and locked Doors, Hatches, boarding, a Door's prompt offered only to the Pirate in its reach (`test_ship_3d.gd::_physics_door_prompt`, with a crew member at a Door across the ship). `raid_smoke`: Doors and the boarding Hatch worked with the interact key, a Container searched with it (and the HUD offering the search there), a Door's prompt offered only with the Pirate in a Door's reach, checked every frame, the home door worked to extract |
 | `scripts/container_3d.gd` | `ship_3d`, `crew`, `raid_smoke` | searching a Container (`RaidChecks`; the interact key searching one while crew stand at a distant Door, `test_ship_3d.gd::_physics_door_prompt`; `raid_smoke` with the interact key in a live Raid, failing if the key does nothing at a Container in reach), an emptied Container as a trace (`crew`) |
+| `scripts/attachment.gd`, `resources/attachments/`, and the Slots, fits and `build` in `weapon_profile.gd` | `attachments`; `crew` in part | `attachments`: the fourteen Attachment files (Slot, name, factors, lens, Suppressor), each gun's Slots and what fits them, every gun with every Attachment it takes built against the catalogue's factors and limits, the Built Weapon numbers of `.scratch/weapon-attachments/issues/13-starting-numbers.md`, stacking, the suppressed shot per gun, building leaving the bare Profile and the Attachment files alone, and refusals. `crew`: a Laser's conspicuous on Awareness (`_check_conspicuous`), a suppressed shot's reach (`_check_suppressed`) |
 | `scripts/player_3d.gd`, `viewmodel.gd`, `weapon_profile.gd`, `pirate_audio.gd`, `health.gd`, `projectile_3d.gd`, `sound_at.gd` | `pirate`; `ship_3d`, `raid_smoke` in part | `pirate`: movement course, weapons and the wheel, ADS, melee, Viewmodel poses and clips, sounds, bolts, damage. `ship_3d`: walking, ammo and shooting on a built ship. `raid_smoke`: the Pirate never leaves the Hull or drops below the floor while walked through generated ships by input actions, and goes down under crew fire (Caught, every Raid) |
 | `scripts/main.gd`, `player.gd`, `crew.gd`, `door.gd`, `projectile.gd` (2D) | `layouts` | the 2D scene: Doors, shooting, crew, fog, navigation |
 | `scripts/proto/` | none, by design | prototypes; excluded |
