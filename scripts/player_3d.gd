@@ -190,8 +190,8 @@ const FALL_LIMIT := -10.0
 const CAMERA_LERP := 12.0
 ## How far short of a wall a bolt starts when the barrel is through it.
 const MUZZLE_WALL_GAP := 0.05
-## Seconds a shell-reload or break-out timer may sit above zero and still
-## count as up, so 0.55 s is 33 physics steps and not 34.
+## Seconds a timer may sit above zero and still count as up, so 0.55 s is
+## 33 physics steps and not 34 (see _count_down).
 const TIMER_SLOP := 0.0001
 ## Seconds from a shot's first strike on a target to reporting it: a step
 ## and a half, so pellets a step behind still count toward the kill.
@@ -240,6 +240,10 @@ var _last_spread := -1.0
 var _rng := RandomNumberGenerator.new()
 ## The projectiles of the last shot: one, or a Shotgun's pellets.
 var last_pellets: Array[Projectile3D] = []
+## Hit reports still due, by id, as [target, struck], so going down can
+## make them at once (see _on_died).
+var _pending_reports := {}
+var _next_report := 0
 var _gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)
 
 var _capsule: CapsuleShape3D
@@ -517,7 +521,7 @@ func _ads_allowed() -> bool:
 ## press skips the recovery.
 func _update_ads(delta: float) -> void:
 	# The Descope recovers on the clock, whatever else he is doing.
-	_descope_left = maxf(_descope_left - delta, 0.0)
+	_descope_left = _count_down(_descope_left, delta)
 	var want := Input.is_action_pressed("aim")
 	if Input.is_action_just_pressed("aim"):
 		_descope_left = 0.0
@@ -710,14 +714,14 @@ func _animate_camera(delta: float) -> void:
 
 func _tick_gunnery_timers(delta: float) -> void:
 	_cooldown = maxf(_cooldown - delta, 0.0)
-	_swap_left = maxf(_swap_left - delta, 0.0)
+	_swap_left = _count_down(_swap_left, delta)
 	_melee_cycle_left = maxf(_melee_cycle_left - delta, 0.0)
 	if weapon.bloom_decay_seconds > 0.0:
 		_bloom = maxf(_bloom - weapon.bloom_per_shot_degrees / weapon.bloom_decay_seconds * delta, 0.0)
 	else:
 		_bloom = 0.0
 	if _reload_timer > 0.0:
-		_reload_timer = maxf(_reload_timer - delta, 0.0)
+		_reload_timer = _count_down(_reload_timer, delta)
 		if _reload_timer == 0.0:
 			ammo = weapon.magazine_size
 			ammo_changed.emit(ammo)
@@ -726,6 +730,14 @@ func _tick_gunnery_timers(delta: float) -> void:
 		_tick_shell_reload(delta)
 	if _break_out_queued:
 		_tick_break_out(delta)
+
+
+## [param left] seconds less [param delta], and zero once within TIMER_SLOP
+## of it: float slop leaves a 0.50 s timer a hair above zero after its 30th
+## step at 60 a second, which would hold it one step too long.
+static func _count_down(left: float, delta: float) -> float:
+	left -= delta
+	return left if left > TIMER_SLOP else 0.0
 
 
 ## A shell counts when its time is up; the next one's time starts from there,
@@ -978,7 +990,9 @@ func _on_shot_hit(target: Node3D, on_head: bool, struck: Dictionary, bonus: bool
 		return
 	if not struck.has(target):
 		struck[target] = {state = &"pending", headshot = false}
-		get_tree().create_timer(SHOT_REPORT_DELAY, true, true).timeout.connect(_report_shot_hit.bind(target, struck))
+		_next_report += 1
+		_pending_reports[_next_report] = [target, struck]
+		get_tree().create_timer(SHOT_REPORT_DELAY, true, true).timeout.connect(_report_shot_hit.bind(_next_report))
 	var report: Dictionary = struck[target]
 	if report.state == &"pending":
 		report.headshot = report.headshot or (on_head and bonus)
@@ -987,9 +1001,17 @@ func _on_shot_hit(target: Node3D, on_head: bool, struck: Dictionary, bonus: bool
 		hit_landed.emit(target, true, report.headshot)
 
 
-func _report_shot_hit(target: Node3D, struck: Dictionary) -> void:
-	if not is_instance_valid(target):
+## Makes hit report [param id] once: going down makes it early, and the
+## timer finds nothing left to do after that.
+func _report_shot_hit(id: int) -> void:
+	if not _pending_reports.has(id):
 		return
+	var entry: Array = _pending_reports[id]
+	_pending_reports.erase(id)
+	if not is_instance_valid(entry[0]):
+		return
+	var target: Node3D = entry[0]
+	var struck: Dictionary = entry[1]
 	var report: Dictionary = struck[target]
 	var killed := _is_dead(target)
 	report.state = &"killed" if killed else &"hit"
@@ -1134,7 +1156,18 @@ func _shot_parent() -> Node:
 	return container if container != null else get_parent()
 
 
+## Down is down: before [signal died] settles the Raid, every hit he landed
+## is reported, and nothing he set going can hurt anyone after: the bolts
+## still in flight are disarmed and a lunge still closing never strikes.
 func _on_died(_from: Node) -> void:
+	if _lunge_tween != null:
+		_lunge_tween.kill()
+		_lunge_tween = null
+	for shot in _shot_parent().get_children():
+		if shot is Projectile3D and (shot as Projectile3D).shooter == self:
+			(shot as Projectile3D).disarm()
+	for id in _pending_reports.keys():
+		_report_shot_hit(id)
 	died.emit()
 	velocity = Vector3.ZERO
 	visible = false
