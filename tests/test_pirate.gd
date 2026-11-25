@@ -170,6 +170,7 @@ func _run() -> void:
 	await _check_viewmodel_recoil()
 	await _check_viewmodel_descope()
 	_check_clips_exist()
+	GunModelChecks.run(_expect)
 	await _check_clips_play()
 	await _check_clips_follow_profile()
 	await _check_holder_model()

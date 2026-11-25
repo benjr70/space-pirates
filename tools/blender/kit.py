@@ -9,6 +9,7 @@ in metres at life size. The glTF exporter turns that into Godot's +Z forward,
 """
 import math
 import os
+import re
 import sys
 
 import bmesh
@@ -323,6 +324,31 @@ def join(name, objs):
     return obj
 
 
+def split(name, objs, parts):
+    """`join` `objs` into one mesh named `name`, but pull the pieces of each
+    replaceable part (barrel, sights, stock) out into a mesh of their own, so
+    an Attachment can hide it.
+
+    `parts` maps a part's mesh name to the names its pieces were made with
+    (Blender's `.001` suffixes are ignored). Returns the joined body and
+    {part: mesh}. A piece name that matches nothing is an error, so a renamed
+    piece cannot quietly fall back into the body.
+    """
+    def base(o):
+        return re.sub(r"\.\d+$", "", o.name)
+
+    keep, groups = [], {part: [] for part in parts}
+    for o in objs:
+        part = next((p for p, names in parts.items() if base(o) in names), None)
+        (groups[part] if part else keep).append(o)
+    for part, names in parts.items():
+        missing = set(names) - {base(o) for o in groups[part]}
+        if missing:
+            raise ValueError("split %s: no piece named %s for %s" % (name, sorted(missing), part))
+    pieces = {part: join(part, members) for part, members in groups.items()}
+    return join(name, keep), pieces
+
+
 def tube(name, radius, bore, length, at, axis="Y", material=None, sides=24, bevel=0.0):
     """A cylinder with a real hole down it."""
     obj = cyl(name, radius, length, at, axis, material, sides, bevel)
@@ -338,13 +364,16 @@ def pin(name, at, radius=0.004, proud=0.0015, material=None):
     return cyl(name, radius, (half + proud) * 2, (0, y, z), axis="X", material=material, sides=12, bevel=0.0006)
 
 
-def rig(name, body, parts):
+def rig(name, body, parts, still=None):
     """Skin the model to a skeleton so its moving parts can be animated.
 
     `body` is the mesh that stays put; `parts` maps a bone name to the mesh
-    that bone carries. Every bone sits at the origin with Blender's axes, so
-    a pose location is a plain (x, y, z) offset in metres. Everything is
-    joined into `body`, which is returned with the armature as its parent.
+    that bone carries; `still` is {name: mesh} of other meshes that stay put
+    with the body (the replaceable parts from `split`). Every bone sits at
+    the origin with Blender's axes, so a pose location is a plain (x, y, z)
+    offset in metres. Every mesh stays its own object, parented to the
+    armature, which is returned. A bone's mesh is renamed `<Bone>Mesh`:
+    Godot's importer renames a bone that shares its name with a mesh.
     """
     armature = bpy.data.armatures.new(name + "Armature")
     holder = bpy.data.objects.new(name + "Armature", armature)
@@ -362,16 +391,16 @@ def rig(name, body, parts):
         root = root or bone
     bpy.ops.object.mode_set(mode="OBJECT")
 
-    for mesh, bone_name in [(body, "Body")] + [(m, n) for n, m in parts.items()]:
+    skinned = [(body, "Body")] + [(m, "Body") for m in (still or {}).values()] + [(m, n) for n, m in parts.items()]
+    for mesh, bone_name in skinned:
         world = mesh.matrix_world.copy()
         mesh.parent = None
         mesh.matrix_world = world
+        if mesh in parts.values():
+            mesh.name = mesh.data.name = bone_name + "Mesh"
         mesh.vertex_groups.new(name=bone_name).add(range(len(mesh.data.vertices)), 1.0, "REPLACE")
-        mesh.select_set(True)
-    bpy.context.view_layer.objects.active = body
-    bpy.ops.object.join()
-    body.modifiers.new("Armature", "ARMATURE").object = holder
-    body.parent = holder
+        mesh.modifiers.new("Armature", "ARMATURE").object = holder
+        mesh.parent = holder
     bpy.context.scene.render.fps = 30
     return holder
 

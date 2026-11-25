@@ -139,7 +139,13 @@ body.append(kit.box("rear_base", (0.024, 0.026, 0.008), (0, REAR_SIGHT, TOP + 0.
 body.append(kit.box("rear_stem", (0.007, 0.004, SIGHT - TOP - 0.018), (0, REAR_SIGHT, (SIGHT + TOP) / 2 - 0.0005), metal()))
 body.append(kit.tube("aperture", 0.0085, 0.0058, 0.003, (0, REAR_SIGHT, SIGHT), material=metal(), sides=24))
 
-rifle = kit.join("MarksmanRifle", body)
+# The parts an Attachment can replace are meshes of their own on the body.
+# A bullpup has no stock: its Stocks replace the butt pad and cheek riser.
+rifle, pieces = kit.split("MarksmanRifle", body, {
+    "Barrel": {"barrel", "barrel_ring", "muzzle_flute", "emitter"},
+    "Sights": {"front_ear", "front_base", "front_post", "front_dot", "rear_base", "rear_stem", "aperture"},
+    "Stock": {"butt_pad", "cheek_riser", "cheek_rest", "cheek_screw"},
+})
 
 # The magazine is its own mesh so a reload clip can drop and seat it.
 magazine = kit.join("Magazine", [
@@ -159,12 +165,12 @@ bolt = kit.join("Bolt", [
 ])
 
 kit.report()
-kit.bake("marksman_rifle", [rifle, magazine, bolt])
+kit.bake("marksman_rifle", [rifle, *pieces.values(), magazine, bolt])
 
 # Skeleton and the clips the Viewmodel plays, named in the Weapon Profile.
 # Keyed at 60 frames a second, from frame 0: the exporter times a key at its
 # frame over the frame rate.
-armature = kit.rig("MarksmanRifle", rifle, {"Bolt": bolt, "Magazine": magazine})
+armature = kit.rig("MarksmanRifle", rifle, {"Bolt": bolt, "Magazine": magazine}, pieces)
 FPS = 60
 bpy.context.scene.render.fps = FPS
 
@@ -195,6 +201,11 @@ kit.clip(armature, "rack", {"Bolt": [(f(0), REST), (f(0.10), STROKE), (f(0.18), 
 kit.marker("Muzzle", (0, -0.656, BORE), rifle)
 kit.marker("SightTip", (0, FRONT_SIGHT, SIGHT), rifle)
 kit.marker("SightRear", (0, REAR_SIGHT, SIGHT), rifle)
+# Where shared Attachments go: the top of the rail, the muzzle's tip and the
+# underside of the fore-end ahead of the trigger.
+kit.marker("MountSight", (0, 0.095, 0.095), rifle)
+kit.marker("MountMuzzle", (0, -0.656, BORE), rifle)
+kit.marker("MountUnder", (0, -0.215, 0.023), rifle)
 
 kit.export("marksman_rifle")
 kit.render("marksman_rifle")
