@@ -98,7 +98,9 @@ var _open_slot := ""
 var _menu_root: Control
 var _screen: Control
 var _body: Control
-var _spinners: Array[Node3D] = []
+## How far he has turned the gun by dragging it: yaw and pitch, radians.
+var _turn := Vector2.ZERO
+var _pivots: Array[Node3D] = []
 
 
 func _ready() -> void:
@@ -155,9 +157,21 @@ func _unhandled_input(event: InputEvent) -> void:
 	get_viewport().set_input_as_handled()
 
 
-func _process(delta: float) -> void:
-	for spinner in _spinners:
-		spinner.rotate_y(delta * 0.6)
+## Drag on the gun to turn it freely; it stays where he leaves it.
+func _on_gun_input(event: InputEvent) -> void:
+	if event is InputEventMouseMotion and event.button_mask & MOUSE_BUTTON_MASK_LEFT:
+		_turn.x += event.relative.x * 0.01
+		_turn.y = clampf(_turn.y + event.relative.y * 0.01, -PI / 2, PI / 2)
+		_pose_guns()
+	elif event is InputEventMouseButton and event.double_click:
+		_turn = Vector2.ZERO
+		_pose_guns()
+
+
+func _pose_guns() -> void:
+	# The camera looks down -X, so across the screen is Z and up it is Y.
+	for pivot in _pivots:
+		pivot.basis = Basis(Vector3.BACK, _turn.y) * Basis(Vector3.UP, _turn.x)
 
 
 # --- The Loadout itself -----------------------------------------------------
@@ -293,12 +307,14 @@ func _bars(weapon: String, width: float) -> VBoxContainer:
 	return box
 
 
-## The gun turning in a little world of its own.
+## The gun side-on in a little world of its own, turned by dragging.
 func _preview(weapon: String, size: Vector2) -> SubViewportContainer:
 	var container := SubViewportContainer.new()
 	container.custom_minimum_size = size
 	container.stretch = true
-	container.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	container.mouse_filter = Control.MOUSE_FILTER_STOP
+	container.mouse_default_cursor_shape = Control.CURSOR_DRAG
+	container.gui_input.connect(_on_gun_input)
 	var viewport := SubViewport.new()
 	viewport.own_world_3d = true
 	viewport.transparent_bg = true
@@ -326,13 +342,13 @@ func _preview(weapon: String, size: Vector2) -> SubViewportContainer:
 	var model: Node3D = load("res://scenes/weapons/%s_model.tscn" % FILES[weapon]).instantiate()
 	model.position = Vector3(0, -0.07, 0.0 if weapon == "Pistol" else 0.08)
 	pivot.add_child(model)
-	pivot.rotation_degrees.y = 20
-	_spinners.append(pivot)
+	_pivots.append(pivot)
+	_pose_guns()
 	return container
 
 
 func _rebuild() -> void:
-	_spinners.clear()
+	_pivots.clear()
 	for child in _screen.get_children():
 		child.queue_free()
 	var shade := ColorRect.new()
