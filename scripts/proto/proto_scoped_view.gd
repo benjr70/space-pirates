@@ -23,6 +23,8 @@ extends Node
 ##   F8 F9     how much the view around the lens zooms (lens view only)
 ##   F10       reticle: dot / cross / chevron
 ##   9 0       eye nearer to / further from the sight
+##   [ ]       lens view: blur of everything outside the lens, less / more
+##   - =       lens view: darkness fading in toward the screen's edge, less / more
 ##   F2        cannot die, on/off (starts on)
 ##
 ## The mouse slows by the magnification in every view.
@@ -34,8 +36,8 @@ const OWN_ZOOM := 3.0
 const RED_DOT_ZOOM := 1.36
 ## The lens shows this much of the screen's half-height of scope picture, so
 ## sway never runs off its edge.
-const PIP_SPAN := 0.7
-const PIP_SIZE := 640
+const PIP_SPAN := 1.15
+const PIP_SIZE := 1024
 const VIEWMODEL_LAYER := 2
 
 const LENS_SHADER := """
@@ -125,6 +127,31 @@ void fragment() {
 }
 """
 
+## Everything outside the lens out of focus, going black toward the edge of
+## the screen: the eye is on the glass, not on the room.
+const SURROUND_SHADER := """
+shader_type canvas_item;
+uniform sampler2D screen : hint_screen_texture, filter_linear_mipmap, repeat_disable;
+uniform vec2 lens_centre = vec2(0.0);
+uniform float lens_radius = 0.3;
+uniform float blur = 3.0;
+uniform float edge = 0.8;
+uniform float amount = 0.0;
+void fragment() {
+	vec2 size = 1.0 / SCREEN_PIXEL_SIZE;
+	vec2 p = (SCREEN_UV - 0.5) * 2.0;
+	p.x *= size.x / size.y;
+	float from_lens = length(p - lens_centre);
+	float outside = smoothstep(lens_radius * 0.97, lens_radius * 1.04, from_lens) * amount;
+	vec3 soft = textureLod(screen, SCREEN_UV, blur).rgb;
+	// Black from a little outside the lens to the corners.
+	float reach = length(vec2(size.x / size.y, 1.0));
+	float dark = smoothstep(lens_radius * 1.3, reach, from_lens) * edge;
+	dark = max(dark, smoothstep(reach * 0.75, reach, from_lens) * step(0.01, edge));
+	COLOR = vec4(soft * (1.0 - dark), outside);
+}
+"""
+
 var _player: Node
 var _view: Node
 var _rifle: WeaponProfile
@@ -137,13 +164,17 @@ var _reflex_lens: MeshInstance3D
 var _pip: SubViewport
 var _pip_camera: Camera3D
 var _overlay: ColorRect
+var _surround_rect: ColorRect
+var _blur := 2.5
+var _edge := 0.7
+var _aimed_amount := 0.0
 var _label: Label
 
-var _which := View.ZOOM
+var _which := View.LENS
 var _magnification := 4.0
 var _surround := 1.25
 var _reticle := 1
-var _eye := 0.10
+var _eye := 0.06
 var _immortal := true
 var _base_sensitivity := 0.0
 
@@ -295,6 +326,17 @@ func _build_overlay() -> void:
 	_overlay.visible = false
 	layer.add_child(_overlay)
 
+	_surround_rect = ColorRect.new()
+	_surround_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_surround_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var surround_shader := Shader.new()
+	surround_shader.code = SURROUND_SHADER
+	var surround_material := ShaderMaterial.new()
+	surround_material.shader = surround_shader
+	_surround_rect.material = surround_material
+	_surround_rect.visible = false
+	layer.add_child(_surround_rect)
+
 	var top := CanvasLayer.new()
 	top.layer = 20
 	add_child(top)
@@ -349,6 +391,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		KEY_F10: _reticle = (_reticle + 1) % RETICLES.size()
 		KEY_9: _eye = maxf(_eye - 0.01, 0.06)
 		KEY_0: _eye = minf(_eye + 0.01, 0.40)
+		KEY_BRACKETLEFT: _blur = maxf(_blur - 0.5, 0.0)
+		KEY_BRACKETRIGHT: _blur = minf(_blur + 0.5, 6.0)
+		KEY_MINUS: _edge = maxf(_edge - 0.1, 0.0)
+		KEY_EQUAL: _edge = minf(_edge + 0.1, 1.0)
 		KEY_F2: _immortal = not _immortal
 		_: return
 	_apply()
@@ -366,7 +412,7 @@ func _power() -> float:
 func _state_line() -> String:
 	var line := "view: %s, magnification %.1fx, reticle %s" % [VIEW_NAMES[_which], _power(), RETICLES[_reticle]]
 	if _which == View.LENS:
-		line += ", view around the lens %.2fx" % _surround
+		line += ", view around the lens %.2fx, blur %.1f, edge dark %.1f" % [_surround, _blur, _edge]
 	if _which != View.OWN:
 		line += ", eye to glass %.2f m" % _eye
 	return line
@@ -401,7 +447,23 @@ func _process(_delta: float) -> void:
 		_pip_camera.fov = rad_to_deg(2.0 * atan(aspect_tan))
 		(_scope_lens.get_active_material(0) as ShaderMaterial).set_shader_parameter("pip_span", PIP_SPAN)
 
-	_label.text = "SCOPED VIEW PROTOTYPE%s\n%s\n\nF5 view   F6 F7 magnification   F8 F9 view around the lens   F10 reticle   9 0 eye distance   F2 cannot die: %s" % [
+	# Lens view: the room around the glass blurs and darkens as the sights come up.
+	var lens_up: bool = aimed and _which == View.LENS
+	_aimed_amount = move_toward(_aimed_amount, 1.0 if lens_up else 0.0, _delta * 6.0)
+	_surround_rect.visible = _aimed_amount > 0.01
+	if _surround_rect.visible:
+		# The lens is drawn with the Viewmodel's own field of view, so that is
+		# the projection that says where it is on screen.
+		var at: Vector3 = camera.global_transform.affine_inverse() * _scope_lens.global_position
+		var scale: float = 1.0 / (maxf(-at.z, 0.01) * tan(deg_to_rad(_view.fov_override) * 0.5))
+		var material := _surround_rect.material as ShaderMaterial
+		material.set_shader_parameter("lens_centre", Vector2(at.x, -at.y) * scale)
+		material.set_shader_parameter("lens_radius", 0.0185 * scale)
+		material.set_shader_parameter("blur", _blur)
+		material.set_shader_parameter("edge", _edge)
+		material.set_shader_parameter("amount", _aimed_amount)
+
+	_label.text = "SCOPED VIEW PROTOTYPE%s\n%s\n\nF5 view   F6 F7 magnification   F8 F9 view around the lens   F10 reticle   9 0 eye distance   [ ] blur   - = edge dark   F2 cannot die: %s" % [
 		"" if holding else "   (wheel to the Marksman Rifle)", _state_line().replace(", ", "\n"), "on" if _immortal else "off"]
 
 
