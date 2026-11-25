@@ -176,11 +176,30 @@ A crew member posted in the Armory, Bridge or a Corridor (and half of
 Quarters): armed and trained, walks patrol routes between Rooms, and hunts
 and fights the Pirate once it spots him.
 
+A Guard carries one of the Pirate's four weapons, bare. Which one is settled
+when the ship is built and is the same on every Retry; richer and larger ships
+arm their Guards more heavily, and a Guard's Post leans its choice. What a
+Guard carries can be seen before a fight starts.
+
 ## Worker
 
 A crew member posted in the Engine, Cargo, Shield or Medbay (and half of
-Quarters): works at props around the ship, and on spotting the Pirate runs to
-raise the nearest Guard or hides. It fights back only when cornered.
+Quarters): works at props around the ship and carries no weapon. On spotting
+the Pirate it runs to raise the Alarm or the nearest Guard, or runs to hide in
+a corner; once the Alarm is up every Worker hides. It never fights.
+
+## Surrender
+
+A Worker with nowhere to run giving up to the Pirate: hands raised, then
+kneeling, for as long as he watches it. It is not a promise: left unwatched it
+hides again, and with the Alarm down a hidden Worker comes out to raise it.
+Guards never surrender.
+
+## Bound
+
+A surrendered Worker the Pirate has tied up. It stays where it is for the rest
+of the Raid and tells no one, but crew who find it know he is aboard, as they
+would from a body.
 
 ## Alarm
 
@@ -327,8 +346,8 @@ reload with nothing gained, and it is refused only during a Clamber.
 ## Pistol
 
 The Pirate's handgun: semi-automatic, one shot per trigger press, firing a
-projectile like every other weapon in the game. Crew carry it too: a Guard's
-Pistol is the Pirate's Pistol, handled with a Guard's Gunnery. Nothing in Space Pirates is
+projectile like every other weapon in the game. It is the lightest of the
+four weapons a Guard may carry. Nothing in Space Pirates is
 hitscan, so every weapon is a variation on the same shot. A dry pull, the
 trigger on an empty magazine, clicks once and starts the reload; the HUD's
 crosshair opens with the Pistol's spread, and a landed hit flashes a marker
@@ -435,13 +454,15 @@ Pistol and the Assault Rifle, bare.
 ## Sandbox
 
 Every weapon in the game taken together, and how their numbers sit against
-each other: every Weapon Profile, each crew type's Gunnery, and the Health of
+each other: every Weapon Profile, each weapon's Gunnery, and the Health of
 the Pirate and the crew. Balancing is done to the Sandbox, never to one weapon
 alone. How crew see, move and take cover is behaviour, not Sandbox.
 
 ## Gunnery
 
-How well a wielder handles a weapon, apart from what the weapon is: the aim
-error it adds to the weapon's own cone, how long a burst it fires, how long it
-pauses between bursts and how far off it opens fire. Each crew type has its
-own Gunnery. The Pirate has none: the player's hands are his.
+How well a Guard handles one kind of weapon, apart from what the weapon is:
+the aim error it adds to the weapon's own cone, how wide its aim opens on
+first sight and how fast it closes, how long its bursts are and how long it
+stays down between them, how far it leads a moving Pirate, how far off it
+likes to fight and how slowly it reloads. There is one Gunnery per weapon. The Pirate has none: the player's
+hands are his.
