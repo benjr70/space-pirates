@@ -7,7 +7,7 @@ extends RefCounted
 ## and save them. The in-Raid sheet draws it; [SandboxSheet] renders it as
 ## Markdown.
 ##
-## A new kind of table (Gunnery, one Resource per crew type) is
+## A new kind of table (Gunnery, one Resource per weapon) is
 ## [method from_resources] over its Resources; a new derived row is
 ## [method add_derived]; a new exported field on a Resource is a new row
 ## with no change here.

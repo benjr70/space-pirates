@@ -9,6 +9,8 @@ extends SceneTree
 const STEP := 1.0 / 60.0
 ## The crew member stands here facing -Z, down the Room's length.
 const CREW_AT := Vector3(4.0, 0.0, 19.5)
+## Seconds a cornered Worker is watched for a shot.
+const CORNERED_SECONDS := 30.0
 
 var failures: Array[String] = []
 var checks := 0
@@ -557,8 +559,8 @@ func _has_fired(crew: Crew3D) -> bool:
 
 
 ## A Worker that spots the Pirate 8 m off runs for the Guard behind it and
-## does not shoot; cornered at 2.5 m it fires its pistol. Workers wear
-## the Engineer, Guards the Soldier.
+## does not shoot; cornered within 3 m it carries no weapon, never fires in
+## 30 s and cowers. Workers wear the Engineer, Guards the Soldier.
 func _check_worker() -> void:
 	var guard := _crew(CrewTypes.Type.GUARD)
 	guard.global_position = Vector3(1.5, 0.0, 23.0)
@@ -585,14 +587,32 @@ func _check_worker() -> void:
 	guard.free()
 
 	var cornered := _crew(CrewTypes.Type.WORKER)
+	_expect(cornered.weapon == null and cornered.gunnery == null,
+			"cornered: a Worker carries %s with Gunnery %s" % [cornered.weapon, cornered.gunnery])
 	_place(2.5)
-	fired = false
+	var bolts := 0
+	var counter := func(node: Node) -> void:
+		if node is Projectile3D and (node as Projectile3D).shooter == cornered:
+			bolts += 1
+	var shots: Node = get_first_node_in_group(&"projectiles")
+	shots.child_entered_tree.connect(counter)
+	var cornered_frames := 0
+	var away := Vector3.FORWARD * 2.5
 	cornered.set_physics_process(true)
-	for i in 90:
+	for i in roundi(CORNERED_SECONDS / STEP):
+		# He stays on top of it, 2.5 m off, wherever it cowers to.
+		player.global_position = cornered.global_position + away
 		await physics_frame
-		fired = fired or _has_fired(cornered)
+		if cornered._cornered():
+			cornered_frames += 1
 	cornered.set_physics_process(false)
-	_expect(fired, "a Worker cornered at 2.5 m never fired")
+	shots.child_entered_tree.disconnect(counter)
+	var frames := roundi(CORNERED_SECONDS / STEP)
+	_expect(cornered_frames * 10 >= frames * 9,
+			"cornered: the Worker had him in sight within 3 m on only %d of %d frames" % [cornered_frames, frames])
+	_expect(bolts == 0 and not _has_fired(cornered), "cornered: a Worker fired %d bolts in %.0f s within 3 m" % [bolts, CORNERED_SECONDS])
+	_expect(cornered.state == Crew3D.State.COWER, "cornered: a Worker is in state %d after %.0f s, not cowering" % [cornered.state, CORNERED_SECONDS])
+	_expect(cornered.weapon == null, "cornered: a Worker picked up %s" % cornered.weapon)
 	cornered.free()
 	for shot in get_first_node_in_group(&"projectiles").get_children():
 		shot.free()
@@ -771,40 +791,53 @@ func _check_aim() -> void:
 	guard.free()
 
 
-## Crew fire the Pistol, handled with their type's Gunnery: a shot carries
-## the Pistol's damage, speed and lifetime, live; the cone is the Pistol's
-## base plus the Gunnery's aim error; burst, pause and engage range are the
-## Gunnery's, give or take spawn jitter.
+## One Gunnery per weapon, each file with the spec's starting numbers; a
+## Guard holds its gun's Gunnery and fires that gun: its damage, projectile
+## and time between shots live, every pellet of a Shotgun shot, the
+## Marksman Rifle's 200 m/s bolt; bursts of its Gunnery's shots per burst
+## and time down after; its cone the gun's base plus the Gunnery's aim
+## error.
 func _check_gunnery() -> void:
-	var pistol: WeaponProfile = load("res://resources/weapons/pistol.tres")
-	var guard_gunnery: Gunnery = load("res://resources/gunnery/guard.tres")
-	var worker_gunnery: Gunnery = load("res://resources/gunnery/worker.tres")
-	_expect(guard_gunnery != null and worker_gunnery != null, "gunnery: the Guard or Worker Gunnery resource is missing")
-	if guard_gunnery == null or worker_gunnery == null:
-		return
-	_expect(is_equal_approx(guard_gunnery.aim_error_degrees, 6.0) and guard_gunnery.burst_length == 3
-			and is_equal_approx(guard_gunnery.pause_between_bursts, 1.1) and is_equal_approx(guard_gunnery.engage_range, 10.6),
-			"gunnery: the Guard's is not 6 degrees, 3 rounds, 1.1 s, 10.6 m")
-	_expect(is_equal_approx(worker_gunnery.aim_error_degrees, 11.0) and worker_gunnery.burst_length == 2
-			and is_equal_approx(worker_gunnery.pause_between_bursts, 1.1) and is_equal_approx(worker_gunnery.engage_range, 10.6),
-			"gunnery: the Worker's is not 11 degrees, 2 rounds, 1.1 s, 10.6 m")
+	# {file: [aim error, range near, range far, shots low, shots high, time down low, high]}
+	var want := {
+		"pistol": [7.5, 4.0, 8.0, 2, 3, 1.0, 2.0],
+		"assault_rifle": [6.0, 5.0, 10.0, 3, 5, 1.5, 2.5],
+		"shotgun": [8.0, 2.0, 5.0, 1, 1, 1.2, 1.5],
+		"marksman_rifle": [0.0, 8.0, 14.0, 1, 1, 2.5, 4.0],
+	}
+	_expect(Gunnery.PATHS.size() == 4, "gunnery: %d Gunnery files listed, want 4" % Gunnery.PATHS.size())
+	_expect(not ResourceLoader.exists("res://resources/gunnery/guard.tres") and not ResourceLoader.exists("res://resources/gunnery/worker.tres"),
+			"gunnery: the Guard or Worker Gunnery file is still there")
+	for path in Gunnery.PATHS:
+		var gunnery: Gunnery = ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE)
+		var key := path.get_file().get_basename()
+		_expect(gunnery != null and want.has(key), "gunnery: %s does not load" % path)
+		if gunnery == null or not want.has(key):
+			continue
+		var w: Array = want[key]
+		_expect(is_equal_approx(gunnery.aim_error_degrees, w[0]), "gunnery: %s aim error is %s degrees, want %s" % [key, gunnery.aim_error_degrees, w[0]])
+		_expect(is_equal_approx(gunnery.range_near, w[1]) and is_equal_approx(gunnery.range_far, w[2]),
+				"gunnery: %s range band is %s to %s m, want %s to %s" % [key, gunnery.range_near, gunnery.range_far, w[1], w[2]])
+		_expect(gunnery.shots_per_burst_low == w[3] and gunnery.shots_per_burst_high == w[4],
+				"gunnery: %s shots per burst %d to %d, want %d to %d" % [key, gunnery.shots_per_burst_low, gunnery.shots_per_burst_high, w[3], w[4]])
+		_expect(is_equal_approx(gunnery.time_down_low, w[5]) and is_equal_approx(gunnery.time_down_high, w[6]),
+				"gunnery: %s time down %s to %s s, want %s to %s" % [key, gunnery.time_down_low, gunnery.time_down_high, w[5], w[6]])
+		_expect(is_equal_approx(gunnery.opening_spread, 3.0) and is_equal_approx(gunnery.closing_time, 2.0)
+				and is_equal_approx(gunnery.reload_factor, 1.5), "gunnery: %s opening spread, closing time or reload factor is off" % key)
 
+	var pistol: WeaponProfile = load("res://resources/weapons/pistol.tres")
 	var guard := _crew()
-	var worker := _crew(CrewTypes.Type.WORKER)
-	_expect(guard.weapon == pistol and worker.weapon == pistol, "gunnery: crew do not hold the Pirate's Pistol")
-	_expect(guard.gunnery == guard_gunnery and worker.gunnery == worker_gunnery, "gunnery: crew do not hold their type's Gunnery")
-	_expect(is_equal_approx(guard.base_cone_degrees(), 7.0), "gunnery: a Guard's cone is %.1f degrees, want 1 + 6" % guard.base_cone_degrees())
-	_expect(is_equal_approx(worker.base_cone_degrees(), 12.0), "gunnery: a Worker's cone is %.1f degrees, want 1 + 11" % worker.base_cone_degrees())
-	_expect(worker.burst_length == 2, "gunnery: a Worker fires %d-round bursts, want 2" % worker.burst_length)
-	_expect(absi(guard.burst_length - 3) <= 1, "gunnery: a Guard fires %d-round bursts, want 3 give or take 1" % guard.burst_length)
-	_expect(guard.engage_range() == guard_gunnery.engage_range, "gunnery: a Guard's engage range is not its Gunnery's")
+	_expect(guard.weapon == pistol and guard.gunnery == load(Gunnery.PATHS[0]),
+			"gunnery: a Guard given no gun does not hold the Pistol and its Gunnery")
+	_expect(is_equal_approx(guard.base_cone_degrees(), 8.5), "gunnery: a Pistol Guard's cone is %.1f degrees, want 1 + 7.5" % guard.base_cone_degrees())
+	_expect(guard.burst_length >= 2 and guard.burst_length <= 3, "gunnery: a Pistol Guard fires a %d-round burst, want 2 to 3" % guard.burst_length)
 
 	_place(5.0)
 	guard.face_direction(Vector3.FORWARD)
 	guard._aim = Vector3.FORWARD
 	var shot := guard._fire()
 	_expect(shot != null and shot.damage == 25 and is_equal_approx(shot.speed, 80.0) and is_equal_approx(shot.lifetime, 0.5),
-			"gunnery: a crew shot is not the Pistol's 25 damage at 80 m/s for 0.5 s")
+			"gunnery: a Pistol Guard's shot is not the Pistol's 25 damage at 80 m/s for 0.5 s")
 	_expect(guard._shot_timer > pistol.fire_interval * CrewCombat.JITTER.x - 0.001
 			and guard._shot_timer < pistol.fire_interval * CrewCombat.JITTER.y + 0.001,
 			"gunnery: %.3f s to the next shot is not the Pistol's %.2f s, jittered" % [guard._shot_timer, pistol.fire_interval])
@@ -817,19 +850,62 @@ func _check_gunnery() -> void:
 	pistol.projectile_speed = 80.0
 	while guard._shots_left > 0:
 		guard._fire()
-	var pause := guard_gunnery.pause_between_bursts
-	_expect(guard._reload_timer > pause * CrewCombat.JITTER.x - 0.001 and guard._reload_timer < pause * CrewCombat.JITTER.y + 0.001,
-			"gunnery: a spent burst pauses %.2f s, not the Gunnery's %.1f s, jittered" % [guard._reload_timer, pause])
-	guard_gunnery.engage_range = 4.0
-	_expect(guard.engage_range() == 4.0, "gunnery: dialling the Guard Gunnery's engage range did not reach the Guard")
-	guard_gunnery.engage_range = 10.6
-	guard_gunnery.aim_error_degrees = 2.0
-	_expect(is_equal_approx(guard.base_cone_degrees(), 3.0), "gunnery: dialling the Guard's aim error did not reach its cone")
-	guard_gunnery.aim_error_degrees = 6.0
+	var pistol_gunnery: Gunnery = guard.gunnery
+	_expect(guard._reload_timer >= pistol_gunnery.time_down_low - 0.001 and guard._reload_timer <= pistol_gunnery.time_down_high + 0.001,
+			"gunnery: a spent burst stays down %.2f s, not the Pistol Gunnery's %.1f to %.1f s"
+			% [guard._reload_timer, pistol_gunnery.time_down_low, pistol_gunnery.time_down_high])
+	pistol_gunnery.aim_error_degrees = 2.0
+	_expect(is_equal_approx(guard.base_cone_degrees(), 3.0), "gunnery: dialling the Pistol Gunnery's aim error did not reach its cone")
+	pistol_gunnery.aim_error_degrees = 7.5
 	guard.free()
-	worker.free()
+
+	# Each gun fired by a Guard, as the ship build arms it.
+	var bursts := {}
+	for i in 4:
+		var gun: WeaponProfile = GunRoll.weapon(i)
+		var armed := _armed(gun)
+		_expect(armed.gunnery == load(Gunnery.PATHS[i]), "gunnery: a %s Guard does not hold that gun's Gunnery" % Gunnery.NAMES[i])
+		_expect(is_equal_approx(armed.base_cone_degrees(), gun.spread_base_degrees + armed.gunnery.aim_error_degrees),
+				"gunnery: a %s Guard's cone is %.1f degrees" % [Gunnery.NAMES[i], armed.base_cone_degrees()])
+		armed._aim = Vector3.FORWARD
+		var first := armed._fire()
+		_expect(first != null and armed.last_pellets.size() == gun.pellet_count and first.damage == gun.damage
+				and is_equal_approx(first.lifetime, gun.projectile_lifetime),
+				"gunnery: a %s Guard's shot is %d projectiles of %s damage, want %d of %d"
+				% [Gunnery.NAMES[i], armed.last_pellets.size(), first.damage if first else "no", gun.pellet_count, gun.damage])
+		if i == GunRoll.SHOTGUN:
+			_expect(armed.last_pellets.size() == 12, "gunnery: a Shotgun Guard's shot spawns %d projectiles, want 12" % armed.last_pellets.size())
+		if i == GunRoll.MARKSMAN_RIFLE:
+			_expect(first != null and absf(first.speed - 200.0) <= 2.0,
+					"gunnery: a Marksman Rifle Guard's bolt travels at %s m/s, want 200 within 1%%" % (first.speed if first else "no"))
+		var lengths := {}
+		for n in 60:
+			armed._new_burst()
+			lengths[armed.burst_length] = true
+		bursts[Gunnery.NAMES[i]] = lengths.keys()
+		var low: int = armed.gunnery.shots_per_burst_low
+		var high: int = armed.gunnery.shots_per_burst_high
+		_expect(lengths.keys().all(func(n: int) -> bool: return n >= low and n <= high) and lengths.size() == high - low + 1,
+				"gunnery: a %s Guard's bursts run %s rounds, want every length %d to %d" % [Gunnery.NAMES[i], lengths.keys(), low, high])
+		armed.free()
 	for bolt in get_first_node_in_group(&"projectiles").get_children():
 		bolt.free()
+
+
+## A Guard carrying [param gun] and its Gunnery, as [ShipBuilder3D] arms
+## one, stood at CREW_AT.
+func _armed(gun: WeaponProfile) -> Crew3D:
+	var crew: Crew3D = load("res://scenes/crew_3d.tscn").instantiate()
+	crew.crew_type = CrewTypes.Type.GUARD
+	crew.weapon = gun
+	crew.gunnery = Gunnery.for_weapon(gun)
+	crew.target = player
+	crew.layout = layout
+	crew.position = CREW_AT
+	world.add_child(crew)
+	crew.set_physics_process(false)
+	crew.routine = null
+	return crew
 
 
 ## Two Guards fighting the Pirate for 10 s never start a burst on the same

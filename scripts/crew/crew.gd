@@ -59,10 +59,9 @@ const CHAT_TIME := Vector2(3.0, 5.0)
 const CHAT_COOLDOWN := 40.0
 ## Seconds walking toward one Job before giving it up as unreachable.
 const JOB_GIVE_UP := 30.0
-## A Worker fights only with the Pirate this close and in sight, and goes
-## back to running once he is further than CORNER_RELEASE.
+## A Worker with the Pirate this close and in sight is cornered: it cowers
+## where it is rather than run.
 const CORNERED_RANGE := 3.0
-const CORNER_RELEASE := 5.0
 ## Chance a spotted Worker hides where it is rather than run for a Guard.
 const HIDE_CHANCE := 0.25
 ## A fleeing Worker has reached its Guard this close, and raises it.
@@ -123,6 +122,9 @@ static var _bolt_ball := _ball(MUZZLE_BALL)
 ## A spot it moves to for a clear shot is at least this far from where it
 ## stands, so it steps out from cover rather than shuffling against it.
 const FIRING_STEP := 1.0
+## Metres off the Pirate a Guard opens fire from, whatever its gun, until
+## the cover ticket of the crew-combat spec replaces FIGHT.
+const ENGAGE_RANGE := 10.6
 
 @export_group("Movement")
 @export var max_speed := 3.59
@@ -137,13 +139,15 @@ const FIRING_STEP := 1.0
 @export var lose_target_after := 3.0
 
 @export_group("Gunnery")
-## What they fire: the Pirate's own Pistol, the same live Resource, so a
-## Sandbox sheet edit reaches crew shots too. Crew read its damage, bolt and
-## time between shots, and ignore its magazine, reloads, bloom, Aim Down
-## Sights, recoil and Viewmodel: they fire a burst and pause.
+## What a Guard fires: one of the Pirate's four bare weapons, the same live
+## Resource, rolled by [ShipBuilder3D] ([GunRoll]); the Pistol unless set.
+## A Sandbox sheet edit reaches crew shots too. Crew read its damage,
+## projectile, pellets, time between shots, sounds and loudness, and ignore
+## its magazine, reloads, bloom, Aim Down Sights, recoil and Viewmodel: they
+## fire a burst and pause. A Worker carries nothing: null from spawn.
 @export var weapon: WeaponProfile = preload("res://resources/weapons/pistol.tres")
-## How they handle it ([Gunnery]): aim error, burst, pause, engage range.
-## Left empty, it is their crew type's at spawn.
+## How a Guard handles it ([Gunnery]): aim error, shots per burst, time
+## down. Left empty, it is the weapon's own at spawn; a Worker has none.
 @export var gunnery: Gunnery
 @export var projectile_scene: PackedScene = preload("res://scenes/projectile_3d.tscn")
 ## How loud their shot rings at the muzzle. What it sounds like is the
@@ -222,17 +226,14 @@ var _aim := Vector3.FORWARD
 var _shots_left := 0
 var _shot_timer := 0.0
 var _reload_timer := 0.0
-## This crew member's own rhythm, drawn at spawn over its Gunnery and
-## weapon's base values: a Guard's burst a round longer or shorter, and
-## multipliers on time between shots and the pause between bursts.
-var _burst_offset := 0
+## This crew member's own rhythm, drawn at spawn over its weapon's base
+## values: a multiplier on the time between shots.
 var _gap_jitter := 1.0
-var _pause_jitter := 1.0
-## Shots in this crew member's bursts: its Gunnery's, give or take its own
-## spawn offset, never under one.
-var burst_length: int:
-	get:
-		return maxi(gunnery.burst_length + _burst_offset, 1)
+## Shots in the burst it is on: drawn from its Gunnery's shots per burst
+## as each burst starts; 0 for a Worker.
+var burst_length := 0
+## The projectiles of its last shot: one, or a Shotgun's pellets.
+var last_pellets: Array[Projectile3D] = []
 ## Counts down inside states that wait: holding cover, pausing on patrol.
 var _hold_timer := 0.0
 var _repath_timer := 0.0
@@ -287,15 +288,15 @@ func _ready() -> void:
 		target = get_tree().get_first_node_in_group(&"player")
 	# Seeded off the global RNG (randomized at launch) so a test can replay it.
 	_rng.seed = randi()
-	if gunnery == null:
-		gunnery = Gunnery.for_type(crew_type)
-	if not is_worker():
-		# No two Guards keep the same rhythm.
-		_burst_offset = _rng.randi_range(-1, 1)
+	if is_worker():
+		# Workers are unarmed.
+		weapon = null
+		gunnery = null
+	elif gunnery == null:
+		gunnery = Gunnery.for_weapon(weapon)
 	_gap_jitter = CrewCombat.jitter(_rng)
-	_pause_jitter = CrewCombat.jitter(_rng)
 	cover_hold_time *= CrewCombat.jitter(_rng)
-	_shots_left = burst_length
+	_new_burst()
 	_dress()
 	_anim = _find_animation_player(model)
 	if _anim != null:
@@ -367,12 +368,21 @@ func get_team() -> StringName:
 ## ([method CrewCombat.spread]): the weapon's base cone plus its Gunnery's
 ## aim error.
 func base_cone_degrees() -> float:
-	return weapon.spread_base_degrees + gunnery.aim_error_degrees
+	if weapon == null:
+		return 0.0
+	return weapon.spread_base_degrees + (gunnery.aim_error_degrees if gunnery != null else 0.0)
 
 
-## Metres off the Pirate this crew member opens fire from: its Gunnery's.
+## Metres off the Pirate this crew member opens fire from:
+## [constant ENGAGE_RANGE], whatever its gun.
 func engage_range() -> float:
-	return gunnery.engage_range
+	return ENGAGE_RANGE
+
+
+## Starts a fresh burst: its Gunnery's shots per burst, drawn.
+func _new_burst() -> void:
+	burst_length = gunnery.draw_shots(_rng) if gunnery != null else 0
+	_shots_left = burst_length
 
 
 func apply_sandbox() -> void:
@@ -404,9 +414,9 @@ func take_damage(amount: int, from: Node = null) -> void:
 	match state:
 		State.PATROL, State.SEARCH, State.INVESTIGATE:
 			_react_spotted()
-		State.FLEE, State.COWER:
+		State.FLEE:
 			if _cornered():
-				_enter(State.FIGHT)
+				_enter(State.COWER)
 		State.FIGHT:
 			if _rng.randf() < 0.6:
 				_enter(State.COVER)
@@ -592,14 +602,14 @@ func _in_combat() -> bool:
 
 
 ## Just spotted him: a Guard hunts him; a Worker runs, unless he is right
-## on top of it, when it fights.
+## on top of it, when it cowers where it is.
 func _react_spotted() -> void:
 	if not is_worker():
 		_enter(State.HUNT)
 		_share_timer = CrewCombat.SHARE_EVERY
 		CrewCombat.share(self, _last_seen)
 	elif _cornered():
-		_enter(State.FIGHT)
+		_enter(State.COWER)
 	else:
 		_enter(State.FLEE)
 
@@ -682,7 +692,7 @@ func _enter(next: State) -> void:
 		State.FIGHT:
 			_path.clear()
 			_stepping_out = false
-			_shots_left = burst_length
+			_new_burst()
 			# A beat before the first shot, different every time.
 			_shot_timer = _rng.randf_range(0.05, 0.35)
 		State.COVER:
@@ -965,9 +975,9 @@ func _tick_hunt() -> void:
 
 
 func _tick_fight() -> void:
-	if is_worker() and not _cornered() and target != null and is_instance_valid(target) \
-			and _flat_distance(global_position, target.global_position) > CORNER_RELEASE:
-		_enter(State.FLEE)
+	if is_worker():
+		# Unarmed: nothing to fight with.
+		_enter(State.COWER)
 		return
 	if _seen_ago > lose_target_after:
 		_enter(_lost_state())
@@ -1018,10 +1028,10 @@ func _tick_cover() -> void:
 
 
 ## A Worker running to the nearest Guard to raise it; it hides on arrival,
-## and fights only if cornered on the way.
+## and cowers where it is if cornered on the way.
 func _tick_flee() -> void:
 	if _cornered():
-		_enter(State.FIGHT)
+		_enter(State.COWER)
 		return
 	if _flee_panel != null:
 		if _flee_panel.broken or _alarm_raised():
@@ -1049,12 +1059,9 @@ func _tick_flee() -> void:
 		_repath_to(_flee_to.global_position)
 
 
-## Tucked behind cover; fights only if cornered, and once nothing has been
-## seen for a while creeps back to its routine.
+## Tucked behind cover, cornered or not, and once nothing has been seen for
+## a while creeps back to its routine.
 func _tick_cower() -> void:
-	if _cornered():
-		_enter(State.FIGHT)
-		return
 	if _can_see or _alarm_raised():
 		# Under the Alarm a Worker stays hidden for good.
 		_hold_timer = COWER_CALM
@@ -1509,29 +1516,53 @@ func _face() -> void:
 
 # --- gunnery ------------------------------------------------------------------
 
+## One shot of its gun: every pellet of it, each thrown inside the cone on
+## its own, with the gun's shot sound, action sound and loudness. Returns
+## the first projectile ([member last_pellets] holds them all), or null
+## unarmed.
 func _fire() -> Projectile3D:
-	if projectile_scene == null or weapon == null:
+	last_pellets.clear()
+	if projectile_scene == null or weapon == null or gunnery == null:
 		return null
 	_shots_left -= 1
 	_shot_timer = weapon.fire_interval * _gap_jitter
 	if _shots_left <= 0:
-		_reload_timer = gunnery.pause_between_bursts * _pause_jitter
+		_reload_timer = gunnery.draw_time_down(_rng)
 
 	var cone := CrewCombat.spread(base_cone_degrees(), _exposed_for)
-	var spread := deg_to_rad(_rng.randf_range(-cone, cone))
-	var direction := _aim.rotated(Vector3.UP, spread)
-	var origin := global_position + Vector3.UP * MUZZLE_HEIGHT + direction * MUZZLE_FORWARD
-	var shot: Projectile3D = projectile_scene.instantiate()
-	shot.damage = weapon.damage
-	shot.headshot_multiplier = weapon.headshot_multiplier
-	shot.speed = weapon.projectile_speed
-	shot.lifetime = weapon.projectile_lifetime
-	shot.launch(origin, direction, self, TEAM)
-	_shot_parent().add_child(shot)
+	var origin := global_position + Vector3.UP * MUZZLE_HEIGHT + _aim * MUZZLE_FORWARD
+	for i in maxi(weapon.pellet_count, 1):
+		var spread := deg_to_rad(_rng.randf_range(-cone, cone))
+		var direction := _aim.rotated(Vector3.UP, spread)
+		var shot: Projectile3D = projectile_scene.instantiate()
+		shot.damage = weapon.damage
+		shot.headshot_multiplier = weapon.headshot_multiplier
+		shot.speed = weapon.projectile_speed
+		shot.lifetime = weapon.projectile_lifetime
+		shot.launch(global_position + Vector3.UP * MUZZLE_HEIGHT + direction * MUZZLE_FORWARD, direction, self, TEAM)
+		_shot_parent().add_child(shot)
+		last_pellets.append(shot)
 	if not weapon.shot_sounds.is_empty():
 		SoundAt.play(_shot_parent(), origin, weapon.shot_sounds.pick_random(), shot_volume_db, 0.06, "Shot")
+	if weapon.action_sound != null:
+		_play_action_later(weapon.action_sound, weapon.action_sound_delay)
 	CrewNoise.make(get_tree(), global_position, CrewNoise.Kind.GUNSHOT, weapon.loudness, self)
-	return shot
+	return last_pellets[0]
+
+
+## The gun's action (a pump, a bolt) [param delay] seconds after a shot, at
+## wherever the body is by then. A connection, not an await, so a body
+## freed in between simply plays nothing.
+func _play_action_later(sound: AudioStream, delay: float) -> void:
+	if delay <= 0.0:
+		_play_action(sound)
+	else:
+		get_tree().create_timer(delay, false).timeout.connect(_play_action.bind(sound))
+
+
+func _play_action(sound: AudioStream) -> void:
+	if is_inside_tree():
+		SoundAt.play(_shot_parent(), global_position + Vector3.UP * MUZZLE_HEIGHT, sound, shot_volume_db, 0.06, "Action")
 
 
 func _shot_parent() -> Node:

@@ -97,6 +97,7 @@ static func run(expect: Callable, root: Node) -> void:
 
 	_check_bridge_to_engine(expect, layout, main)
 	_check_crew(expect, layout, main)
+	_check_guns(expect, layout, main)
 	check_hazard_stripes(expect, layout, main)
 
 	root.remove_child(main)
@@ -164,6 +165,52 @@ static func _check_crew(expect: Callable, layout: ShipLayout, main: Node3D) -> v
 			empty_rooms += 1
 	expect.call(armory_crew > 0, "generated: no crew in the armory")
 	expect.call(empty_rooms > 0, "generated: every room is crewed")
+
+
+## Each Guard carries a rolled gun and that gun's Gunnery; no Worker carries
+## either. Building the same layout again gives every Guard the same gun,
+## and so does a build after unrelated draws on the global random stream
+## (which crew spawn and every other build draw comes from).
+static func _check_guns(expect: Callable, layout: ShipLayout, main: Node3D) -> void:
+	var raid_guns := _guns_of(main.get_node("Ship/Crew"))
+	var guards := 0
+	for member: Crew3D in main.get_node("Ship/Crew").get_children():
+		if member.is_worker():
+			expect.call(member.weapon == null and member.gunnery == null,
+					"guns: a Worker in room %d carries %s" % [member.home_room, member.weapon])
+		else:
+			guards += 1
+			expect.call(member.weapon != null and member.weapon in Loadout.WEAPONS
+					and member.gunnery == Gunnery.for_weapon(member.weapon),
+					"guns: a Guard in room %d carries %s with Gunnery %s" % [member.home_room, member.weapon, member.gunnery])
+	expect.call(guards > 0, "guns: the built ship has no Guard")
+	var again := _built_guns(layout)
+	expect.call(again == raid_guns, "guns: building the layout again changed the guns: %s, then %s" % [raid_guns, again])
+	# Unrelated draws on the global stream between builds: the build's
+	# other draws (crew spawn seeds) shift, the guns must not.
+	# Unseeded, so the suite's own seed still replays the rest of the run.
+	for i in 17:
+		randi()
+	var after_draws := _built_guns(layout)
+	expect.call(after_draws == raid_guns, "guns: an extra random draw before the build changed the guns: %s, then %s" % [raid_guns, after_draws])
+
+
+## Every crew member's gun under [param crew], in spawn order: the weapon's
+## file name, or "" for none.
+static func _guns_of(crew: Node) -> PackedStringArray:
+	var out := PackedStringArray()
+	for member: Crew3D in crew.get_children():
+		out.append(member.weapon.resource_path.get_file() if member.weapon != null else "")
+	return out
+
+
+## Builds [param layout] off the tree and reads its crew's guns.
+static func _built_guns(layout: ShipLayout) -> PackedStringArray:
+	var ship := Node3D.new()
+	ShipBuilder3D.build(layout, ship)
+	var guns := _guns_of(ship.get_node("Crew"))
+	ship.free()
+	return guns
 
 
 ## Hazard stripes mark what is not an ordinary door: both leaves of every

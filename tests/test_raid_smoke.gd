@@ -1326,7 +1326,7 @@ func _aim_at(member: Crew3D) -> void:
 ## muzzle to the chest, within SIGHT, not given up on; a fleeing Worker
 ## first, then nearest first. With
 ## [param threats_only], only crew already after him: a Guard hunting or
-## fighting him, a Worker fleeing to raise the Alarm or fighting cornered,
+## fighting him, a Worker fleeing to raise the Alarm,
 ## or anyone suspicious of him (_onto_him).
 func _targets(threats_only: bool) -> Array[Crew3D]:
 	var out: Array[Crew3D] = []

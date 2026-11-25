@@ -94,17 +94,30 @@ Melee from behind (inside the 120.0 degree cone behind the target's facing) kill
 
 ## Gunnery
 
-| | Guard | Worker |
-|---|---|---|
-| **Aim** | | |
-| Aim Error Degrees | 6.0 | 11.0 |
-| **Bursts** | | |
-| Burst Length | 3 | 2 |
-| Pause Between Bursts | 1.1 | 1.1 |
-| **Range** | | |
-| Engage Range | 10.6 | 10.6 |
+| | Pistol | Assault Rifle | Shotgun | Marksman Rifle |
+|---|---|---|---|---|
+| **Aim** | | | | |
+| Aim Error Degrees | 7.5 | 6.0 | 8.0 | 0.0 |
+| Opening Spread | 3.0 | 3.0 | 3.0 | 3.0 |
+| Closing Time | 2.0 | 2.0 | 2.0 | 2.0 |
+| Lead | 0.3 | 0.5 | 0.0 | 1.0 |
+| **Bursts** | | | | |
+| Shots Per Burst Low | 2 | 3 | 1 | 1 |
+| Shots Per Burst High | 3 | 5 | 1 | 1 |
+| Bursts Per Peek | 1 | 2 | 1 | 1 |
+| Gap Between Bursts Low | 0.0 | 0.4 | 0.0 | 0.0 |
+| Gap Between Bursts High | 0.0 | 0.8 | 0.0 | 0.0 |
+| Time Down Low | 1.0 | 1.5 | 1.2 | 2.5 |
+| Time Down High | 2.0 | 2.5 | 1.5 | 4.0 |
+| Settle | 0.35 | 0.35 | 0.35 | 0.9 |
+| **Range** | | | | |
+| Range Near | 4.0 | 5.0 | 2.0 | 8.0 |
+| Range Far | 8.0 | 10.0 | 5.0 | 14.0 |
+| Hold Before Shifting | 4.0 | 8.0 | 4.0 | -1.0 |
+| **Reload** | | | | |
+| Reload Factor | 1.5 | 1.5 | 1.5 | 1.5 |
 
-Crew fire the Pistol: its damage, bolt and time between shots. Aim error adds to the Pistol's base cone. Each crew member draws its own rhythm at spawn: a Guard's burst a round either way, and 0.75-1.35x on time between shots and pause.
+A Guard fires the gun it rolled at ship build: that weapon's damage, projectile, pellets, time between shots and sounds. Aim error adds to the weapon's base cone. Each Guard draws its own 0.75-1.35x on time between shots at spawn. Read today: aim error, shots per burst and time down; the other fields wait for the cover, fair fire and habit rules.
 
 ## Attachments
 

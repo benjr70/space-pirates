@@ -2,7 +2,7 @@ class_name SandboxSheet
 extends RefCounted
 ## Every Sandbox number as tables: the four Weapon Profiles side by side
 ## with their derived rows, the [Sandbox] resource's Health and Melee, each
-## crew type's [Gunnery], and every [Attachment]'s factors. One
+## weapon's [Gunnery], and every [Attachment]'s factors. One
 ## generator for both views of it: the in-Raid sheet ([SandboxSheetView])
 ## edits these tables live and Saves them, and `docs/sandbox.md` is
 ## [method to_markdown] of them, written on Save and by
@@ -32,7 +32,7 @@ var carried: Array[WeaponProfile] = []
 
 
 ## The sheet over these live Resources: the ones the Raid is playing with.
-## [param gunneries] are one [Gunnery] per crew type, in [constant
+## [param gunneries] are one [Gunnery] per weapon, in [constant
 ## Gunnery.NAMES] order; none, and the sheet has no Gunnery table.
 ## [param attachments] are every [Attachment], in [method attachment_paths]
 ## order; none, and no Attachments table.
@@ -52,9 +52,10 @@ static func build(weapons: Array, sandbox_resource: Sandbox, gunneries: Array = 
 	sheet.add_table(health)
 	if not gunneries.is_empty():
 		var gunnery := SheetTable.from_resources(GUNNERY, Gunnery.NAMES.slice(0, gunneries.size()), gunneries)
-		gunnery.add_note("Crew fire the Pistol: its damage, bolt and time between shots. Aim error adds to the Pistol's base cone. "
-				+ "Each crew member draws its own rhythm at spawn: a Guard's burst a round either way, and %s-%sx on time between shots and pause."
-				% [SheetTable.format(CrewCombat.JITTER.x), SheetTable.format(CrewCombat.JITTER.y)])
+		gunnery.add_note("A Guard fires the gun it rolled at ship build: that weapon's damage, projectile, pellets, time between shots and sounds. "
+				+ "Aim error adds to the weapon's base cone. Each Guard draws its own %s-%sx on time between shots at spawn. "
+				% [SheetTable.format(CrewCombat.JITTER.x), SheetTable.format(CrewCombat.JITTER.y)]
+				+ "Read today: aim error, shots per burst and time down; the other fields wait for the cover, fair fire and habit rules.")
 		sheet.add_table(gunnery)
 	if not attachments.is_empty():
 		var names_of := PackedStringArray()

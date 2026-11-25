@@ -25,6 +25,13 @@ var seeds_per_class := SEEDS_PER_CLASS
 var _prefixed := 0
 var _shapes := {}
 var _named := 0
+## The sweep's large ships, for the gun shares at Richness 1.0.
+var _large: Array[ShipLayout] = []
+## Large ships the gun shares are taken over, at the least.
+const GUN_SHARE_SHIPS := 200
+## How far each gun's share may sit from the weights' prediction, points.
+const GUN_SHARE_TOLERANCE := 5.0
+const GUN_NAMES: PackedStringArray = ["Pistol", "Assault Rifle", "Shotgun", "Marksman Rifle"]
 
 
 func _initialize() -> void:
@@ -63,6 +70,9 @@ func _initialize() -> void:
 			sweep.add(report, took)
 			_ship_failures.clear()
 			_check_ship(report, ship_class)
+			_check_guns(report.layout, ship_class)
+			if ship_class == &"large":
+				_large.append(report.layout)
 			_expect(took <= TIME_BUDGET_MS * (report.rerolls + 1),
 					"generation took %.0f ms over %d attempts, budget %.0f ms per attempt" % [took, report.rerolls + 1, TIME_BUDGET_MS])
 			_check_deterministic(report, ship_class, seed)
@@ -83,6 +93,10 @@ func _initialize() -> void:
 	_check_name_distribution()
 	for f in _ship_failures:
 		failures.append("name sweep: %s" % f)
+	_ship_failures.clear()
+	_check_gun_shares()
+	for f in _ship_failures:
+		failures.append("gun roll: %s" % f)
 	_report()
 	quit(1 if failures.size() > 0 else 0)
 
@@ -310,6 +324,79 @@ func _check_ship(report: ShipGenerator.Report, ship_class: StringName) -> void:
 		_prefixed += 1
 	_shapes[roll.shape] = _shapes.get(roll.shape, 0) + 1
 
+
+
+## The gun roll's caps on one ship ([GunRoll]): no Marksman Rifle on a
+## small ship, at most 1 on a medium and 2 on a large, never two in one
+## Room, and no Room of three or more Guards all Shotguns. Every Guard has
+## a gun and no Worker one.
+func _check_guns(layout: ShipLayout, ship_class: StringName) -> void:
+	var guns := GunRoll.roll(layout)
+	_expect(guns.size() == layout.rooms.size(), "gun roll: %d Rooms rolled of %d" % [guns.size(), layout.rooms.size()])
+	var marksmen := 0
+	for i in mini(guns.size(), layout.rooms.size()):
+		var room := layout.rooms[i]
+		var room_guns: Array = guns[i]
+		_expect(room_guns.size() == room.crew_count, "gun roll: room %d rolled %d of %d crew" % [i, room_guns.size(), room.crew_count])
+		var in_room := 0
+		var shotguns := 0
+		var guards := 0
+		for n in room_guns.size():
+			var gun: int = room_guns[n]
+			var guard := CrewTypes.for_role(room.role, n) == CrewTypes.Type.GUARD
+			_expect(gun >= 0 if guard else gun == GunRoll.NONE,
+					"gun roll: room %d crew %d (%s) rolled %d" % [i, n, "Guard" if guard else "Worker", gun])
+			if not guard:
+				continue
+			guards += 1
+			if gun == GunRoll.MARKSMAN_RIFLE:
+				in_room += 1
+			if gun == GunRoll.SHOTGUN:
+				shotguns += 1
+		marksmen += in_room
+		_expect(in_room <= 1, "gun roll: room %d (%s) holds %d Marksman Rifles" % [i, room.role, in_room])
+		_expect(guards < 3 or shotguns < guards, "gun roll: room %d (%s) of %d Guards is all Shotguns" % [i, room.role, guards])
+	var cap: int = {&"small": 0, &"medium": 1, &"large": 2}[ship_class]
+	_expect(marksmen <= cap, "gun roll: %d Marksman Rifles on a %s ship, cap %d" % [marksmen, ship_class, cap])
+
+
+## Over at least GUN_SHARE_SHIPS large ships at Richness 1.0 (the sweep's,
+## topped up with the seeds after it), each gun's share of the Guards is
+## within GUN_SHARE_TOLERANCE points of what the weights and Post Room
+## multipliers predict for those same Guards.
+func _check_gun_shares() -> void:
+	var ships := _large.duplicate()
+	var next_seed := FIRST_SEED + seeds_per_class
+	while ships.size() < GUN_SHARE_SHIPS:
+		ships.append(ShipGenerator.generate(&"large", next_seed))
+		next_seed += 1
+	var want := [0.0, 0.0, 0.0, 0.0]
+	var got := [0, 0, 0, 0]
+	var guards := 0
+	for layout: ShipLayout in ships:
+		layout.richness = 1.0
+		var guns := GunRoll.roll(layout)
+		for i in layout.rooms.size():
+			var weights := GunRoll.weights_for(layout, layout.rooms[i].role)
+			for gun: int in guns[i]:
+				if gun == GunRoll.NONE:
+					continue
+				guards += 1
+				got[gun] += 1
+				for w in 4:
+					want[w] += weights[w]
+	_expect(guards > 0, "no Guards on %d large ships" % ships.size())
+	if guards == 0:
+		return
+	var line := PackedStringArray()
+	for w in 4:
+		var share: float = 100.0 * got[w] / guards
+		var predicted: float = 100.0 * want[w] / guards
+		line.append("%s %.1f%% (predicted %.1f%%)" % [GUN_NAMES[w], share, predicted])
+		_expect(absf(share - predicted) <= GUN_SHARE_TOLERANCE,
+				"%s is %.1f%% of %d Guards on %d large ships at Richness 1.0, predicted %.1f%%, tolerance %.0f points"
+				% [GUN_NAMES[w], share, guards, ships.size(), predicted, GUN_SHARE_TOLERANCE])
+	print("guns: %d Guards on %d large ships at Richness 1.0: %s" % [guards, ships.size(), ", ".join(line)])
 
 
 ## Over the sweep: prefixed names near 40%, the three shapes near 45/35/20.

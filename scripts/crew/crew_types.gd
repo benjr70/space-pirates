@@ -1,9 +1,9 @@
 class_name CrewTypes
 extends RefCounted
 ## Who a crew member is, decided by the Role of its Post Room: a **Guard**
-## (armed, trained, walks patrol routes, fights) or a **Worker** (works at
-## props, runs for a Guard or hides when it spots the Pirate, fights only
-## when cornered). See `CREW_AI.md`.
+## (armed with one of the Pirate's four weapons, walks patrol routes,
+## fights) or a **Worker** (unarmed, works at props, runs for a Guard or
+## hides when it spots the Pirate, cowers when cornered). See `CREW_AI.md`.
 
 enum Type { GUARD, WORKER }
 
