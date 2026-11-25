@@ -891,6 +891,15 @@ func _check_assault_rifle_full_auto() -> void:
 	var wanted := int(1.0 / ASSAULT_RIFLE.fire_interval)
 	_expect(absi(shots_fired - wanted) <= 2, "a second of held trigger fired %d shots, about %d expected" % [shots_fired, wanted])
 	_expect(player.ammo == ASSAULT_RIFLE.magazine_size - shots_fired, "the Assault Rifle spent %d rounds on %d shots" % [ASSAULT_RIFLE.magazine_size - player.ammo, shots_fired])
+	# Held fire's bloom settles instead of piling up shot on shot, and all of
+	# it is gone `bloom_decay_seconds` after the last shot, however many came
+	# before.
+	var base := ASSAULT_RIFLE.spread_base_degrees * ASSAULT_RIFLE.spread_still
+	_expect(player.spread_degrees() < base + 5.0 * ASSAULT_RIFLE.bloom_per_shot_degrees,
+			"a second of held fire bloomed the cone to %.2f deg from %.2f" % [player.spread_degrees(), base])
+	await _seconds(ASSAULT_RIFLE.bloom_decay_seconds + 0.05)
+	_expect(is_equal_approx(player.spread_degrees(), base),
+			"%.2f s after a burst the cone is still %.2f deg, not %.2f" % [ASSAULT_RIFLE.bloom_decay_seconds, player.spread_degrees(), base])
 	await _frames(2)
 	_clear_shots()
 	player.switch_weapon(-1)

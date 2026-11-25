@@ -236,6 +236,10 @@ var _swap_left := 0.0
 var _stowed_ammo := {}
 ## Degrees of spread the last shots added, decaying back to zero.
 var _bloom := 0.0
+## Degrees a second the bloom drains at, set by each shot so that all of it,
+## however many shots built it, is gone `bloom_decay_seconds` after the last.
+## Held fire therefore settles at a ceiling instead of climbing shot on shot.
+var _bloom_drain := 0.0
 var _last_spread := -1.0
 var _rng := RandomNumberGenerator.new()
 ## The projectiles of the last shot: one, or a Shotgun's pellets.
@@ -716,10 +720,7 @@ func _tick_gunnery_timers(delta: float) -> void:
 	_cooldown = maxf(_cooldown - delta, 0.0)
 	_swap_left = _count_down(_swap_left, delta)
 	_melee_cycle_left = maxf(_melee_cycle_left - delta, 0.0)
-	if weapon.bloom_decay_seconds > 0.0:
-		_bloom = maxf(_bloom - weapon.bloom_per_shot_degrees / weapon.bloom_decay_seconds * delta, 0.0)
-	else:
-		_bloom = 0.0
+	_bloom = maxf(_bloom - _bloom_drain * delta, 0.0) if weapon.bloom_decay_seconds > 0.0 else 0.0
 	if _reload_timer > 0.0:
 		_reload_timer = _count_down(_reload_timer, delta)
 		if _reload_timer == 0.0:
@@ -960,6 +961,8 @@ func fire() -> Projectile3D:
 		_shot_parent().add_child(shot)
 		last_pellets.append(shot)
 	_bloom += weapon.bloom_per_shot_degrees
+	if weapon.bloom_decay_seconds > 0.0:
+		_bloom_drain = _bloom / weapon.bloom_decay_seconds
 	fired.emit()
 	CrewNoise.make(get_tree(), global_position, CrewNoise.Kind.GUNSHOT, weapon.loudness, self)
 	return last_pellets[0]

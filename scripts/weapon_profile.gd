@@ -61,7 +61,8 @@ const VIEW_AROUND_LENS := 1.25
 @export var spread_base_degrees := 1.0
 ## Each shot widens the cone by this much.
 @export var bloom_per_shot_degrees := 0.5
-## Seconds for one shot's bloom to decay to nothing, linearly.
+## Seconds after the last shot for all the bloom to decay to nothing,
+## linearly, however many shots built it.
 @export var bloom_decay_seconds := 0.3
 ## Multipliers on the cone by what the Pirate is doing.
 @export var spread_crouch := 0.7
