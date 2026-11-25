@@ -68,6 +68,15 @@ func launch(from: Vector3, aim: Vector3, by: Node3D, of_team: StringName = &"") 
 		basis = Basis.looking_at(direction)
 
 
+## Takes the bolt out of the fight at once: it strikes nothing from here on,
+## even later in this physics step, and is gone at the end of the frame.
+func disarm() -> void:
+	_struck = true
+	visible = false
+	set_physics_process(false)
+	queue_free()
+
+
 func _ready() -> void:
 	body_entered.connect(_on_body_entered)
 	_streak_rest = _streak.transform

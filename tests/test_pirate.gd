@@ -190,6 +190,7 @@ func _run() -> void:
 	await _check_crew_shot_sound()
 	await _check_bolt_reach()
 	await _check_hit_markers()
+	await _check_down_ends_his_kills()
 	await _check_tracer()
 	await _check_crew_models()
 	_report()
@@ -3254,6 +3255,71 @@ func _check_hit_markers() -> void:
 	_expect(_sounds_of(&"hitmark") == 1, "a landed melee played %d hit ticks" % _sounds_of(&"hitmark"))
 	await _cycle()
 	await _clear_dummy()
+
+
+## Down is down: every kill the pirate makes is reported before or as he
+## goes down, never after, because the Raid's ledger settles on his death
+## and counts nothing later. A bolt still in flight and a lunge still closing
+## when he goes down hurt no one; a kill he made in the same instant he went
+## down is reported as he goes down, not after the shot's report delay.
+func _check_down_ends_his_kills() -> void:
+	await _clear_dummy()
+	await _place(RUNWAY)
+	_clear_shots()
+	player.auto_respawn = false
+	var at_down := [-1]
+	var on_down := func() -> void: at_down[0] = hits_landed.size()
+	player.died.connect(on_down)
+	player.head.rotation.x = -0.05
+
+	# A bolt in flight when he goes down.
+	await _dummy(1, 6.0)
+	hits_landed.clear()
+	_expect(player.fire() != null, "no shot for the bolt in flight")
+	player.take_damage(player.health.current)
+	await _seconds(0.3)
+	_expect(dummy.is_alive(), "a bolt fired before the pirate went down killed after it")
+	_expect(hits_landed.size() == at_down[0], "the pirate reported %s after he went down" % [hits_landed.slice(at_down[0])])
+	player.respawn()
+	await _place(RUNWAY)
+
+	# A kill in the instant he goes down: the target falls, then a crew
+	# bolt puts him down before the shot's report is due.
+	await _dummy(1, 6.0)
+	hits_landed.clear()
+	at_down[0] = -1
+	var put_down := func() -> void: player.take_damage(player.health.current)
+	dummy.health.died.connect(func(_from: Node) -> void: put_down.call_deferred())
+	_expect(player.fire() != null, "no shot for the kill as he goes down")
+	await _seconds(0.3)
+	_expect(not dummy.is_alive(), "the shot did not kill the dummy as he went down")
+	_expect(at_down[0] == 1 and hits_landed == [[dummy, true]],
+			"a kill as he went down was reported %s, %d of them by the time he was down" % [hits_landed, at_down[0]])
+	player.respawn()
+	await _place(RUNWAY)
+
+	# A lunge still closing when he goes down.
+	await _dummy(225, 1.5)
+	hits_landed.clear()
+	Input.action_press("melee")
+	await _frames(2)
+	Input.action_release("melee")
+	_expect(player.is_meleeing() and player.global_position.distance_to(RUNWAY) > 0.01,
+			"no lunge under way to put the pirate down in")
+	player.take_damage(player.health.current)
+	await _seconds(player.melee_lunge_time)
+	await _frames(3)
+	_expect(dummy.health.current == 225, "a lunge closing when the pirate went down still struck (dummy at %d)"
+			% dummy.health.current)
+	_expect(hits_landed.is_empty(), "a lunge closing when the pirate went down reported %s" % [hits_landed])
+
+	player.died.disconnect(on_down)
+	player.respawn()
+	player.auto_respawn = true
+	player.head.rotation.x = 0.0
+	_clear_shots()
+	await _clear_dummy()
+	await _place(RUNWAY)
 
 
 ## A bolt reads as a tracer: a thin streak at least a metre long, lying

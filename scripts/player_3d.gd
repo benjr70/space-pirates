@@ -238,6 +238,10 @@ var _last_spread := -1.0
 var _rng := RandomNumberGenerator.new()
 ## The projectiles of the last shot: one, or a Shotgun's pellets.
 var last_pellets: Array[Projectile3D] = []
+## Hit reports still due, by id, as [target, struck], so going down can
+## make them at once (see _on_died).
+var _pending_reports := {}
+var _next_report := 0
 var _gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)
 
 var _capsule: CapsuleShape3D
@@ -976,7 +980,9 @@ func _on_shot_hit(target: Node3D, on_head: bool, struck: Dictionary, bonus: bool
 		return
 	if not struck.has(target):
 		struck[target] = {state = &"pending", headshot = false}
-		get_tree().create_timer(SHOT_REPORT_DELAY, true, true).timeout.connect(_report_shot_hit.bind(target, struck))
+		_next_report += 1
+		_pending_reports[_next_report] = [target, struck]
+		get_tree().create_timer(SHOT_REPORT_DELAY, true, true).timeout.connect(_report_shot_hit.bind(_next_report))
 	var report: Dictionary = struck[target]
 	if report.state == &"pending":
 		report.headshot = report.headshot or (on_head and bonus)
@@ -985,9 +991,17 @@ func _on_shot_hit(target: Node3D, on_head: bool, struck: Dictionary, bonus: bool
 		hit_landed.emit(target, true, report.headshot)
 
 
-func _report_shot_hit(target: Node3D, struck: Dictionary) -> void:
-	if not is_instance_valid(target):
+## Makes hit report [param id] once: going down makes it early, and the
+## timer finds nothing left to do after that.
+func _report_shot_hit(id: int) -> void:
+	if not _pending_reports.has(id):
 		return
+	var entry: Array = _pending_reports[id]
+	_pending_reports.erase(id)
+	if not is_instance_valid(entry[0]):
+		return
+	var target: Node3D = entry[0]
+	var struck: Dictionary = entry[1]
 	var report: Dictionary = struck[target]
 	var killed := _is_dead(target)
 	report.state = &"killed" if killed else &"hit"
@@ -1132,7 +1146,18 @@ func _shot_parent() -> Node:
 	return container if container != null else get_parent()
 
 
+## Down is down: before [signal died] settles the Raid, every hit he landed
+## is reported, and nothing he set going can hurt anyone after: the bolts
+## still in flight are disarmed and a lunge still closing never strikes.
 func _on_died(_from: Node) -> void:
+	if _lunge_tween != null:
+		_lunge_tween.kill()
+		_lunge_tween = null
+	for shot in _shot_parent().get_children():
+		if shot is Projectile3D and (shot as Projectile3D).shooter == self:
+			(shot as Projectile3D).disarm()
+	for id in _pending_reports.keys():
+		_report_shot_hit(id)
 	died.emit()
 	velocity = Vector3.ZERO
 	visible = false
