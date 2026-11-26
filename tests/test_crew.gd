@@ -123,6 +123,9 @@ func _initialize() -> void:
 	await _check_blocked_by_pirate()
 	await _check_muzzle_blocked()
 	await _check_cover_ring()
+	await _check_reloads()
+	await _check_top_up()
+	await _check_shotgun_reload()
 	await _check_full_cover()
 	await _check_flanked_and_closed_on()
 	await _check_open_fight()
@@ -1082,8 +1085,10 @@ func _check_true_aim() -> void:
 		most = maxi(most, holding.size())
 		for g in holding:
 			held_by[g] = true
+		# (A Guard reloading, or dry on its way to reload, can fire nothing
+		# and takes no true aim: crew-combat ticket 17.)
 		var clear := guards.filter(func(g: Crew3D) -> bool:
-			return g.state in [Crew3D.State.FIGHT, Crew3D.State.COVER] \
+			return g.state in [Crew3D.State.FIGHT, Crew3D.State.COVER] and g.magazine.can_fire() \
 					and not g._blocked(g.global_position + Vector3.UP * Crew3D.EYE_HEIGHT, him + Vector3.UP * Crew3D.EYE_HEIGHT) \
 					and not g._muzzle_blocked())
 		if not clear.is_empty():
@@ -2676,7 +2681,15 @@ func _walk_unfair(guard: Crew3D, trail: Array, him: Vector3) -> String:
 ## from his torso at 0.9 m within 6 s, by a fair walk; down, its capsule is
 ## below the crate's top; it fires from its cover tile (low cover); and over
 ## 20 peeks its shots per burst and seconds down fall inside its Gunnery's
-## ranges widened by 30%.
+## ranges widened by 30%. A burst cut short by the magazine running dry, and
+## a stretch down that held a reload, are its magazine's (crew-combat ticket
+## 17): such a burst is never longer than the Gunnery's, and such a stretch
+## lasts the reload (the Profile's empty time times the reload factor) or
+## its time down if longer, a Shotgun's rack lead on top. Magazines (ticket
+## 17): each fires exactly its Profile's magazine size (Pistol 12, Assault
+## Rifle 30, Shotgun 6, Marksman Rifle 8) before its first reload, which is
+## from empty, and a reload sound plays at its position as every reload
+## starts.
 func _check_cover_ring() -> void:
 	player.health.max_health = 100000
 	player.health.reset()
@@ -2691,11 +2704,31 @@ func _check_cover_ring() -> void:
 		rec[guard] = {"name": Gunnery.NAMES[i], "trail": [guard.global_position], "arrived": -1.0, "hidden": -1.0,
 				"mode": CrewCover.Mode.NONE, "since": 0.0, "after_peek": false, "downs": [], "peeks": 0,
 				"bursts": [], "burst_frame": guard.burst_frame, "shot_frame": -1, "shots": 0, "off_tile": 0,
-				"tall": 0, "low": true}
+				"tall": 0, "low": true, "capped": {}, "reload_down": false, "reload_downs": [],
+				"first_reload": -1, "first_from_empty": false, "reloads": 0, "sounds_wrong": []}
+	var sounds := []  # [frame, player] of every sound this check sees start
+	for guard in guards:
+		guard.reload_started.connect(func(from_empty: bool) -> void:
+			var r: Dictionary = rec[guard]
+			r.reloads += 1
+			if r.first_reload < 0:
+				r.first_reload = r.shots
+				r.first_from_empty = from_empty
+			if guard.cover.mode == CrewCover.Mode.DOWN:
+				r.reload_down = true
+			var frame := Engine.get_physics_frames()
+			var heard := sounds.filter(func(s: Array) -> bool:
+				return s[0] == frame and is_instance_valid(s[1]) and (s[1] as AudioStreamPlayer3D).stream in guard.weapon.reload_sounds \
+						and _flat((s[1] as Node3D).global_position, guard.global_position) <= 0.05)
+			if heard.is_empty():
+				r.sounds_wrong.append("frame %d" % frame))
 	for i in 2:
 		await physics_frame
 	var shots: Node = get_first_node_in_group(&"projectiles")
 	var watch := func(node: Node) -> void:
+		if node is AudioStreamPlayer3D:
+			sounds.append([Engine.get_physics_frames(), node])
+			return
 		var bolt := node as Projectile3D
 		if bolt == null or not rec.has(bolt.shooter):
 			return
@@ -2711,6 +2744,8 @@ func _check_cover_ring() -> void:
 			r.bursts.append(0)
 		if not r.bursts.is_empty():
 			r.bursts[-1] += 1
+			if shooter.magazine.is_dry():
+				r.capped[r.bursts.size() - 1] = true
 		if shooter.cover.spot == Vector3.INF or _flat(shooter.global_position, shooter.cover.spot) > 0.5:
 			r.off_tile += 1
 	shots.child_entered_tree.connect(watch)
@@ -2738,9 +2773,10 @@ func _check_cover_ring() -> void:
 				if r.mode == CrewCover.Mode.DOWN and r.after_peek:
 					# Less any wait on its habit (a Marksman Rifle waiting for a
 					# true-aim place, ticket 20): its time down is the rhythm.
-					r.downs.append(t - r.since - guard.cover.waited)
+					(r.reload_downs if r.reload_down else r.downs).append(t - r.since - guard.cover.waited)
 				if mode == CrewCover.Mode.DOWN:
 					r.after_peek = r.mode in [CrewCover.Mode.SHOOT, CrewCover.Mode.BACK]
+					r.reload_down = guard.is_reloading()
 				if mode == CrewCover.Mode.SHOOT:
 					r.peeks += 1
 				r.mode = mode
@@ -2749,7 +2785,7 @@ func _check_cover_ring() -> void:
 				var shape: CollisionShape3D = guard.get_node("CollisionShape3D")
 				if shape.position.y + (shape.shape as CapsuleShape3D).height / 2.0 > 1.1:
 					r.tall += 1
-			if r.downs.size() < RHYTHM_PEEKS or r.bursts.size() <= RHYTHM_PEEKS:
+			if r.downs.size() < RHYTHM_PEEKS or r.bursts.size() - r.capped.size() <= RHYTHM_PEEKS or r.reload_downs.is_empty():
 				done = false
 		if done:
 			break
@@ -2766,12 +2802,29 @@ func _check_cover_ring() -> void:
 		_expect(r.low and r.shots > 0 and r.off_tile == 0, "cover: a %s Guard behind a crate (low cover: %s) fired %d of %d shots off its cover tile"
 				% [r.name, r.low, r.off_tile, r.shots])
 		_expect(r.tall == 0, "cover: a %s Guard down behind a crate had its capsule above the crate's 1.1 m top on %d frames" % [r.name, r.tall])
-		# The last burst may still be running.
-		var bursts: Array = r.bursts.slice(0, r.bursts.size() - 1)
+		# The last burst may still be running. A burst the magazine cut short
+		# (it ran dry) is only held to the Gunnery's longest.
+		var bursts: Array = []
+		var cut: Array = []
+		for b in r.bursts.size() - 1:
+			(cut if r.capped.has(b) else bursts).append(r.bursts[b])
 		var shots_low: float = gunnery.shots_per_burst_low * 0.7
 		var shots_high: float = gunnery.shots_per_burst_high * 1.3
 		_expect(bursts.size() >= RHYTHM_PEEKS and bursts.all(func(n: int) -> bool: return n >= shots_low and n <= shots_high),
 				"cover: a %s Guard's %d bursts ran %s shots, want %d or more each %.1f to %.1f" % [r.name, bursts.size(), _counts(bursts), RHYTHM_PEEKS, shots_low, shots_high])
+		_expect(cut.all(func(n: int) -> bool: return n >= 1 and n <= gunnery.shots_per_burst_high),
+				"magazines: a %s Guard's bursts cut short by its magazine ran %s shots, want 1 to %d" % [r.name, _counts(cut), gunnery.shots_per_burst_high])
+		var size: int = guard.weapon.magazine_size
+		_expect(r.first_reload == size and r.first_from_empty,
+				"magazines: a %s Guard fired %d shots before its first reload (from empty: %s), want exactly %d" % [r.name, r.first_reload, r.first_from_empty, size])
+		_expect(r.reloads > 0 and r.sounds_wrong.is_empty(),
+				"magazines: of a %s Guard's %d reloads, %d started with no reload sound at its position (%s)" % [r.name, r.reloads, r.sounds_wrong.size(), r.sounds_wrong.slice(0, 3)])
+		var reload := guard.magazine.longest()
+		var rack_lead := CrewHabit.RACK_LEAD if CrewHabit.racks(guard.weapon) else 0.0
+		var reload_high := maxf(gunnery.time_down_high * 1.3, reload + rack_lead) + 3.0 * STEP
+		_expect(r.reload_downs.size() > 0 and r.reload_downs.all(func(d: float) -> bool: return d >= reload - STEP and d <= reload_high),
+				"magazines: a %s Guard's %d stretches down holding a reload lasted %s s, want each %.2f to %.2f s" % [r.name, r.reload_downs.size(),
+				r.reload_downs.map(func(d: float) -> String: return "%.2f" % d), reload - STEP, reload_high])
 		var down_low: float = gunnery.time_down_low * 0.7 - STEP
 		var down_high: float = gunnery.time_down_high * 1.3 + STEP
 		var downs: Array = r.downs
@@ -2806,6 +2859,204 @@ func _silence() -> void:
 func _clear_shots() -> void:
 	for shot in get_first_node_in_group(&"projectiles").get_children():
 		shot.free()
+
+## --- Magazines and reloads (crew-combat ticket 17) -------------------------
+
+const RELOAD_TOLERANCE := 0.05
+const RELOAD_SAME := 0.1
+const TOP_UP_TOLERANCE := 0.1
+const BREAK_OFF_WITHIN := 0.6
+
+## A Guard of [param gun] in the ring, south of the crate, its own Pirate at
+## the centre, told where he is and fighting. Returns [guard, pirate, shot
+## frames (an Array the watcher appends each shot's physics frame to),
+## watcher].
+func _ring_fight(gun: WeaponProfile) -> Array:
+	var centre := ShipBuilder3D.tile_to_world(RING_CENTRE)
+	var pirate := _own_pirate(centre)
+	var guard := _rig_guard(gun, ring_layout, RING_STARTS[1], centre)
+	guard.target = pirate
+	var fired: Array[int] = []
+	var watch := func(node: Node) -> void:
+		var bolt := node as Projectile3D
+		if bolt != null and bolt.shooter == guard and (fired.is_empty() or fired[-1] != Engine.get_physics_frames()):
+			fired.append(Engine.get_physics_frames())
+	get_first_node_in_group(&"projectiles").child_entered_tree.connect(watch)
+	for i in 2:
+		await physics_frame
+	guard.hear_position(centre)
+	guard.set_physics_process(true)
+	return [guard, pirate, fired, watch]
+
+
+func _end_ring_fight(fight: Array) -> void:
+	get_first_node_in_group(&"projectiles").child_entered_tree.disconnect(fight[3])
+	fight[0].set_physics_process(false)
+	fight[0].free()
+	fight[1].free()
+	_clear_shots()
+
+
+## Open floor [param distance] from [param guard] where it sees [param pirate]
+## standing and has a clear muzzle line to him from where it stands; INF with
+## none. The Pirate is not moved.
+func _seen_at(guard: Crew3D, rig: ShipLayout, distance: float) -> Vector3:
+	var astar := CrewPaths.grid(rig)
+	var eye := guard.global_position + Vector3.UP * Crew3D.EYE_HEIGHT
+	for k in 48:
+		var at := guard.global_position + Vector3.FORWARD.rotated(Vector3.UP, TAU * k / 48.0) * distance
+		at.y = 0.0
+		if not _open_tile(astar, ShipBuilder3D.world_to_tile(at)) or not CrewPaths.clear(astar, at, at):
+			continue
+		if guard._blocked(eye, at + Vector3.UP * Crew3D.EYE_HEIGHT) \
+				or guard._muzzle_blocked_from(guard.global_position, at + Vector3.UP * Crew3D.TORSO_HEIGHT):
+			continue
+		return at
+	return Vector3.INF
+
+
+## An empty Assault Rifle reload takes 3.45 s (2.3 x 1.5) within 5%, down
+## behind its cover, with no shot fired during it; a second one, the Guard
+## hit twice and closed on (him moved 2.5 m off in its sight) during it,
+## ends at the same time within 0.1 s, on the same spot, never restarted.
+func _check_reloads() -> void:
+	var gun := GunRoll.weapon(GunRoll.ASSAULT_RIFLE)
+	var want: float = gun.reload_empty * Gunnery.for_weapon(gun).reload_factor
+	_expect(is_equal_approx(want, 3.45), "reloads: the Assault Rifle's empty reload times its reload factor is %.2f s, want 3.45" % want)
+	var fight := await _ring_fight(gun)
+	var guard: Crew3D = fight[0]
+	var pirate: CharacterBody3D = fight[1]
+	var fired: Array[int] = fight[2]
+	var events := []  # [frame, "start"/"end", from_empty or broken]
+	guard.reload_started.connect(func(from_empty: bool) -> void: events.append([Engine.get_physics_frames(), "start", from_empty]))
+	guard.reload_ended.connect(func(broken: bool) -> void: events.append([Engine.get_physics_frames(), "end", broken]))
+	var durations: Array[float] = []
+	for run in 2:
+		# A few rounds left, so it runs dry soon.
+		await _seconds_until(10.0, func() -> bool: return not guard.is_reloading())
+		guard.magazine.rounds = 3
+		guard._new_burst()
+		events.clear()
+		var started := await _seconds_until(30.0, func() -> bool: return not events.is_empty())
+		_expect(started >= 0.0 and events[0][1] == "start" and events[0][2],
+				"reloads: an Assault Rifle Guard left 3 rounds started no reload from empty in 30 s (run %d)" % run)
+		if started < 0.0:
+			break
+		var start_frame: int = events[0][0]
+		var tile: Vector2i = guard.cover.tile
+		_expect(guard.cover.mode == CrewCover.Mode.DOWN, "reloads: an Assault Rifle Guard ran dry and reloaded in mode %s, want down behind its cover (run %d)"
+				% [CrewCover.MODE_NAMES[guard.cover.mode], run])
+		var him_was := pirate.global_position
+		var close := Vector3.INF
+		var left_tile := false
+		var t := 0.0
+		while guard.is_reloading() and t < 10.0:
+			await physics_frame
+			t += STEP
+			if guard.is_reloading() and guard.cover.tile != tile:
+				left_tile = true
+			if run == 1:
+				if absf(t - 0.5) < STEP * 0.5 or absf(t - 1.5) < STEP * 0.5:
+					guard.take_damage(1, pirate)
+				if absf(t - 1.0) < STEP * 0.5:
+					close = _seen_at(guard, ring_layout, 2.5)
+					if close != Vector3.INF:
+						pirate.global_position = close
+		var ends := events.filter(func(e: Array) -> bool: return e[1] == "end")
+		var starts := events.filter(func(e: Array) -> bool: return e[1] == "start")
+		var during := fired.filter(func(f: int) -> bool: return f >= start_frame and (ends.is_empty() or f <= ends[0][0]))
+		var took: float = (ends[0][0] - start_frame) * STEP if not ends.is_empty() else INF
+		durations.append(took)
+		_expect(during.is_empty(), "reloads: an Assault Rifle Guard fired %d shots during its reload (run %d)" % [during.size(), run])
+		if run == 0:
+			_expect(absf(took - want) <= want * RELOAD_TOLERANCE,
+					"reloads: an empty Assault Rifle reload took %.3f s, want %.2f s within %.0f%%" % [took, want, RELOAD_TOLERANCE * 100.0])
+		else:
+			_expect(close != Vector3.INF, "reloads: no floor 2.5 m from the reloading Guard in its sight to close on it from")
+			_expect(absf(took - durations[0]) <= RELOAD_SAME and absf(took - want) <= RELOAD_SAME and starts.size() == 1 and not left_tile,
+					"reloads: hit twice and closed on, an Assault Rifle Guard's reload took %.3f s (unhit %.3f s, want %.2f s, each within %.1f s), "
+					% [took, durations[0], want, RELOAD_SAME] + "started %d times, left %s while reloading: %s" % [starts.size(), tile, left_tile])
+		pirate.global_position = him_was
+	_end_ring_fight(fight)
+
+
+## A Pistol Guard down behind its cover with 5 rounds left and the Pirate
+## unseen for 3 s is at a full magazine 1.2 x 1.5 s later, within 10%.
+func _check_top_up() -> void:
+	var gun := GunRoll.weapon(GunRoll.PISTOL)
+	var want: float = gun.reload_tactical * Gunnery.for_weapon(gun).reload_factor
+	var fight := await _ring_fight(gun)
+	var guard: Crew3D = fight[0]
+	var pirate: CharacterBody3D = fight[1]
+	var down := await _seconds_until(15.0, func() -> bool: return guard.cover.mode == CrewCover.Mode.DOWN and not guard.is_reloading())
+	_expect(down >= 0.0, "top up: the Pistol Guard never got down behind the crate")
+	if down >= 0.0:
+		guard.magazine.rounds = 5
+		# Held down (its peeks are not what is checked), and him gone.
+		guard.cover.timer = 20.0
+		pirate.global_position = ShipBuilder3D.tile_to_world(RING_CENTRE) + Vector3(0.0, 0.0, 40.0)
+		var unseen := -1.0
+		var full := -1.0
+		var from_empty := [true]
+		guard.reload_started.connect(func(empty: bool) -> void: from_empty[0] = empty)
+		var t := 0.0
+		while t < 8.0 and full < 0.0:
+			await physics_frame
+			t += STEP
+			if unseen < 0.0 and guard._seen_ago >= CrewCover.TOP_UP_UNSEEN:
+				unseen = t
+			if guard.magazine.is_full():
+				full = t
+		var took := full - unseen if full >= 0.0 and unseen >= 0.0 else INF
+		_expect(not from_empty[0] and absf(took - want) <= want * TOP_UP_TOLERANCE and guard.cover.mode == CrewCover.Mode.DOWN,
+				"top up: with 5 rounds left and him unseen %.0f s a Pistol Guard was full %.3f s later (topping up: %s, mode %s), want %.2f s within %.0f%%"
+				% [CrewCover.TOP_UP_UNSEEN, took, not from_empty[0], CrewCover.MODE_NAMES[guard.cover.mode], want, TOP_UP_TOLERANCE * 100.0])
+	_end_ring_fight(fight)
+
+
+## A Shotgun Guard down behind a crate, reloading with 2 shells in, fires
+## within 0.6 s of the Pirate coming into its sight 2.5 m off (inside 3 m);
+## with him coming into sight 6 m off it fires nothing until it has loaded
+## to 6.
+func _check_shotgun_reload() -> void:
+	var gun := GunRoll.weapon(GunRoll.SHOTGUN)
+	for distance: float in [2.5, 6.0]:
+		var fight := await _ring_fight(gun)
+		var guard: Crew3D = fight[0]
+		var pirate: CharacterBody3D = fight[1]
+		var fired: Array[int] = fight[2]
+		var down := await _seconds_until(15.0, func() -> bool: return guard.cover.mode == CrewCover.Mode.DOWN and not guard.is_reloading())
+		var at := _seen_at(guard, ring_layout, distance) if down >= 0.0 else Vector3.INF
+		_expect(at != Vector3.INF, "shotgun reload: the Guard never got down behind a crate with floor %.1f m off in its sight" % distance)
+		if at == Vector3.INF:
+			_end_ring_fight(fight)
+			continue
+		var ended := []
+		guard.reload_ended.connect(func(broken: bool) -> void: ended.append([Engine.get_physics_frames(), broken, guard.magazine.rounds]))
+		pirate.global_position = ShipBuilder3D.tile_to_world(RING_CENTRE) + Vector3(0.0, 0.0, 40.0)
+		guard.magazine.rounds = 2
+		guard.magazine.start()
+		for i in roundi(0.2 / STEP):
+			await physics_frame
+		var shells: int = guard.magazine.rounds
+		var shots_before := fired.size()
+		pirate.global_position = at
+		var in_sight := Engine.get_physics_frames()
+		var limit := BREAK_OFF_WITHIN if distance < CrewCover.BREAK_OFF else guard.magazine.longest() + 2.0
+		await _seconds_until(limit + 0.5, func() -> bool: return fired.size() > shots_before or not guard.is_alive())
+		var first: int = fired[shots_before] if fired.size() > shots_before else -1
+		var after: float = (first - in_sight) * STEP if first >= 0 else INF
+		if distance < CrewCover.BREAK_OFF:
+			_expect(shells == 2 and after <= BREAK_OFF_WITHIN and not ended.is_empty() and ended[0][1],
+					"shotgun reload: reloading with %d shells in, him coming into sight %.1f m off, the first shot came %.2f s later (broken off: %s), want within %.1f s"
+					% [shells, distance, after, ended.map(func(e: Array) -> bool: return e[1]), BREAK_OFF_WITHIN])
+		else:
+			var full_at: int = ended[0][0] if not ended.is_empty() else -1
+			_expect(shells == 2 and not ended.is_empty() and not ended[0][1] and ended[0][2] == 6 and (first < 0 or first >= full_at),
+					"shotgun reload: reloading with %d shells in, him coming into sight %.1f m off, it loaded to %s (broken off: %s) and fired %s, want to 6 before firing"
+					% [shells, distance, ended.map(func(e: Array) -> int: return e[2]), ended.map(func(e: Array) -> bool: return e[1]),
+					"%.2f s after he came into sight, %.2f s before it was full" % [after, (full_at - first) * STEP] if first >= 0 else "nothing"])
+		_end_ring_fight(fight)
 
 
 ## Behind full cover (a locker it cannot fire over) a Guard fires from a
@@ -3092,6 +3343,17 @@ func _check_cover_fight_on_ship() -> void:
 		breakers.merge(guards[0]._breaker_tiles(r))
 	for i in 2:
 		await physics_frame
+	# Each starts where it has cover in reach (a spot, or the hiding
+	# fall-back): in a long Room with few props a Guard 10 m down it may
+	# have none and rightly fight in the open all minute, which says nothing
+	# about the cover fight.
+	for guard in guards:
+		guard._last_seen = him
+		while guard.cover.find(0).is_empty() and guard.cover.find(0, true).is_empty() and not near.is_empty():
+			var at: Vector3 = near.pop_at(randi_range(0, near.size() - 1))
+			if guards.all(func(g: Crew3D) -> bool: return g == guard or _flat(g.global_position, at) >= 2.0):
+				guard.global_position = at
+				guard.face_direction(him - at)
 	for guard in guards:
 		guard.hear_position(him)
 	var watch := {}

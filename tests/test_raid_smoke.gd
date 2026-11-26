@@ -201,7 +201,10 @@ const SPOT_CLOSE := Vector2(1.5, 3.0)
 ## longer than its longest time down (CrewCover.longest_down: its
 ## Gunnery's time down ceiling varied up 30%, plus the 0.8 s near-miss
 ## hold; 3.4 s Pistol, 4.05 s Assault Rifle, 2.75 s Shotgun, 6.0 s Marksman
-## Rifle) and COVER_SLACK fails the Raid: it should have peeked. Time it
+## Rifle; or its longest reload, which it sits out down there whatever
+## happens, where that is longer: only the Shotgun's six shells, 4.2 s,
+## crew-combat ticket 17) and COVER_SLACK fails the Raid: it should have
+## peeked. Time it
 ## spends down waiting on its gun's habit (CrewCover.waited: a Marksman
 ## Rifle waiting for a true-aim place to start its sight line, a Shotgun
 ## holding fire with him beyond 8 m; crew-combat ticket 20; one hiding with

@@ -19,6 +19,14 @@ extends CharacterBody3D
 ## under `Model`; the rigs share one skeleton and Quaternius's clip names,
 ## which the brain plays by state.
 
+## A Guard's reload began: from a dry gun, or topping up ([CrewMagazine]).
+## A reload pose plays from here.
+signal reload_started(from_empty: bool)
+## A shell is seated in a shell-by-shell reload (the Shotgun).
+signal shell_loaded
+## The reload is over: full, or [param broken] off to fire (the Shotgun).
+signal reload_ended(broken: bool)
+
 ## Newer states go last so the older ones keep their numbers.
 enum State { PATROL, HUNT, FIGHT, COVER, SEARCH, DEAD, INVESTIGATE, FLEE, COWER }
 
@@ -125,6 +133,9 @@ static var _bolt_ball := _ball(MUZZLE_BALL)
 ## A spot a Guard fighting in the open moves to for a clear shot is at
 ## least this far from where it stands, a real step rather than a shuffle.
 const FIRING_STEP := 1.0
+## A reload's sounds play this high at the Guard's position, metres: its
+## hands.
+const RELOAD_HEIGHT := 1.0
 
 @export_group("Movement")
 @export var max_speed := 3.59
@@ -184,6 +195,8 @@ var crew_type: CrewTypes.Type = CrewTypes.Type.GUARD
 ## A Guard's cover fight, which drives its FIGHT and COVER states; null
 ## for a Worker.
 var cover: CrewCover
+## A Guard's magazine and its reloads; null for a Worker.
+var magazine: CrewMagazine
 ## The Guard a fleeing Worker is running to.
 var _flee_to: Crew3D
 ## The Alarm Panel a fleeing Worker is running to, instead of a Guard.
@@ -331,6 +344,7 @@ func _ready() -> void:
 	elif gunnery == null:
 		gunnery = Gunnery.for_weapon(weapon)
 	if not is_worker():
+		magazine = CrewMagazine.new(self)
 		cover = CrewCover.new(self)
 	_gap_jitter = CrewCombat.jitter(_rng)
 	_new_burst()
@@ -424,13 +438,15 @@ func spread_degrees() -> float:
 
 ## Whether it could aim true now: a Guard in the fight with the Pirate in
 ## sight from its eyes and a clear muzzle line. Judged afresh, at the start
-## of a frame, by [CrewFire]. (A reload, when crew have one, rules it out
-## too.) A Shotgun holding its fire takes none; a Marksman Rifle firing by
-## its sight line wants one only to start its line
+## of a frame, by [CrewFire]. A Guard reloading, or dry on its way to
+## reload, takes none (it gave its place up as the reload started). A Shotgun holding its fire takes none; a
+## Marksman Rifle firing by its sight line wants one only to start its line
 ## ([method CrewCover.wants_place]).
 func can_aim_true() -> bool:
 	if is_worker() or not is_alive() or target == null or not is_instance_valid(target):
 		return false
+	if magazine != null and not magazine.can_fire():
+		return false  # reloading, or dry on its way to reload
 	if cover != null and cover.uses_line():
 		return cover.wants_place()
 	if cover != null and cover.holds_fire():
@@ -442,10 +458,19 @@ func can_aim_true() -> bool:
 	return not _muzzle_blocked()
 
 
-## Starts a fresh burst: its Gunnery's shots per burst, drawn.
+## Starts a fresh burst: its Gunnery's shots per burst, drawn, capped by
+## the rounds left in its magazine.
 func _new_burst() -> void:
 	burst_length = gunnery.draw_shots(_rng) if gunnery != null else 0
+	if magazine != null and magazine.rounds > 0:
+		burst_length = mini(burst_length, magazine.rounds)
 	_shots_left = burst_length
+
+
+## Reloading now ([CrewMagazine]): it fires nothing and takes no true-aim
+## place until the reload ends.
+func is_reloading() -> bool:
+	return magazine != null and magazine.reloading
 
 
 ## Takes Health from the Sandbox, full: at spawn, and when the Sandbox sheet
@@ -502,6 +527,9 @@ func _physics_process(delta: float) -> void:
 		CrewFire.of(target).update()
 		CrewTeam.of(target).update()
 	_update_perception(delta)
+	if magazine != null:
+		# A reload runs to its end whatever the Guard does meanwhile.
+		magazine.tick(delta)
 	_shot_timer = maxf(_shot_timer - delta, 0.0)
 	_hold_timer = maxf(_hold_timer - delta, 0.0)
 	_repath_timer = maxf(_repath_timer - delta, 0.0)
@@ -1615,12 +1643,18 @@ func _face() -> void:
 ## first by fair fire ([CrewFire]): true at him (led, and walking in on the
 ## first burst of a sighting) or at a miss point beside him; then each
 ## pellet strays inside its spread ([method spread_degrees]), a real cone.
-## A Shotgun shot hurts with at most the Sandbox's pellet cap. Returns the
-## first projectile ([member last_pellets] holds them all), or null unarmed.
+## A Shotgun shot hurts with at most the Sandbox's pellet cap. Each shot
+## spends a round of its magazine; with none in, or reloading, it fires
+## nothing. Returns the first projectile ([member last_pellets] holds them
+## all), or null unarmed, dry or reloading.
 func _fire() -> Projectile3D:
 	last_pellets.clear()
 	if projectile_scene == null or weapon == null or gunnery == null:
 		return null
+	if magazine != null:
+		if not magazine.can_fire():
+			return null
+		magazine.spend()
 	var in_burst := burst_length - _shots_left
 	if in_burst <= 0:
 		if miss_at != Vector3.INF:
@@ -1956,6 +1990,8 @@ func _on_died(_from: Node) -> void:
 	died_unaware = not _in_combat() and not _spotted()
 	if cover != null:
 		cover.release()
+	if magazine != null:
+		magazine.stop()
 	state = State.DEAD
 	_path.clear()
 	velocity = Vector3.ZERO

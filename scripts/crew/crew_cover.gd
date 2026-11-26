@@ -8,7 +8,9 @@ extends RefCounted
 ## reach it falls back out of his sight, or fights where it stands. What its
 ## gun changes is its habit ([CrewHabit]): the Shotgun ambushes at a
 ## doorway and racks before it shows itself, the Marksman Rifle perches and
-## shows a sight line before each shot.
+## shows a sight line before each shot. Dry, it reloads down behind its
+## cover, or where it stands backing away with none in reach; down with him
+## unseen a while, it tops up ([CrewMagazine]).
 ##
 ## Every Guard holds one ([member Crew3D.cover]). The body drives it from
 ## its FIGHT and COVER states: [method begin] on entering either, [method
@@ -113,6 +115,16 @@ const UNSEEN_STAY_DOWN := 2.0
 ## poses ticket) and its capsule cut to this fraction of its height.
 const SINK := 0.8
 const CROUCH := 0.55
+## Down behind its cover with him unseen this long, seconds, it tops up a
+## part-used magazine.
+const TOP_UP_UNSEEN := 3.0
+## A Shotgun loading shell by shell, with a shell in and him in its sight
+## this close, metres, breaks its reload off and fires.
+const BREAK_OFF := 3.0
+## Reloading where it stands (no cover in reach), it backs away from him
+## this far, metres, at this fraction of its speed.
+const BACK_AWAY := 2.0
+const BACK_AWAY_SPEED := 0.4
 
 var crew: Crew3D
 ## The gun it fights with, for its habit.
@@ -205,6 +217,9 @@ var _nudged := false
 ## Where it last made progress on its walk, and how long ago.
 var _progress_at := Vector3.INF
 var _stalled := 0.0
+## Reloading where it stands in the open fight, and backing away meanwhile.
+var _open_reload := false
+var _backing := false
 var _capsule: CapsuleShape3D
 var _shape: CollisionShape3D
 var _stand_height := 1.7
@@ -250,6 +265,8 @@ func begin() -> void:
 	had_partner = false
 	last_guard = false
 	_fell_back = false
+	_open_reload = false
+	_backing = false
 
 
 ## Starts the cover fight at the end of a flank: a spot by the cover rules
@@ -277,6 +294,8 @@ func release() -> void:
 	_want_shift = false
 	hip = false
 	ambushing = false
+	_open_reload = false
+	_backing = false
 	mode = Mode.NONE
 
 
@@ -327,7 +346,9 @@ func tick(delta: float) -> void:
 				_unclaim()
 				_set_mode(Mode.NONE)
 		Mode.DOWN:
-			if not _watch(delta):
+			if _reload_down():
+				pass  # reloading: nothing makes it leave or peek
+			elif not _watch(delta):
 				if timer <= 0.0:
 					if _holds_down():
 						waited += delta
@@ -706,7 +727,7 @@ func _someone_moving() -> bool:
 ## fight, its last shot within COVER_FIRE. It covers a partner changing
 ## cover.
 func covering() -> bool:
-	return mode in [Mode.SHOOT, Mode.OPEN] and crew.shot_age() <= COVER_FIRE
+	return mode in [Mode.SHOOT, Mode.OPEN] and crew.shot_age() <= COVER_FIRE and not crew.is_reloading()
 
 
 ## Able to give covering fire: fighting in the open, or holding (or on its
@@ -714,7 +735,9 @@ func covering() -> bool:
 ## its sight now, or within COVER_WAIT while it is down behind its own cover
 ## or walking to its spot, or his cover to fire on. Not one hiding with no
 ## shot, a Shotgun waiting in ambush out of his sight, nor one up that has
-## lost him.
+## lost him. A reload changes nothing here: a partner reloading down behind
+## its cover will be up again like one in its time down, and the wait is
+## capped at COVER_WAIT ([method covering] does say no while it reloads).
 func can_cover() -> bool:
 	if covering():
 		return true
@@ -809,6 +832,9 @@ func _get_down(time: float) -> void:
 	if look.length_squared() > 0.01:
 		crew._aim = look.normalized()
 	_set_mode(Mode.DOWN)
+	if crew.magazine != null and crew.magazine.is_dry():
+		# Dry: it reloads as it gets down ([method _reload_down]).
+		crew.magazine.start()
 
 
 ## What makes it leave, or change what it is doing, while down. True when
@@ -994,12 +1020,16 @@ func _holds_down() -> bool:
 	return uses_line() and has_peek and not _holds_place()
 
 
-func _begin_shooting() -> void:
+## [param now]: no settle (a Shotgun breaking its reload off), only what
+## its rack needs.
+func _begin_shooting(now := false) -> void:
 	bursts = crew.gunnery.bursts_per_peek if crew.gunnery != null else 1
 	_start_burst()
 	wait = 0.0
 	_peek_spent = false
 	var settle := crew.gunnery.settle * _jitter() if crew.gunnery != null else 0.0
+	if now:
+		settle = 0.0
 	if gun == CrewHabit.Gun.MARKSMAN_RIFLE:
 		# Its sight line is its settle; from the hip, an ordinary one.
 		settle = CrewHabit.HIP_SETTLE * _jitter() if hip else 0.0
@@ -1016,6 +1046,16 @@ func _start_burst() -> void:
 
 
 func _shoot(delta: float) -> void:
+	var magazine := crew.magazine
+	if magazine != null and not magazine.can_fire():
+		# Dry: down behind its cover to reload there.
+		blind = 0
+		_end_line()
+		if spot == Vector3.INF:
+			magazine.start()
+		else:
+			_duck()
+		return
 	if timer > 0.0:
 		return  # settling, or between bursts
 	if uses_line() and _flat(crew.global_position, crew._last_seen) < CrewHabit.PERCH_CLOSE:
@@ -1063,7 +1103,7 @@ func _shoot(delta: float) -> void:
 ## with another crew member's: at him, or as a deliberate miss at
 ## [param edge] (the edge of the prop he hid behind) when that is set.
 func _fire_when_ready(edge := Vector3.INF) -> void:
-	if crew._shot_timer > 0.0:
+	if crew._shot_timer > 0.0 or (crew.magazine != null and not crew.magazine.can_fire()):
 		return
 	if CrewHabit.racks(crew.weapon):
 		# Every Shotgun shot comes RACK_EARLIEST to RACK_LATEST after a rack.
@@ -1133,6 +1173,8 @@ func _jitter() -> float:
 ## stepping to a spot with a clear shot when it has none, and looking again
 ## for cover every LOOK_OPEN seconds.
 func _fight_in_open(delta: float) -> void:
+	if _reload_in_open(delta):
+		return
 	if gun == CrewHabit.Gun.MARKSMAN_RIFLE and not hip and _marksman_close():
 		return
 	if think <= 0.0:
@@ -1186,12 +1228,120 @@ func near_miss(from: Vector3, along: Vector3) -> bool:
 		return false
 	near_misses += 1
 	if mode == Mode.DOWN:
-		timer = maxf(timer, minf(timer + NEAR_MISS_HOLD, longest_down()))
+		timer = maxf(timer, minf(timer + NEAR_MISS_HOLD, _longest_time_down()))
 		_racked = false
 	elif mode == Mode.SHOOT and spot != Vector3.INF:
 		_duck()
 		timer += NEAR_MISS_HOLD
 	return true
+
+
+# --- reloading ----------------------------------------------------------------------
+
+## Down behind its cover: dry, it reloads there; with him unseen
+## TOP_UP_UNSEEN and a part-used magazine, it tops up. While the reload runs
+## it stays down and nothing makes it leave or peek (being shot, flanked or
+## closed on), except a Shotgun with a shell in and him in its sight within
+## BREAK_OFF, which breaks off and fires. True while it reloads.
+func _reload_down() -> bool:
+	var magazine := crew.magazine
+	if magazine == null:
+		return false
+	if not magazine.reloading:
+		if magazine.is_dry() or (not magazine.is_full() and crew._seen_ago >= TOP_UP_UNSEEN):
+			magazine.start()
+		if not magazine.reloading:
+			return false
+	# No wait to change cover runs on through a reload.
+	_move_wait = -1.0
+	if _breaks_off():
+		magazine.break_off()
+		_up_now()
+	return true
+
+
+## Dry in the open fight: behind cover first where the cover search finds
+## any, else it reloads where it stands, backing away from him BACK_AWAY.
+## True while it reloads (or set off for cover), so it does nothing else.
+func _reload_in_open(delta: float) -> bool:
+	var magazine := crew.magazine
+	if magazine == null:
+		return false
+	if not magazine.reloading and magazine.is_dry():
+		if _pick(0) or _pick(0, true):
+			return true
+		magazine.start()
+		_open_reload = true
+		_back_away()
+	if magazine.reloading:
+		if _breaks_off():
+			magazine.break_off()
+		else:
+			if not crew._path.is_empty() and _stalling(delta) > MOVE_GIVE_UP:
+				crew._path.clear()
+			return true
+	if _open_reload:
+		# The reload is done: a fresh burst after a settle.
+		_open_reload = false
+		_end_back_away()
+		_start_burst()
+		# (Broken off with him close, a Shotgun fires at once.)
+		timer = 0.0 if not magazine.is_full() else crew.gunnery.settle * _jitter()
+	return false
+
+
+## A Shotgun loading shell by shell with a shell in and him in its sight
+## within BREAK_OFF.
+func _breaks_off() -> bool:
+	var target := crew.target
+	return crew.magazine.can_break_off() and crew._can_see and target != null and is_instance_valid(target) \
+			and _flat(crew.global_position, target.global_position) <= BREAK_OFF
+
+
+## Up at once from its reload to fire (a Shotgun breaking off): over low
+## cover it racks if its last rack is stale and shoots as soon as the rack
+## allows, with no settle; from full cover it steps out as usual.
+func _up_now() -> void:
+	timer = 0.0
+	if not has_peek:
+		return  # nowhere to fire from: the cover rules carry on
+	if not (low or step == Vector3.INF):
+		_start_peek()
+		return
+	if CrewHabit.racks(crew.weapon) and crew.rack_age() > CrewHabit.RACK_EARLIEST:
+		crew.rack()
+	_racked = true
+	_stand()
+	_begin_shooting(true)
+
+
+## Reloading in the open: one step BACK_AWAY straight away from him (or
+## angled off where a prop stands behind it), at BACK_AWAY_SPEED, facing
+## him.
+func _back_away() -> void:
+	var away := crew.global_position - crew._last_seen
+	away.y = 0.0
+	if away.length_squared() < 0.01 or crew.layout == null:
+		return
+	away = away.normalized()
+	var astar := CrewPaths.grid(crew.layout)
+	for degrees: float in [0.0, 35.0, -35.0, 70.0, -70.0]:
+		var to := crew.global_position + away.rotated(Vector3.UP, deg_to_rad(degrees)) * BACK_AWAY
+		if CrewPaths.clear(astar, crew.global_position, to):
+			crew._path.assign([to])
+			crew._speed_scale = BACK_AWAY_SPEED
+			_backing = true
+			_progress_at = Vector3.INF
+			_stalled = 0.0
+			return
+
+
+func _end_back_away() -> void:
+	if not _backing:
+		return
+	_backing = false
+	crew._speed_scale = 1.0
+	crew._path.clear()
 
 
 # --- the stand-in crouch ----------------------------------------------------------
@@ -1217,12 +1367,26 @@ func _stand() -> void:
 
 
 ## The longest one stretch down can last with him in sight: its Gunnery's
-## longest time down, varied up, and a near miss's hold on top.
+## longest time down, varied up, and a near miss's hold on top; or its
+## longest reload (from dry, the Profile's time times the reload factor),
+## which it sits out down there whatever happens and which a near miss does
+## not lengthen, if that is longer.
 func longest_down() -> float:
+	var reload := crew.magazine.longest() if crew.magazine != null else 0.0
+	return maxf(_longest_time_down(), reload)
+
+
+func _longest_time_down() -> float:
 	return (crew.gunnery.time_down_high if crew.gunnery != null else 1.0) * (1.0 + JITTER) + NEAR_MISS_HOLD
 
 
 func _set_mode(next: Mode) -> void:
+	if next != Mode.OPEN:
+		# (A walk it sets off on keeps its path; only the slow step ends.)
+		_open_reload = false
+		if _backing:
+			_backing = false
+			crew._speed_scale = 1.0
 	if not next in [Mode.OUT, Mode.SHOOT]:
 		# The peek is over: its sight line goes, and its true-aim place.
 		_end_line()
@@ -1402,6 +1566,8 @@ func holds_fire() -> bool:
 func wants_place() -> bool:
 	if not uses_line() or _peek_spent:
 		return false
+	if crew.magazine != null and not crew.magazine.can_fire():
+		return false  # reloading, or about to
 	match mode:
 		Mode.DOWN:
 			return timer <= 0.0 and has_peek

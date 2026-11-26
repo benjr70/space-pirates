@@ -22,6 +22,7 @@ being built toward is `.scratch/crew-combat/spec.md`, after spec #52
 | `crew_team.gd` (`CrewTeam`) | Guards together against one Pirate: which Guard flanks (by gun), and firing on the prop he broke sight behind (suppression). One per Pirate, settled once a physics frame like `CrewFire`. |
 | `crew_fire.gd` (`CrewFire`) | Fair fire: who aims true (at most two at once, handed on by a timer), and where every shot is aimed before its spread: at him, led and walking in, or at a miss point beside him. One per Pirate, shared by every Guard fighting him. |
 | `crew_cover.gd` (`CrewCover`) | One Guard's fight from cover: finding and claiming a spot, the fair walk there, holding it, peeking in its gun's rhythm, leaving it, and fighting with no cover in reach; its gun's habit: the Shotgun's ambush and rack, the Marksman Rifle's perch, sight line and hip fire; and its part in the team: covering fire, one mover at a time, the flank's last leg, firing on his cover, the last Guard. Every Guard holds one (`Crew3D.cover`); it drives the Guard's FIGHT and COVER states. |
+| `crew_magazine.gd` (`CrewMagazine`) | A Guard's magazine: rounds counted against its weapon's magazine size, and its reloads (empty, topping up, the Shotgun's shell by shell and its break-off), with their times and sounds. Every Guard holds one (`Crew3D.magazine`); `CrewCover` decides where and when a reload starts. |
 | `crew_habit.gd` (`CrewHabit`) | A habit per gun: which of the four guns a Guard carries (`gun_of`, by its weapon's file) and the habit numbers (the Shotgun's 4 m and 8 m, its ambush reach and rack timing; the Marksman Rifle's perch radius, line length and weight, 5 m, sight lock and hip fire). |
 | `crew_sight_line.gd` (`CrewSightLine`) | The Marksman Rifle's sight line: a thin red unshaded line from the rifle to where it aims, made on first use under the Guard. |
 | `ship_alarm.gd` (`ShipAlarm`) | The ship-wide Alarm: raised once, red lights, every crew member told. Built per ship as `Ship/Alarm`. |
@@ -36,7 +37,12 @@ types, On Edge, Guards sharing his position, each weapon's
 Gunnery and a Guard firing each gun, fair fire (the exposure ramp, the
 walk-in, five Guards with at most two aiming true, miss points in the open
 and at cover, lead, the Shotgun's pellet cap, and the median time to die
-against a Pistol and an Assault Rifle), a habit per gun (each gun's cover
+against a Pistol and an Assault Rifle), magazines and reloads (each gun's
+shots before its first reload, a reload sound at the Guard as every reload
+starts, the empty Assault Rifle reload's 3.45 s with no shot in it and the
+same time when hit twice and closed on, a Pistol topping up behind cover,
+the Shotgun breaking its shell reload off for him inside 3 m and loading to
+full with him at 6 m), a habit per gun (each gun's cover
 tile in its band after 20 s, the Shotgun holding fire at 10 m, waiting in
 ambush beside a doorway, racking before each shot; the Marksman Rifle's
 sight line before every perched shot, dodged by a late sidestep, lost when
@@ -174,10 +180,10 @@ Shotgun shot throws all 12, each inside the cone on its own, and at most
 the Sandbox's pellet cap of them, 9, do damage: 117 of his 150), the time
 between shots in a burst, its shot sound, its action sound (the Shotgun's
 pump, which a crew Shotgun racks before each shot as its tell rather than
-after it) and its loudness. Crew ignore its magazine, reloads, bloom, Aim Down
-Sights, recoil and Viewmodel: they fire their bursts from cover and go
-down, and never count rounds (the time down stands in for a reload until
-"Crew magazines and reloads"). How a Guard handles its gun is that gun's **Gunnery**
+after it), its loudness, and its magazine size, reload times, shell-by-shell
+reload and reload sounds (see Magazines and reloads below). Crew ignore its
+bloom, Aim Down Sights, sway, recoil, movement spread, swap time and
+Viewmodel; the Gunnery's aim error stands in for them. How a Guard handles its gun is that gun's **Gunnery**
 (`Crew3D.gunnery`, `resources/gunnery/<weapon>.tres`, `Gunnery.for_weapon`):
 
 | | Pistol | Assault Rifle | Shotgun | Marksman Rifle |
@@ -197,8 +203,8 @@ Read today: the aim error, opening spread, closing time and lead (see Fair
 fire), and the rhythm, range band and hold of the cover fight: shots per
 burst, bursts per peek, gap between bursts, settle (the Marksman Rifle's is
 its sight line), time down, range band near and far, hold before shifting
-(see Guard combat and A habit per gun). Reload factor is filled in for the
-reload ticket of `.scratch/crew-combat/spec.md`. All
+(see Guard combat and A habit per gun), and the reload factor (see
+Magazines and reloads). All
 are read at the moment of use, so a Sandbox sheet edit reaches crew already
 in the Raid.
 
@@ -226,6 +232,60 @@ their own seeded off the layout's seed (`hash([gen_seed, "gun roll"])`), so
 the same layout always gives the same guns (a Retry too) whatever else the
 build draws. The gun is not stored in the layout. The hand-authored ship
 (no Ship Class) rolls with the small ship's weights. Workers roll nothing.
+
+### Magazines and reloads
+
+From `.scratch/crew-combat/issues/04-crew-magazines-and-reloads.md`
+(`CrewMagazine`, `Crew3D.magazine`; where it reloads is `CrewCover`'s).
+
+- **Rounds.** A Guard counts every shot against its weapon's magazine size
+  (Pistol 12, Assault Rifle 30, Shotgun 6, Marksman Rifle 8), has unlimited
+  magazines, and spawns full, so every Raid and Retry starts full. Burst
+  length stays its Gunnery's, capped by the rounds left (`Crew3D._new_burst`).
+  With none in, or reloading, `Crew3D._fire` fires nothing.
+- **Times.** A reload takes the Profile's time times the Gunnery's reload
+  factor (1.5): from dry the empty reload (Pistol 1.6 s, so 2.4 s; Assault
+  Rifle 2.3, so 3.45 s; Marksman Rifle 2.4, so 3.6 s), topping up the
+  tactical one (1.2, 1.8, 2.0 s, so 1.8, 2.7, 3.0 s). The Shotgun loads shell
+  by shell: the first shell's time (0.55 s) then a shell's time (0.45 s) for
+  each after, times 1.5, each shell counting as it seats (6 from dry: 4.2 s).
+  It has no closing pump of its own: it racks before every shot anyway, and
+  that rack is its pump.
+- **Where.** Dry while up in a peek, it ducks (`_duck`) and reloads as it
+  gets down, behind its cover. Dry in the open fight, it first takes cover
+  if the cover search finds any (`_pick`, then the hiding fall-back) and
+  reloads on getting down there; with none, it reloads where it stands,
+  backing away from him 2 m (`BACK_AWAY`, straight back or angled off past
+  a prop) at 0.4 of its speed (`BACK_AWAY_SPEED`), facing him. Its peek
+  comes when both its time down and its reload are done.
+- **It always finishes.** While it reloads down behind cover it does not
+  peek and nothing makes it leave: being shot, flanked or closed on changes
+  nothing, nor does a near miss (which still lengthens its time down); it
+  faces where it last saw him. A reload is ticked by the body every physics
+  step (`Crew3D._physics_process`), so it runs to its end whatever the Guard
+  does meanwhile. A Guard reloading is never picked to flank.
+- **Topping up.** Down behind its cover with him unseen for 3 s
+  (`CrewCover.TOP_UP_UNSEEN`) and a part-used magazine, it tops up.
+- **The Shotgun breaks off**: loading shell by shell with at least one
+  shell in and him in its sight within 3 m (`CrewCover.BREAK_OFF`), it
+  stops loading and fires: over low cover or in the open it racks if its
+  last rack is stale and shoots once the rack allows (0.2 s), with no
+  settle; behind full cover it steps out as usual. Otherwise it loads to
+  full.
+- **Fair fire.** Starting a reload gives true aim up at once
+  (`CrewFire.give_up`), and a Guard reloading, or dry on its way to reload,
+  takes none (`Crew3D.can_aim_true`); a Marksman Rifle reloading wants no
+  true-aim place (`CrewCover.wants_place`).
+- **Covering fire.** A Guard reloading is not covering a partner's move
+  (`CrewCover.covering`), but still counts as able to (`can_cover`), like
+  one between peeks: it will be up again, and the partner waits at most
+  3 s.
+- **The tell**: the Profile's reload sounds at the Guard's position, 1 m
+  up (`Crew3D.RELOAD_HEIGHT`): the first as a reload starts, the second as
+  it ends; the Shotgun's as it starts and as each shell seats. No HUD
+  marker. The body emits `reload_started(from_empty)`, `shell_loaded` and
+  `reload_ended(broken)`, and `Crew3D.is_reloading()` says whether one is
+  running, for the reload pose ("Guards' poses in a fight").
 
 The body turns toward where it is looking at 6 rad/s rather than snapping;
 shots leave along the aim direction regardless of where the body has got to.
@@ -460,6 +520,12 @@ its rules and numbers kept.
 - **Near misses**: a shot of his whose line (from his camera) passes within
   1.2 m of it keeps it down 0.8 s longer (never past its longest time down
   plus 0.8 s), or sends it down if up.
+- **Reloading**: dry, it reloads down behind its cover; with him unseen 3 s
+  it tops up there; while it reloads it stays down whatever happens (see
+  Magazines and reloads). The longest one stretch down can last with him
+  in sight (`CrewCover.longest_down`) is its longest time down plus a near
+  miss's hold, or its longest reload if that is longer (only the Shotgun's,
+  4.2 s against 2.75 s).
 - **No cover in reach**: it falls back to the best tile within 14 m (and
   21 m by its walk) where he cannot see it standing, with no fair-walk
   rule, and looks for real cover each second. Once he can see it there
@@ -526,8 +592,8 @@ note `docs/research/fair-fire-and-cover.md` (branch `research/fair-fire-and-cove
   passes it to the waiting Guard with a clear line that held it least
   recently (never first), the nearer him on a tie. A holder that stops
   fighting or dies loses it at once. `CrewFire.give_up` takes it from a
-  Guard at once: "Crew magazines and reloads" calls it as a reload starts
-  and adds the reload to `can_aim_true`.
+  Guard at once, as a reload starts; a Guard reloading, or dry, cannot take
+  it (`can_aim_true`).
 - **Lead.** A true-aimed shot goes at his body centre (1.0 m up) plus the
   Gunnery's lead fraction (Pistol 0.3, Assault Rifle 0.5, Shotgun 0,
   Marksman Rifle 1.0) of the way to the true intercept for its bolt's speed
@@ -659,7 +725,9 @@ How several Guards fight him as one (`CrewCover`, `CrewTeam`), from
   holding or walking to a spot with a way to shoot, not holding its fire,
   and with him in its sight now, or seen within 3 s while it is down behind
   its own cover or walking to its spot, or firing on his cover. A partner
-  up that has lost him is not able.
+  up that has lost him is not able. A partner reloading is not covering
+  (it fires nothing) but is still able: down reloading it will be up again
+  like one between peeks, and the wait is capped at 3 s.
   While it waits it keeps its rhythm, peeking as usual; hiding with no peek,
   the wait counts with its habit's waits (`CrewCover.waited`). The wait is
   `CrewCover.move_wait()`.
@@ -842,7 +910,7 @@ and `crew.gd` (`SEARCH_AWARENESS`, `INVESTIGATE_SPEED`, `INVESTIGATE_LINGER`,
 `JOB_GIVE_UP`, `CORNERED_RANGE`, `HIDE_CHANCE`,
 `GUARD_REACH`, `COWER_CALM`, `PANEL_REACH`,
 `ON_EDGE_PAUSE`, `SWEEP_PAUSE`, `MUZZLE_BALL`,
-`MUZZLE_TARGET_GAP`, `MUZZLE_NEAR`, `OWN_COVER`, `FIRING_STEP`, `UNSTICK_AFTER`,
+`MUZZLE_TARGET_GAP`, `MUZZLE_NEAR`, `OWN_COVER`, `FIRING_STEP`, `RELOAD_HEIGHT`, `UNSTICK_AFTER`,
 `UNSTICK_MOVE`, `SIDESTEP`, `GIVE_WAY_NEAR`, `GIVE_WAY_PASSED`,
 `GIVE_WAY_WAIT`, `GIVE_WAY_INSIST`), `crew_paths.gd` (`CLEARANCE`, `SAMPLE`,
 `SNAP`, `BODY_GAP`, `MAKE_WAY_REACH`, `MAKE_WAY_CLEAR`), `crew_perception.gd` (`ON_EDGE_FACTOR`),
@@ -859,7 +927,8 @@ and `crew.gd` (`SEARCH_AWARENESS`, `INVESTIGATE_SPEED`, `INVESTIGATE_LINGER`,
 `UNSEEN_ADVANCE`, `UNSEEN_SEARCH`, `NEAR_MISS`, `NEAR_MISS_HOLD`,
 `LOOK_HIDING`, `LOOK_OPEN`, `COVER_FIRE`, `COVER_WAIT`, `FLANK_SPOT_REACH`,
 `ARRIVE_DOWN`, `MOVE_GIVE_UP`,
-`UNREACHABLE_FOR`, `STEP_GIVE_UP`, `OPEN_PAUSE`, `SINK`, `CROUCH`),
+`UNREACHABLE_FOR`, `STEP_GIVE_UP`, `OPEN_PAUSE`, `SINK`, `CROUCH`,
+`TOP_UP_UNSEEN`, `BREAK_OFF`, `BACK_AWAY`, `BACK_AWAY_SPEED`),
 `crew_habit.gd` (`SHOTGUN_CLOSE`, `SHOTGUN_HOLD_FIRE`, `AMBUSH_REACH`,
 `RACK_LEAD`, `RACK_EARLIEST`, `RACK_LATEST`, `PERCH_RADIUS`, `PERCH_LINE`,
 `W_LINE`, `PERCH_TRIED`, `PERCH_CLOSE`, `SIGHT_LOCK`, `HIP_CONE`,

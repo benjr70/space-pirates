@@ -262,6 +262,8 @@ func consider_flank() -> void:
 			continue
 		if crew.cover != null and crew.cover.last_guard:
 			continue
+		if crew.is_reloading():
+			continue  # it finishes its reload where it is, then acts
 		var his := crew.layout.room_at(ShipBuilder3D.world_to_tile(crew._last_seen))
 		if his < 0 or his in CrewNoise.rooms_at(crew.layout, crew.global_position):
 			continue  # no Room to go round into, or already in it
