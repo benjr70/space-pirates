@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: resolved
 Blocked by: 19, 21
 
 # Crew fight in the Sandbox sheet
@@ -22,7 +22,7 @@ See the spec's "Threat Budget, Health and the Sandbox sheet" and `issues/14`.
 - [x] (agent) Setting "how many aim true" to 1 gives no frame with two Guards aiming true over the next 20 s of a five-Guard fight.
 - [x] (agent) A Gunnery edit saved, then the resources reloaded from disk, keeps its value; the Crew fight values do the same.
 - [x] (agent) `docs/sandbox.md` matches what the sheet writes (the suite's existing doc check).
-- [ ] (agent) `tests/run_all.sh` passes. (awaits the final verification)
+- [x] (agent) `tests/run_all.sh` passes.
 - [ ] (human) A fight can be retuned from the sheet without leaving the Raid.
 
 ## Comments
@@ -45,3 +45,5 @@ See the spec's "Threat Budget, Health and the Sandbox sheet" and `issues/14`.
 ## Owed to playtest
 
 - [ ] (human) A fight can be retuned from the sheet without leaving the Raid.
+
+- Final verification, 2026-11-26, on the whole branch at `304dfda` (this ticket cherry-picked as `40c7c63`): `tests/run_all.sh` passed, seed 208739510, every suite (static 182, generator 358259, layouts 252, ship_3d 3733, pirate 2402, crew 552, sandbox 537, attachments 1674, raid_smoke 1278), 524 s. Gate line ticked and ticket closed by the coordinator.

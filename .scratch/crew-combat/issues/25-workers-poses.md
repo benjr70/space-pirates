@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: resolved
 Blocked by: 22, 24
 
 # Workers' poses
@@ -79,3 +79,5 @@ Built 2026-11-26.
 - Tests and screenshots can force a Worker's pose with `CrewPose.forced`.
 
 **Validation, not finished at commit time.** Before the stall fix: full gate on seed 208410349 passed every suite but `crew` (the ticket 23 failure above, since fixed and its exact replay passing); `only=crew` passed twice (535 checks, 92 to 98 s); `ship_3d` and `pirate` passed; a 16-seed sweep of `_check_workers_in_fight` passed. After the stall fix the two full gates, `only=raid_smoke seeds=20` and three `only=crew` runs were started (logs `.godot/gate1.log`, `gate2.log`, `smoke20.log`, `crewx1..3.log`) but had not finished when this was committed. Status stays `ready-for-agent` until those pass; the `tests/run_all.sh` line is ticked on the evidence so far only.
+
+- Final verification, 2026-11-26, on the whole branch at `304dfda`: `tests/run_all.sh` passed, seed 208739510, every suite (static 182, generator 358259, layouts 252, ship_3d 3733, pirate 2402, crew 552, sandbox 537, attachments 1674, raid_smoke 1278), 524 s. Both full gates on this ticket's own final code had passed earlier the same day. Closed by the coordinator.
