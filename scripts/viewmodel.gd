@@ -6,7 +6,8 @@ extends Node3D
 ##
 ## This is the procedural layer. It owns the Viewmodel's transform:
 ##   pose    hip by default; sights centred under the crosshair in Aim Down
-##           Sights; sprint-low while sprinting or clambering
+##           Sights; sprint-low while sprinting, clambering or tying up
+##           a surrendered Worker
 ##   sway    the mouse drags the weapon a little behind the look, and tilts
 ##           it a touch the same way
 ##   bob     a walk rocks it, in step with his speed, less crouched or
@@ -202,7 +203,8 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _process(delta: float) -> void:
-	var lowered: bool = _pirate.state in [_pirate.State.SPRINT, _pirate.State.CLAMBER]
+	# Lowered too while he ties up a surrendered Worker (crew-combat ticket 24).
+	var lowered: bool = _pirate.state in [_pirate.State.SPRINT, _pirate.State.CLAMBER] or _pirate.is_binding()
 	var aiming: bool = _pirate.ads
 
 	var sway := Vector3(-_sway.x, _sway.y, 0.0) * (sway_ads_scale if aiming else 1.0)

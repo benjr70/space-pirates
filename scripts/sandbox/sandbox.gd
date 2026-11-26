@@ -1,7 +1,7 @@
 class_name Sandbox
 extends Resource
 ## The Sandbox numbers that belong to no weapon: Pirate Health, crew Health,
-## Melee damage and the crew fight's numbers. One file, `resources/sandbox.tres`, read by the Pirate
+## Melee damage, the crew fight's numbers and Surrender and Bound. One file, `resources/sandbox.tres`, read by the Pirate
 ## and the crew at spawn in place of anything in their scenes, so the
 ## Sandbox sheet can Save them without ever writing into a scene.
 
@@ -32,3 +32,18 @@ const PATH := "res://resources/sandbox.tres"
 ## Seconds Pistol and Assault Rifle Guards fire at the edges of the prop he
 ## broke sight behind ([CrewTeam]), deliberate misses only, before they hold.
 @export var suppression_time := 4.0
+
+@export_group("Surrender and Bound")
+## A Worker that sees him this near (metres) surrenders, when it is hiding
+## or has no route away that does not pass him.
+@export var surrender_reach := 4.0
+## Or when his crosshair rests on it this long (seconds) within this reach
+## (metres).
+@export var surrender_aim_time := 0.5
+@export var surrender_aim_reach := 10.0
+## Seconds after surrendering that it kneels.
+@export var kneel_after := 1.5
+## Holding the interact key this long (seconds) on a surrendered Worker
+## within this reach (metres) ties it up: Bound.
+@export var bind_time := 2.0
+@export var bind_reach := 2.0

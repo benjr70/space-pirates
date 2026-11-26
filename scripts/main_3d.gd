@@ -32,6 +32,9 @@ var raid_time := 0.0
 ## This Raid's XP and carried gold, settled into the Profile when it ends.
 var ledger: RaidLedger
 
+## Offered within reach of a surrendered Worker, with a fill ring.
+const BIND_PROMPT := "Hold E to tie up"
+
 
 func _ready() -> void:
 	layout = layout_override
@@ -113,12 +116,21 @@ func _wire_hud() -> void:
 	player.died.connect(func() -> void: hud.show_prompt(""))
 	player.hit_landed.connect(func(target: Node3D, killed: bool, _headshot: bool) -> void:
 		if killed:
-			var unaware: bool = target.get("died_unaware") == true
-			ledger.record_kill(unaware)
-			if unaware:
+			# A Worker that had surrendered, or was Bound, is worth nothing,
+			# and the toast says so.
+			var surrendered: bool = target.get("died_surrendered") == true
+			var unaware: bool = not surrendered and target.get("died_unaware") == true
+			ledger.record_kill(unaware, surrendered)
+			if surrendered:
+				hud.toast("+%d XP  %s" % [RaidLedger.SURRENDERED_KILL_XP,
+						"it was Bound" if target.get("died_bound") == true else "it had surrendered"])
+			elif unaware:
 				hud.toast("+%d XP  unaware" % RaidLedger.UNAWARE_KILL_XP)
 			else:
 				hud.toast("+%d XP" % RaidLedger.KILL_XP))
+	player.bound.connect(func(_worker: Node3D) -> void:
+		ledger.record_bind()
+		hud.toast("+%d XP  bound" % RaidLedger.BIND_XP))
 
 
 ## Down is down: the pirate stays dead until Retry rebuilds the ship from its
@@ -177,19 +189,22 @@ func _extract_detail() -> String:
 func _extract_tally() -> String:
 	var ghost := "" if ledger.ghost_xp() == 0 else ", %d Ghost" % ledger.ghost_xp()
 	return "+%d XP  (%s, %d extraction%s)  ·  %d gold banked\n%s" % [
-		ledger.kill_xp() + ledger.extract_xp() + ledger.ghost_xp(), _kills_text(), ledger.extract_xp(), ghost,
+		ledger.kept_xp() + ledger.extract_xp() + ledger.ghost_xp(), _kills_text(), ledger.extract_xp(), ghost,
 		ledger.carried_gold, _profile_line()]
 
 
 func _lost_tally(lost_gold: int) -> String:
 	var gold := "%d gold left behind" % lost_gold if lost_gold > 0 else "no gold carried"
-	return "+%d XP kept  (%s)  ·  %s\n%s" % [ledger.kill_xp(), _kills_text(), gold, _profile_line()]
+	return "+%d XP kept  (%s)  ·  %s\n%s" % [ledger.kept_xp(), _kills_text(), gold, _profile_line()]
 
 
 func _kills_text() -> String:
 	var text := "1 kill" if ledger.kills == 1 else "%d kills" % ledger.kills
 	if ledger.unaware_kills > 0:
 		text += ", %d unaware" % ledger.unaware_kills
+	# Workers tied up: Bound.
+	if ledger.bound > 0:
+		text += ", %d bound" % ledger.bound
 	return text
 
 
@@ -208,13 +223,26 @@ func _process(delta: float) -> void:
 	if Input.is_action_just_pressed("interact"):
 		_interact()
 	hud.show_prompt(_prompt())
+	hud.set_bind_progress(_bind_progress())
+
+
+## How far the hold on a surrendered Worker has got, 0 to 1, while its prompt
+## shows; -1 with no prompt to tie one up.
+func _bind_progress() -> float:
+	if _prompt() != BIND_PROMPT:
+		return -1.0
+	return player.bind_progress()
 
 
 ## The interact key for what main owns: the home door and Containers. Doors
-## work their own controls, so a Container behind one waits its turn.
+## work their own controls, so a Container behind one waits its turn. A
+## surrendered Worker he faces more squarely than any Door or Container in
+## reach is the Pirate's own to tie up (`Player3D.bind_target`).
 func _interact() -> void:
 	if extraction != null and extraction.can_begin():
 		extraction.begin()
+		return
+	if player.is_binding() or player.bind_target() != null:
 		return
 	if _door_prompt() != "":
 		return
@@ -247,13 +275,16 @@ func _container_in_reach() -> Container3D:
 	return best
 
 
-## What the HUD offers: the Extraction under way, the home door, or a door.
+## What the HUD offers: the Extraction under way, the home door, tying up a
+## surrendered Worker, a door, or a Container.
 func _prompt() -> String:
 	if extraction != null:
 		if extraction.is_counting():
 			return "Extracting — %.1f s  (leave the pod to abort)" % extraction.time_left()
 		if extraction.can_begin():
 			return "E — Extract"
+	if player.is_binding() or player.bind_target() != null:
+		return BIND_PROMPT
 	var door := _door_prompt()
 	if door != "":
 		return door

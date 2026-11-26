@@ -42,7 +42,7 @@ extends SceneTree
 ## - **Quiet**: Assault Rifle out, crouch-walks in, shuts the boarding Hatch behind
 ##   him, loots one Container, comes back, extracts. He fires only at crew
 ##   that have noticed him (suspicious, or HUNT, FIGHT, COVER, a Worker
-##   fleeing to raise the Alarm, or one hiding cornered at his elbow),
+##   fleeing to raise the Alarm, or one hiding or surrendered cornered at his elbow),
 ##   standing to do it. Plays for a Ghost
 ##   Extraction.
 ## - **Loud**: Assault Rifle out, walks to the first occupied Room and fires there,
@@ -110,11 +110,12 @@ extends SceneTree
 ## HUD's spotted stings equal the crew that tipped into spotted (counted by
 ## a listener in the same group); the ledger's Alarm is the ship's.
 ## Extracted: the end screen reads EXTRACTED, the HUD is hidden, the gold
-## carried is banked and the tally shows it, the banked XP is kill +
-## extraction + Ghost XP from the ledger, the tally shows the Ghost bonus if
-## and only if the Alarm was never raised, and the kill count. Down: the end
-## screen reads YOU DIED, the HUD is hidden, no gold is banked, only the
-## kill XP is, and the tally says so. Script rules: Caught must be down and
+## carried is banked and the tally shows it, the banked XP is kill (a kill
+## on a surrendered or Bound Worker counts 0) + bind + extraction + Ghost XP
+## from the ledger, the tally shows the Ghost bonus if and only if the Alarm
+## was never raised, and the kill count. Down: the end screen reads YOU
+## DIED, the HUD is hidden, no gold is banked, only the kill and bind XP
+## are, and the tally says so. Script rules: Caught must be down and
 ## must not have fired; Quiet extracted carries gold; Loud extracted has a
 ## kill and a crew member spotted.
 ##
@@ -690,11 +691,11 @@ func _check_ending(script: StringName, start: Vector2i) -> Array:
 		_expect(screen.title_text() == "YOU DIED", "end screen reads '%s', want YOU DIED" % screen.title_text())
 		_expect(not hud.visible, "the HUD stayed up over the death screen")
 		_expect(Profile.gold == start.y, "dying banked %d gold" % (Profile.gold - start.y))
-		_expect(Profile.xp == start.x + ledger.kill_xp(), "dying banked %d XP, want the %d kill XP"
-				% [Profile.xp - start.x, ledger.kill_xp()])
+		_expect(Profile.xp == start.x + ledger.kept_xp(), "dying banked %d XP, want the %d kill and bind XP"
+				% [Profile.xp - start.x, ledger.kept_xp()])
 		var lost := "%d gold left behind" % carried if carried > 0 else "no gold carried"
-		_expect(detail.contains("+%d XP kept  (%s" % [ledger.kill_xp(), kills_text]) and detail.contains(lost),
-				"the death tally does not show %d XP kept, %s and %s: %s" % [ledger.kill_xp(), kills_text, lost, detail])
+		_expect(detail.contains("+%d XP kept  (%s" % [ledger.kept_xp(), kills_text]) and detail.contains(lost),
+				"the death tally does not show %d XP kept, %s and %s: %s" % [ledger.kept_xp(), kills_text, lost, detail])
 		return ["down", false, false]
 	if not extraction.is_done:
 		return ["none", false, false]
@@ -703,7 +704,7 @@ func _check_ending(script: StringName, start: Vector2i) -> Array:
 	_expect(Profile.gold == start.y + carried, "banked %d gold carrying %d" % [Profile.gold - start.y, carried])
 	_expect(detail.contains("%d gold banked" % carried), "the tally does not show %d gold banked: %s" % [carried, detail])
 	var ghost: int = 0 if alarm.is_raised else RaidLedger.GHOST_XP[layout.ship_class]
-	var earned: int = ledger.kill_xp() + RaidLedger.EXTRACT_XP[layout.ship_class] + ghost
+	var earned: int = ledger.kept_xp() + RaidLedger.EXTRACT_XP[layout.ship_class] + ghost
 	_expect(Profile.xp == start.x + earned, "banked %d XP, want %d (%s, Alarm %s)"
 			% [Profile.xp - start.x, earned, kills_text, "raised" if alarm.is_raised else "never raised"])
 	# ", <n> Ghost" in the XP breakdown: a ship's name can hold the word.
@@ -1473,10 +1474,16 @@ func _barrel_blocked() -> Crew3D:
 ## within Crew3D.CORNERED_RANGE): stood at his elbow it can wall off his
 ## way out (seen on the way to the home door, 0.7 m off, in a gate after
 ## crew-combat ticket 15), and before that ticket a cornered Worker fought
-## (FIGHT) and was shot as a threat, so it is still shot.
+## (FIGHT) and was shot as a threat, so it is still shot. A Worker that
+## has surrendered to him (SURRENDER, crew-combat ticket 24; a hiding Worker
+## surrenders when he comes within 4 m) is the same: harmless, left be,
+## shot only at his elbow, its kill worth 0 XP. A Bound one is never shot
+## (the bot never ties one up).
 func _onto_him(member: Crew3D) -> bool:
-	if member.state == Crew3D.State.COWER:
+	if member.state in [Crew3D.State.COWER, Crew3D.State.SURRENDER]:
 		return member._cornered()
+	if member.state == Crew3D.State.BOUND:
+		return false
 	return member.state in THREAT_STATES or member.perception.awareness >= CrewPerception.SUSPICIOUS
 
 

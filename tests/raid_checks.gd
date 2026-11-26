@@ -143,6 +143,8 @@ static func _check_raid(expect: Callable, root: Node) -> void:
 	main.free()
 	_check_extraction(expect, root)
 	_check_kill_as_he_extracts(expect, root)
+	_check_surrender_xp(expect, root)
+	_check_ghost_with_bound(expect, root)
 	Raid.seed = 0
 	Raid.ship_class = &""
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
@@ -261,3 +263,140 @@ static func _check_search(expect: Callable, main: Node3D) -> void:
 	main.search(box)
 	expect.call(main.ledger.carried_gold == worth and box.is_open and box.prompt_text() == "Empty",
 			"loot: a searched Container gave gold twice")
+
+
+## The living Workers aboard [param main]'s ship.
+static func _workers(main: Node3D) -> Array[Crew3D]:
+	var out: Array[Crew3D] = []
+	for node in main.get_tree().get_nodes_in_group(&"crew"):
+		var member := node as Crew3D
+		if member != null and main.is_ancestor_of(member) and member.is_worker() and member.is_alive():
+			out.append(member)
+	return out
+
+
+## [param worker] surrendered and stood [param away] from the Pirate.
+static func _surrendered(worker: Crew3D, player: CharacterBody3D, away: Vector3) -> void:
+	worker.global_position = player.global_position + away
+	worker.perception.awareness = 1.0
+	worker._enter(Crew3D.State.SURRENDER)
+
+
+## The last frame of a hold on [param worker]: the interact key down, the
+## Sandbox's bind time held (the hold itself, frame by frame, is the crew
+## suite's `_check_bind_hold`).
+static func _finish_hold(player: CharacterBody3D, worker: Crew3D) -> void:
+	Input.action_press("interact")
+	player._binding = worker
+	player.bind_held = 0.0
+	player._tick_bind(player.sandbox.bind_time)
+	Input.action_release("interact")
+
+
+## Surrender and Bound in a Raid (crew-combat ticket 24): the interact key
+## goes to a Container he faces over a surrendered Worker beside him, and
+## to the Worker he faces, with its prompt and an empty ring; binding adds
+## 50 XP with a toast; killing a surrendered Worker and killing a Bound one
+## each add 0, with a toast saying so; an unaware Worker's kill still adds
+## 150.
+static func _check_surrender_xp(expect: Callable, root: Node) -> void:
+	Raid.ship_class = &"medium"
+	var main: Node3D = load(Raid.RAID_SCENE).instantiate()
+	root.add_child(main)
+	var player: CharacterBody3D = main.get_node("Player")
+	var hud: Hud = main.get_node("Hud")
+	var ledger: RaidLedger = main.ledger
+	var workers := _workers(main)
+	expect.call(workers.size() >= 3, "surrender: the medium ship has %d Workers, want 3" % workers.size())
+	var boxes := main.get_tree().get_nodes_in_group(&"containers").filter(func(b: Node) -> bool: return main.is_ancestor_of(b))
+	if workers.size() < 3 or boxes.is_empty():
+		root.remove_child(main)
+		main.free()
+		Raid.ship_class = &"small"
+		return
+	# The key goes to what he faces: a Container ahead, the Worker beside.
+	var box: Container3D = boxes[0]
+	var away := Vector3(1.2, 0, 0)
+	player.global_position = box.global_position + away
+	player.global_basis = Basis.looking_at(-away, Vector3.UP)
+	var bound := workers[0]
+	_surrendered(bound, player, Vector3(0, 0, 1.5))
+	expect.call(main._prompt() == box.prompt_text() and player.bind_target() == null and player.can_interact(),
+			"surrender: facing a Container, a surrendered Worker beside him took the key (prompt '%s')" % main._prompt())
+	player.global_basis = Basis.looking_at(Vector3(0, 0, 1), Vector3.UP)
+	expect.call(main._prompt() == main.BIND_PROMPT and main._prompt() == "Hold E to tie up" and player.bind_target() == bound
+			and not player.can_interact() and main._bind_progress() == 0.0,
+			"surrender: facing a surrendered Worker 1.5 m off, the HUD offers '%s' (ring %.2f)" % [main._prompt(), main._bind_progress()])
+	player.global_position += Vector3(0, 0, -1.0)
+	expect.call(main._prompt() != main.BIND_PROMPT and player.bind_target() == null,
+			"surrender: 2.5 m from a surrendered Worker, the HUD still offers to tie it up")
+	player.global_position += Vector3(0, 0, 1.0)
+	# Binding: 50 XP and a toast.
+	var xp := ledger.kept_xp()
+	_finish_hold(player, bound)
+	expect.call(bound.is_bound() and ledger.kept_xp() - xp == RaidLedger.BIND_XP and RaidLedger.BIND_XP == 50
+			and ledger.bound == 1 and hud.toast_texts().has("+50 XP  bound"),
+			"surrender: binding added %d XP (Bound %s, toasts %s), want 50" % [ledger.kept_xp() - xp, bound.is_bound(), hud.toast_texts()])
+	expect.call(main._prompt() != main.BIND_PROMPT, "surrender: a Bound Worker is still offered to tie up")
+	# Killing the Bound one: 0, said so.
+	xp = ledger.kept_xp()
+	bound.health.current = 1
+	player._strike(bound)
+	expect.call(not bound.is_alive() and ledger.kills == 1 and ledger.kept_xp() == xp and hud.toast_texts().has("+0 XP  it was Bound"),
+			"surrender: killing a Bound Worker added %d XP (toasts %s), want 0 said so" % [ledger.kept_xp() - xp, hud.toast_texts()])
+	# Killing a surrendered one: 0, said so.
+	var kneeling := workers[1]
+	_surrendered(kneeling, player, Vector3(0, 0, 1.5))
+	xp = ledger.kept_xp()
+	kneeling.health.current = 1
+	player._strike(kneeling)
+	expect.call(not kneeling.is_alive() and ledger.kills == 2 and ledger.kept_xp() == xp and hud.toast_texts().has("+0 XP  it had surrendered"),
+			"surrender: killing a surrendered Worker added %d XP (toasts %s), want 0 said so" % [ledger.kept_xp() - xp, hud.toast_texts()])
+	# An unaware Worker: 150 as ever.
+	var unaware := workers[2]
+	unaware.perception.awareness = 0.0
+	unaware.global_position = player.global_position + Vector3(0, 0, 1.5)
+	xp = ledger.kept_xp()
+	unaware.health.current = 1
+	player._strike(unaware)
+	expect.call(not unaware.is_alive() and ledger.kept_xp() - xp == RaidLedger.UNAWARE_KILL_XP and RaidLedger.UNAWARE_KILL_XP == 150,
+			"surrender: an unaware Worker's kill added %d XP, want 150" % (ledger.kept_xp() - xp))
+	root.remove_child(main)
+	main.free()
+	Raid.ship_class = &"small"
+
+
+## Two Workers Bound and the Alarm never raised: extracting earns the Ghost
+## bonus and the bind XP, and the end screen shows 2 bound.
+static func _check_ghost_with_bound(expect: Callable, root: Node) -> void:
+	Raid.ship_class = &"medium"
+	var main: Node3D = load(Raid.RAID_SCENE).instantiate()
+	root.add_child(main)
+	var player: CharacterBody3D = main.get_node("Player")
+	var extraction: Extraction = main.extraction
+	var pod: BoardingPod = main.get_node("Ship/BoardingPod")
+	var screen: RaidEndScreen = main.get_node("RaidEndScreen")
+	var workers := _workers(main)
+	expect.call(workers.size() >= 2, "ghost bound: the medium ship has %d Workers, want 2" % workers.size())
+	for worker in workers.slice(0, 2):
+		_surrendered(worker, player, Vector3(0, 0, -1.5))
+		player.global_basis = Basis.looking_at(Vector3(0, 0, -1), Vector3.UP)
+		_finish_hold(player, worker)
+		expect.call(worker.is_bound(), "ghost bound: a Worker was not Bound")
+	var xp_before := Profile.xp
+	player.global_position = pod.to_global(Vector3(0, 0, BoardingPod.COLLAR_Z + BoardingPod.DEPTH - 0.4))
+	extraction.boarded = true
+	extraction.begin()
+	extraction._process(extraction.duration + 0.1)
+	var ledger: RaidLedger = main.ledger
+	var detail := screen.detail_text().replace("\n", " / ")
+	expect.call(extraction.is_done and not ledger.alarm_raised and ledger.ghost_xp() == RaidLedger.GHOST_XP[&"medium"],
+			"ghost bound: extracting after binding two Workers earned Ghost %d (Alarm %s)" % [ledger.ghost_xp(), ledger.alarm_raised])
+	var want: int = 2 * RaidLedger.BIND_XP + RaidLedger.EXTRACT_XP[&"medium"] + RaidLedger.GHOST_XP[&"medium"]
+	expect.call(Profile.xp - xp_before == want, "ghost bound: banked %d XP, want %d" % [Profile.xp - xp_before, want])
+	expect.call(detail.contains("2 bound") and detail.contains(", %d Ghost)" % RaidLedger.GHOST_XP[&"medium"]),
+			"ghost bound: the end screen does not show 2 bound and the Ghost bonus: %s" % detail)
+	root.get_tree().paused = false
+	root.remove_child(main)
+	main.free()
+	Raid.ship_class = &"small"

@@ -20,8 +20,9 @@ extends RefCounted
 ## him and a fighting Guard only when no other hiding place's route avoids
 ## it.
 ##
-## Hooks for later tickets: Surrender (crew-combat ticket 24) reads
-## [method is_hidden], [member spot] and [member no_way_out]; Workers' poses
+## Surrender (crew-combat ticket 24, `Crew3D._gives_up`, run before each
+## tick) reads [method is_hidden] and [member phase], and [method find] and
+## [method fair_run] for a way out past him; Workers' poses
 ## (ticket 25) read [member phase] and [member wounded], and
 ## [signal phase_changed].
 
@@ -165,9 +166,6 @@ func tick(delta: float) -> void:
 				var found := find()
 				if not found.is_empty():
 					_go(found)
-	# Surrender (crew-combat ticket 24) attaches here: a Worker that
-	# is_hidden() (or has no_way_out) with him within 4 m, or his crosshair
-	# on it, surrenders.
 	if is_hidden() and not wounded and quiet_for >= COME_OUT and not crew._alarm_raised():
 		crew._come_out()
 

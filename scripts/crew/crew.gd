@@ -29,8 +29,18 @@ signal reload_ended(broken: bool)
 
 ## Newer states go last so the older ones keep their numbers.
 ## COWER is a Worker hiding ([CrewHiding]); REPORT, a Worker come out of
-## hiding walking to raise the Alarm or a Guard.
-enum State { PATROL, HUNT, FIGHT, COVER, SEARCH, DEAD, INVESTIGATE, FLEE, COWER, REPORT }
+## hiding walking to raise the Alarm or a Guard; SURRENDER, a Worker that
+## has given up to the Pirate (Surrender); BOUND, one he has tied up.
+enum State { PATROL, HUNT, FIGHT, COVER, SEARCH, DEAD, INVESTIGATE, FLEE, COWER, REPORT, SURRENDER, BOUND }
+
+## Where a Worker is in giving up, for its poses (crew-combat ticket 25):
+## hands up on surrendering, kneeling after the Sandbox's kneel time, Bound
+## once tied up; NONE otherwise.
+enum Surrender { NONE, HANDS_UP, KNEELING, BOUND }
+const SURRENDER_NAMES: PackedStringArray = ["none", "hands up", "kneeling", "Bound"]
+
+## A Worker's [member surrender] stage changed.
+signal surrender_changed(stage: Surrender)
 
 ## Called on every node in this group, with the crew member, each time one
 ## tips into spotted: the HUD's sting and markers listen here.
@@ -76,6 +86,13 @@ const CORNERED_RANGE := 3.0
 ## Chance a Worker spotting him with the Alarm down freezes and hides rather
 ## than run to raise it.
 const HIDE_CHANCE := 0.25
+## Seconds a surrendered Worker goes without him in its sight before it
+## gives the Surrender up and hides again (so one frame of a prop between
+## them does not end it).
+const SURRENDER_LOST := 0.5
+## Seconds between a Worker's looks for a way out past him, while it
+## weighs surrendering.
+const WAY_OUT_EVERY := 1.0
 ## A fleeing Worker has reached its Guard this close, and raises it.
 const GUARD_REACH := 2.5
 ## A Worker has reached an Alarm Panel this close to its use spot.
@@ -192,7 +209,8 @@ const RELOAD_HEIGHT := 1.0
 const RIG_HEIGHT := 2.0
 ## Clips that must loop while a state holds them.
 const LOOPING_CLIPS: Array[StringName] = [&"CharacterArmature|Idle", &"CharacterArmature|Idle_Gun",
-		&"CharacterArmature|Idle_Gun_Pointing", &"CharacterArmature|Run", &"CharacterArmature|Walk"]
+		&"CharacterArmature|Idle_Gun_Pointing", &"CharacterArmature|Run", &"CharacterArmature|Walk",
+		&"CharacterArmature|Wave", &"CharacterArmature|Idle_Neutral"]
 
 @export_group("Cover")
 ## How far a Worker looks for somewhere to cower.
@@ -278,6 +296,19 @@ var _flank_clock := 0.0
 var reported := false
 ## It fell without having spotted the Pirate: a stealth kill.
 var died_unaware := false
+## It fell surrendered or Bound (crew-combat ticket 24): no XP for the kill.
+var died_surrendered := false
+var died_bound := false
+## Where a Worker is in giving up (Surrender, Bound).
+var surrender := Surrender.NONE
+## Seconds since it surrendered.
+var surrendered_for := 0.0
+## Seconds his crosshair has rested on it in a row.
+var aimed_for := 0.0
+var _unseen_for := 0.0
+## Its last look for a way out past him, and when it may look again.
+var _way_out := true
+var _way_out_left := 0.0
 ## The trace this crew member is walking to look at ([CrewTraces]).
 var _trace: Node3D
 var _trace_timer := 0.0
@@ -546,6 +577,11 @@ func take_damage(amount: int, from: Node = null) -> void:
 		return
 	if health.take_damage(amount, from):
 		return
+	if state in [State.SURRENDER, State.BOUND]:
+		# A hit that does not kill leaves a surrendered or Bound Worker as it
+		# was; wounded, it never comes out should it hide again.
+		hiding.wounded = true
+		return
 	# Hit: its aim is spoiled, thrown back open to close again; a Marksman
 	# Rifle hit during its sight line loses the shot.
 	_exposed_for = 0.0
@@ -569,6 +605,12 @@ func take_damage(amount: int, from: Node = null) -> void:
 
 func _physics_process(delta: float) -> void:
 	if state == State.DEAD:
+		return
+	if state == State.BOUND:
+		# Tied up: it never moves, looks, hears, reports or raises anything
+		# for the rest of the Raid.
+		velocity = Vector3.ZERO
+		_update_animation()
 		return
 
 	if not is_on_floor():
@@ -606,6 +648,8 @@ func _physics_process(delta: float) -> void:
 			_tick_cower(delta)
 		State.REPORT:
 			_tick_report()
+		State.SURRENDER:
+			_tick_surrender(delta)
 
 	var waiting := _waiting_to_pass(delta)
 	_steer(delta, waiting)
@@ -686,6 +730,8 @@ func _break_sight() -> void:
 ## off their mates' footsteps and doors, not their gunfire. Returns whether
 ## it took any notice.
 func hear(at: Vector3, kind: CrewNoise.Kind, source: Node = null) -> bool:
+	if state == State.BOUND:
+		return false
 	if state == State.COWER and hiding != null and not source is Crew3D:
 		# A sound of him keeps a hiding Worker hidden ([CrewHiding]). (Workers'
 		# poses, crew-combat ticket 25, duck lower at a gunshot here.)
@@ -765,7 +811,7 @@ func facing() -> Vector3:
 
 
 func _in_combat() -> bool:
-	return state in [State.HUNT, State.FIGHT, State.COVER, State.FLEE, State.COWER]
+	return state in [State.HUNT, State.FIGHT, State.COVER, State.FLEE, State.COWER, State.SURRENDER]
 
 
 ## Just spotted him: a Guard hunts him. A Worker, with the Alarm down,
@@ -866,6 +912,8 @@ func _enter(next: State) -> void:
 		cover.release()
 	if hiding != null and next != State.COWER:
 		hiding.release()
+	if not next in [State.SURRENDER, State.BOUND] and surrender != Surrender.NONE:
+		_set_surrender(Surrender.NONE)
 	state = next
 	_stop_giving_way()
 	_speed_scale = 1.0
@@ -910,6 +958,19 @@ func _enter(next: State) -> void:
 		State.REPORT:
 			_speed_scale = ROUTINE_SPEED
 			_pick_report()
+		State.SURRENDER:
+			_path.clear()
+			_flee_to = null
+			_flee_panel = null
+			surrendered_for = 0.0
+			_unseen_for = 0.0
+			_set_surrender(Surrender.HANDS_UP)
+		State.BOUND:
+			_path.clear()
+			velocity = Vector3.ZERO
+			# Tied up it shows no Awareness bar and notices nothing again.
+			perception.awareness = 0.0
+			_set_surrender(Surrender.BOUND)
 		State.SEARCH:
 			perception.on_edge = true
 			perception.awareness = minf(perception.awareness, SEARCH_AWARENESS)
@@ -1233,6 +1294,8 @@ func _on_target_fired() -> void:
 ## Guard to raise it; it hides on arrival. If its Guard dies on the way it
 ## runs on to the next.
 func _tick_flee() -> void:
+	if _gives_up(get_physics_process_delta_time()):
+		return
 	if _flee_panel != null:
 		if _flee_panel.broken or _alarm_raised():
 			# Shot out, or someone beat it there: somewhere else to run.
@@ -1267,7 +1330,93 @@ func _tick_flee() -> void:
 func _tick_cower(delta := -1.0) -> void:
 	if hiding == null:
 		return
-	hiding.tick(delta if delta >= 0.0 else get_physics_process_delta_time())
+	var step := delta if delta >= 0.0 else get_physics_process_delta_time()
+	if _gives_up(step):
+		return
+	hiding.tick(step)
+
+
+# --- Surrender and Bound (crew-combat ticket 24) ----------------------------
+
+## Whether a fleeing or hiding Worker surrenders now, surrendering if so: it
+## sees him and either he is within the Sandbox's surrender reach (4 m) or
+## his crosshair has rested on it for its aim time (0.5 s) within its aim
+## reach (10 m), and it is hiding (on its tile, or where it stands with
+## nowhere to run) or has no route away that does not pass him. A Worker
+## running with a way out keeps running. Never a Guard. The Alarm changes
+## nothing.
+func _gives_up(delta: float) -> bool:
+	_way_out_left = maxf(_way_out_left - delta, 0.0)
+	if not is_worker() or not _can_see or target == null or not is_instance_valid(target):
+		aimed_for = 0.0
+		return false
+	var distance := _flat_distance(global_position, target.global_position)
+	var aimed: bool = distance <= sandbox.surrender_aim_reach and target.has_method("crosshair_on") \
+			and target.crosshair_on(self, sandbox.surrender_aim_reach)
+	aimed_for = aimed_for + delta if aimed else 0.0
+	if distance > sandbox.surrender_reach and aimed_for < sandbox.surrender_aim_time - 0.0001:
+		return false
+	if not _cornered_now():
+		return false
+	_enter(State.SURRENDER)
+	return true
+
+
+## Hiding, or with no route away that does not pass him: a Worker frozen
+## or fleeing looks for a fair run (to its panel or Guard, else to any
+## hiding place) at most once every WAY_OUT_EVERY; one already running to
+## hide has a way out.
+func _cornered_now() -> bool:
+	if state == State.COWER:
+		if hiding.is_hidden():
+			return true
+		if hiding.phase == CrewHiding.Phase.RUN:
+			return false
+	if _way_out_left <= 0.0:
+		_way_out_left = WAY_OUT_EVERY
+		var him := target.global_position
+		var fair := false
+		if state == State.FLEE and not _path.is_empty():
+			fair = hiding.fair_run(_path, _path[_path.size() - 1], him)
+		_way_out = fair or not hiding.find().is_empty()
+	return not _way_out
+
+
+## Surrendered: still, facing him; kneeling after the Sandbox's kneel time.
+## It holds while he is in its sight; out of it for SURRENDER_LOST it hides
+## again and the hiding rules apply, its come-out clock running from the
+## last time it saw him.
+func _tick_surrender(delta: float) -> void:
+	surrendered_for += delta
+	if surrender == Surrender.HANDS_UP and surrendered_for >= sandbox.kneel_after - 0.0001:
+		_set_surrender(Surrender.KNEELING)
+	_unseen_for = 0.0 if _can_see else _unseen_for + delta
+	if _unseen_for >= SURRENDER_LOST:
+		_hide()
+		hiding.quiet_for = _seen_ago
+
+
+## Surrendered (hands up or kneeling), and so can be Bound.
+func is_surrendered() -> bool:
+	return state == State.SURRENDER
+
+
+func is_bound() -> bool:
+	return state == State.BOUND
+
+
+## Tied up by the Pirate: Bound for the rest of the Raid. Only a
+## surrendered Worker can be.
+func bind() -> void:
+	if state == State.SURRENDER:
+		_enter(State.BOUND)
+
+
+func _set_surrender(stage: Surrender) -> void:
+	if stage == surrender:
+		return
+	surrender = stage
+	surrender_changed.emit(stage)
 
 
 ## Out of hiding, On Edge: it walks to the nearest working Alarm Panel or
@@ -1378,6 +1527,9 @@ func on_alarm(at: Vector3) -> void:
 	if state == State.DEAD:
 		return
 	perception.on_edge = true
+	if state in [State.SURRENDER, State.BOUND]:
+		# The Alarm changes nothing for a Worker that has given up.
+		return
 	if is_worker():
 		if state in [State.PATROL, State.INVESTIGATE, State.SEARCH, State.REPORT]:
 			# It has not seen him: it hides from where the Alarm says he is.
@@ -2137,7 +2289,14 @@ func _update_animation() -> void:
 	if state == State.DEAD:
 		return
 	var speed := Vector2(velocity.x, velocity.z).length()
-	if cover != null and cover.stepping():
+	if state in [State.SURRENDER, State.BOUND]:
+		# Stand-ins until Workers' poses (crew-combat ticket 25): the Wave
+		# clip, looped, for hands up and kneeling alike; Idle_Neutral Bound.
+		if state == State.BOUND:
+			_play_any(["CharacterArmature|Idle_Neutral", "CharacterArmature|Idle", "Idle"])
+		else:
+			_play_any(["CharacterArmature|Wave", "CharacterArmature|Idle", "Idle"])
+	elif cover != null and cover.stepping():
 		# Stepping out from full cover and back: its feet step on their own
 		# ([CrewPose]) under a still upper body.
 		if state == State.FIGHT:
@@ -2157,7 +2316,14 @@ func _update_animation() -> void:
 # --- death --------------------------------------------------------------------
 
 func _on_died(_from: Node) -> void:
-	died_unaware = not _in_combat() and not _spotted()
+	died_surrendered = state in [State.SURRENDER, State.BOUND]
+	died_bound = state == State.BOUND
+	died_unaware = not died_surrendered and not _in_combat() and not _spotted()
+	if died_bound:
+		# A Bound Worker killed leaves a body, a trace as any other, even if
+		# its being Bound was reported.
+		reported = false
+	_set_surrender(Surrender.NONE)
 	if cover != null:
 		cover.release()
 	if magazine != null:

@@ -61,12 +61,18 @@ var ambush_door: Door3D
 ## count works), crew-combat ticket 23.
 var worker_bolts := 0
 var guard_bolts := 0
+## Surrenders in the whole suite by Workers, and by Guards (never),
+## crew-combat ticket 24.
+var worker_surrenders := 0
+var guard_surrenders := 0
 
 
 func _initialize() -> void:
 	run_seed = SuiteSeed.pick("crew")
 	# Every bolt fired in the suite, by who fired it: no Worker ever fires.
 	node_added.connect(_count_bolt)
+	# Every surrender in the suite, by who gave up: never a Guard.
+	node_added.connect(_count_surrenders)
 	_check_pure()
 	world = Node3D.new()
 	root.add_child(world)
@@ -178,7 +184,10 @@ func _initialize() -> void:
 	await _check_hiding_sweep()
 	await _check_workers_in_fight()
 	await _check_hiding_rig()
+	await _check_flee_aimed()
+	await _check_surrender_rig()
 	_check_no_worker_shots()
+	_check_no_guard_surrenders()
 	await _silence()
 	_report()
 	quit(1 if failures.size() > 0 else 0)
@@ -689,9 +698,9 @@ func _has_fired(crew: Crew3D) -> bool:
 
 ## A Worker that spots the Pirate 8 m off runs for the Guard behind it and
 ## does not shoot; cornered within 3 m, with no panel and no Guard to run
-## to, it carries no weapon, never fires in 30 s and hides (COWER; it hid
-## where it stood before crew-combat ticket 23). Workers wear the Engineer,
-## Guards the Soldier.
+## to, it carries no weapon, never fires in 30 s and surrenders (SURRENDER,
+## crew-combat ticket 24; it hid before, and hid where it stood before
+## ticket 23). Workers wear the Engineer, Guards the Soldier.
 func _check_worker() -> void:
 	var guard := _crew(CrewTypes.Type.GUARD)
 	guard.global_position = Vector3(1.5, 0.0, 23.0)
@@ -742,7 +751,7 @@ func _check_worker() -> void:
 	_expect(cornered_frames * 10 >= frames * 9,
 			"cornered: the Worker had him in sight within 3 m on only %d of %d frames" % [cornered_frames, frames])
 	_expect(bolts == 0 and not _has_fired(cornered), "cornered: a Worker fired %d bolts in %.0f s within 3 m" % [bolts, CORNERED_SECONDS])
-	_expect(cornered.state == Crew3D.State.COWER, "cornered: a Worker is in state %d after %.0f s, not hiding" % [cornered.state, CORNERED_SECONDS])
+	_expect(cornered.state == Crew3D.State.SURRENDER, "cornered: a Worker is in state %d after %.0f s, not surrendered" % [cornered.state, CORNERED_SECONDS])
 	_expect(cornered.weapon == null, "cornered: a Worker picked up %s" % cornered.weapon)
 	cornered.free()
 	for shot in get_first_node_in_group(&"projectiles").get_children():
@@ -5475,3 +5484,511 @@ func _check_out_to_panel(alarm: ShipAlarm) -> void:
 			"out to a panel: the Alarm %s, the Worker %.1f m from the panel" % ["raised" if alarm.is_raised else "not raised", _flat(worker.global_position, panel.use_at)])
 	worker.free()
 	panel.free()
+
+
+# --- Surrender and Bound (crew-combat ticket 24) ------------------------------
+
+## A hiding Worker surrenders within this of him coming within 4 m in its
+## sight (he steps from 6 m to 3.9 m).
+const SURRENDER_WITHIN := 0.2
+const SURRENDER_FAR := 6.0
+const SURRENDER_NEAR := 3.9
+## Aimed at from 8 m: surrendered this long after his crosshair settles on
+## it, within this; never while it points this many degrees away.
+const AIMED_FROM := 8.0
+const AIM_SETTLE := 0.5
+const AIM_TOLERANCE := 0.1
+const AIM_OFF := 20.0
+## Kneeling this long after surrendering, within this; then still, him in
+## its sight, this long, moving no more than this.
+const KNEEL_AT := 1.5
+const KNEEL_TOLERANCE := 0.2
+const HOLDS_FOR := 30.0
+const HOLD_MOVE := 0.05
+## The interact key held this long within this reach binds; let go at this,
+## it does not.
+const BIND_AT := 2.0
+const BIND_REACH := 2.0
+const BIND_LET_GO := 1.5
+const BIND_TOLERANCE := 1.5 / 60.0
+## A Bound Worker the Pirate leaves raises nothing in this long.
+const BOUND_QUIET := 120.0
+## A Guard that reaches a Bound Worker is hunting within this.
+const GUARD_HUNTS := 3.0
+const GUARD_REACHED := 2.0
+
+
+func _count_surrenders(node: Node) -> void:
+	var crew := node as Crew3D
+	if crew == null:
+		return
+	crew.surrender_changed.connect(func(stage: Crew3D.Surrender) -> void:
+		if stage != Crew3D.Surrender.HANDS_UP:
+			return
+		if crew.is_worker():
+			worker_surrenders += 1
+		else:
+			guard_surrenders += 1)
+
+
+## No Guard surrendered in any check of the suite; Workers did, so the
+## count was listening.
+func _check_no_guard_surrenders() -> void:
+	_expect(guard_surrenders == 0 and worker_surrenders > 0,
+			"surrender: %d Guards surrendered in the crew suite (Workers %d)" % [guard_surrenders, worker_surrenders])
+
+
+## Turns the Pirate (still, physics off or on) so his crosshair runs from
+## his eye through [param at].
+func _aim_pirate(at: Vector3) -> void:
+	for i in 2:
+		var to: Vector3 = at - player.camera.global_position
+		player.rotation.y = atan2(-to.x, -to.z)
+		player.head.rotation.x = atan2(to.y, Vector2(to.x, to.z).length())
+
+
+## Back to yaw 0, level.
+func _level_pirate() -> void:
+	player.rotation.y = 0.0
+	player.head.rotation.x = 0.0
+
+
+## The middle of a Worker's body, where his crosshair rests on it.
+func _chest(worker: Crew3D) -> Vector3:
+	return worker.global_position + Vector3.UP * 1.0
+
+
+## A point on open floor [param distance] from [param worker], in its sight
+## (a clear eye line), along one of 16 ways round; each of [param also] (a
+## list of other distances along the same way) open and in sight too. INF
+## with none.
+func _in_sight_of(worker: Crew3D, distance: float, also: Array = []) -> Vector3:
+	var astar := CrewPaths.grid(worker.layout)
+	var at_eye := worker.global_position + Vector3.UP * Crew3D.EYE_HEIGHT
+	for k in 16:
+		var along := Vector3.FORWARD.rotated(Vector3.UP, TAU * k / 16.0)
+		var ok := true
+		for d: float in [distance] + also:
+			var at: Vector3 = worker.global_position + along * d
+			at.y = 0.0
+			if not _open_tile(astar, ShipBuilder3D.world_to_tile(at)) \
+					or worker._blocked(at_eye, at + Vector3.UP * Crew3D.EYE_HEIGHT):
+				ok = false
+				break
+		if ok:
+			var found := worker.global_position + along * distance
+			return Vector3(found.x, 0.0, found.z)
+	return Vector3.INF
+
+
+## A Worker of the hiding rig hidden on its tile, the Pirate parked off the
+## ship; null (and a failure) if it never hid.
+func _hidden_worker(tile: Vector2i, him: Vector3, tag: String) -> Crew3D:
+	var worker := _hide_worker(tile)
+	player.global_position = Vector3(-500, 0, -500)
+	worker._last_seen = him
+	worker._hide()
+	worker.set_physics_process(true)
+	var hid := await _until_hidden(worker, 15.0)
+	_expect(hid < INF, "%s: the Worker never hid (state %d)" % [tag, worker.state])
+	if hid == INF:
+		worker.free()
+		return null
+	return worker
+
+
+## A Worker running for a panel by a clear route, the Pirate 8 m off with
+## his crosshair on it all the way: it never surrenders (crew-combat ticket
+## 24). Its own hiding rig, with a panel on Room A's north wall, so the
+## Alarm it raises there leaves the next checks' Alarm down.
+func _check_flee_aimed() -> void:
+	_fresh_world()
+	_build_hide_rig()
+	for i in 2:
+		await physics_frame
+	var panel := AlarmPanel.new()
+	panel.setup(0, Vector2i(HIDE_X0 + 11, 0), Vector2i.UP)
+	hide_ship.add_child(panel)
+	await physics_frame
+	var worker := _hide_worker(Vector2i(HIDE_X0 + 6, 1))
+	worker.hide_chance = 0.0
+	player.global_position = _hide_at(6, 9)
+	worker._last_seen = player.global_position
+	worker.perception.awareness = 1.0
+	worker._react_spotted()
+	_expect(worker.state == Crew3D.State.FLEE and worker._flee_panel == panel,
+			"flee aimed: the Worker is in state %d, not running for the panel" % worker.state)
+	worker.set_physics_process(true)
+	var alarm: ShipAlarm = hide_ship.get_node("Alarm")
+	var aimed_most := 0.0
+	var surrendered := false
+	var t := 0.0
+	while t < 6.0 and not alarm.is_raised:
+		_aim_pirate(_chest(worker))
+		await physics_frame
+		t += STEP
+		aimed_most = maxf(aimed_most, worker.aimed_for)
+		surrendered = surrendered or worker.state == Crew3D.State.SURRENDER
+	print("  flee aimed: crosshair rested on it %.2f s in a row from %.1f m, Alarm %s at %.1f s"
+			% [aimed_most, AIMED_FROM, "raised" if alarm.is_raised else "not raised", t])
+	_expect(aimed_most >= AIM_SETTLE, "flee aimed: his crosshair rested on it only %.2f s in a row" % aimed_most)
+	_expect(not surrendered, "flee aimed: a Worker running for a panel by a clear route surrendered")
+	_expect(alarm.is_raised, "flee aimed: the Worker never raised the Alarm at the panel")
+	worker.free()
+	_level_pirate()
+
+
+## The surrender rig: a hiding Worker surrendering to him near, kneeling and
+## holding, then Bound by the interact key held (and not by a hold let go),
+## no Awareness bar, the Pirate leaving it 120 s with nothing raised, a
+## Guard finding it and hunting and a second passing it by; then one left
+## surrendered coming out to raise the Alarm, one aimed at from 8 m with the
+## Alarm up, and the interact key working a Door he faces over a Worker
+## beside it.
+func _check_surrender_rig() -> void:
+	_fresh_world()
+	_build_hide_rig()
+	for i in 2:
+		await physics_frame
+	var alarm: ShipAlarm = hide_ship.get_node("Alarm")
+	var panel := _hide_panel()
+	await physics_frame
+	var bound := await _check_surrender_near()
+	if bound != null:
+		await _check_bind_hold(bound)
+		await _check_bound_left(bound, alarm)
+		bound.free()
+	await _check_surrender_left(alarm)
+	await _check_surrender_aimed(alarm)
+	await _check_bind_or_door()
+	panel.free()
+
+
+## A hidden Worker, him 6 m off in its sight: nothing. He steps to 3.9 m:
+## surrendered within 0.2 s; kneeling 1.5 s later within 0.2 s; still,
+## kneeling, him in its sight, 30 s on; a hit for 1 leaves it so.
+func _check_surrender_near() -> Crew3D:
+	var worker := await _hidden_worker(Vector2i(HIDE_X0 + 8, 8), _hide_at(10, 2), "surrender near")
+	if worker == null:
+		return null
+	var far := _in_sight_of(worker, SURRENDER_FAR, [SURRENDER_NEAR])
+	_expect(far != Vector3.INF, "surrender near: no open floor 6 m and 3.9 m off in its sight")
+	if far == Vector3.INF:
+		worker.free()
+		return null
+	var way := (far - worker.global_position).normalized()
+	player.global_position = far
+	# Facing away: only distance counts here.
+	_aim_pirate(far + way * 5.0 + Vector3.UP * 1.6)
+	for i in 60:
+		await physics_frame
+	_expect(worker.state == Crew3D.State.COWER and worker._can_see,
+			"surrender near: him 6 m off in its sight, the Worker is in state %d (sees him %s)" % [worker.state, worker._can_see])
+	player.global_position = worker.global_position + way * SURRENDER_NEAR
+	player.global_position.y = 0.0
+	var t := 0.0
+	while t < 1.0 and worker.state != Crew3D.State.SURRENDER:
+		await physics_frame
+		t += STEP
+	print("  surrender near: surrendered %.3f s after he came 3.9 m off" % t)
+	_expect(t <= SURRENDER_WITHIN, "surrender near: surrendered %.2f s after he came within 4 m, want within %.1f s (state %d)"
+			% [t, SURRENDER_WITHIN, worker.state])
+	var start := worker.global_position
+	var kneel := INF
+	var moved := 0.0
+	var seen := 0
+	var lost := false
+	var frames := roundi((KNEEL_AT + HOLDS_FOR) / STEP)
+	var since := 0.0
+	for i in frames:
+		await physics_frame
+		since += STEP
+		if kneel == INF and worker.surrender == Crew3D.Surrender.KNEELING:
+			kneel = since
+		moved = maxf(moved, _flat(worker.global_position, start))
+		seen += 1 if worker._can_see else 0
+		lost = lost or worker.state != Crew3D.State.SURRENDER
+	print("  surrender near: kneeling %.2f s after surrendering, moved %.3f m in %.0f s" % [kneel, moved, KNEEL_AT + HOLDS_FOR])
+	_expect(absf(kneel - KNEEL_AT) <= KNEEL_TOLERANCE, "surrender near: kneeling %.2f s after surrendering, want %.1f within %.1f"
+			% [kneel, KNEEL_AT, KNEEL_TOLERANCE])
+	_expect(not lost and worker.surrender == Crew3D.Surrender.KNEELING and moved <= HOLD_MOVE and seen == frames,
+			"surrender near: %.0f s on, him in its sight %d of %d frames, it moved %.3f m (state %d, %s)"
+			% [HOLDS_FOR, seen, frames, moved, worker.state, Crew3D.SURRENDER_NAMES[worker.surrender]])
+	worker.take_damage(1, player)
+	_expect(worker.is_alive() and worker.state == Crew3D.State.SURRENDER and worker.surrender == Crew3D.Surrender.KNEELING,
+			"surrender near: a hit for 1 left a kneeling Worker in state %d, %s" % [worker.state, Crew3D.SURRENDER_NAMES[worker.surrender]])
+	return worker
+
+
+## The Pirate, moving under his own physics, 1.5 m from the kneeling Worker
+## and facing it: a hold let go at 1.5 s binds nothing and keeps nothing; a
+## hold cut by a hit is not taken up again while the key stays down; a hold
+## of 2 s binds it, and the trigger pulled meanwhile fires nothing. Bound,
+## it shows no Awareness bar.
+func _check_bind_hold(worker: Crew3D) -> void:
+	var way := (player.global_position - worker.global_position)
+	way.y = 0.0
+	player.global_position = worker.global_position + way.normalized() * 1.5
+	_aim_pirate(_chest(worker))
+	player.set_physics_process(true)
+	await physics_frame
+	_expect(player.bind_target() == worker, "bind: 1.5 m from a surrendered Worker, facing it, it is not his to tie up")
+	# Let go at 1.5 s.
+	Input.action_press("interact")
+	for i in roundi((BIND_LET_GO + 0.5) / STEP):
+		await physics_frame
+		if player.bind_held >= BIND_LET_GO - 0.001:
+			break
+	var held: float = player.bind_held
+	Input.action_release("interact")
+	await physics_frame
+	_expect(absf(held - BIND_LET_GO) < 0.001 and player.is_binding() == false and player.bind_held == 0.0 and worker.is_surrendered(),
+			"bind: let go at %.2f s (held %.2f), it is %s, the hold kept %.2f s" % [BIND_LET_GO, held,
+			"Bound" if worker.is_bound() else "not Bound", player.bind_held])
+	# A hit at 1 s: let go, and not taken up again while the key stays down.
+	Input.action_press("interact")
+	for i in 60:
+		await physics_frame
+	player.take_damage(1, worker)
+	await physics_frame
+	var cut: bool = not player.is_binding()
+	for i in 90:
+		await physics_frame
+	_expect(cut and not player.is_binding() and worker.is_surrendered(),
+			"bind: a hit at 1 s did not end the hold, or it started again with the key still down")
+	Input.action_release("interact")
+	await physics_frame
+	# Held 2 s, the trigger pulled in the middle of it.
+	var shots := [0]
+	var count := func() -> void: shots[0] += 1
+	player.fired.connect(count)
+	var ammo: int = player.ammo
+	Input.action_press("interact")
+	# Timed from the frame the hold starts (the frame after the press is
+	# seen), as the bind time is.
+	var started := -1
+	var t := 0.0
+	var at_1_9 := false
+	var frame := 0
+	while frame < 200 and not worker.is_bound():
+		if frame == 30:
+			Input.action_press("shoot")
+		if frame == 60:
+			Input.action_release("shoot")
+		await physics_frame
+		frame += 1
+		if started < 0 and player.is_binding():
+			started = frame
+		if started >= 0:
+			t = (frame - started) * STEP
+			if frame - started == 114:
+				at_1_9 = worker.is_bound()
+	Input.action_release("interact")
+	Input.action_release("shoot")
+	player.fired.disconnect(count)
+	print("  bind: Bound %.3f s after the hold started (%d frames after the press), %d shots fired during the hold" % [t, started, shots[0]])
+	_expect(started >= 0 and started <= 2 and worker.is_bound() and absf(t - BIND_AT) <= BIND_TOLERANCE and not at_1_9,
+			"bind: a fresh hold bound it after %.2f s (Bound at 1.9 s: %s), want %.1f s" % [t, at_1_9, BIND_AT])
+	_expect(shots[0] == 0 and player.ammo == ammo, "bind: the Pirate fired %d shots during the hold" % shots[0])
+	_expect(BIND_REACH == player.sandbox.bind_reach and BIND_AT == player.sandbox.bind_time,
+			"bind: the Sandbox's bind reach %.1f m and time %.1f s are not 2 m and 2 s" % [player.sandbox.bind_reach, player.sandbox.bind_time])
+	# Beyond reach, no prompt for another surrendered Worker: none here, so
+	# the Bound one is no longer his to tie up.
+	_expect(player.bind_target() == null, "bind: a Bound Worker is still offered to tie up")
+	player.set_physics_process(false)
+	var bar := AwarenessMarkers.new()
+	world.add_child(bar)
+	worker.perception.awareness = 1.0
+	_expect(bar.mark_at(worker, player.camera) == Vector2.INF, "bind: a Bound Worker shows an Awareness bar")
+	worker.perception.awareness = 0.0
+	bar.free()
+	_level_pirate()
+
+
+## The Bound Worker left 120 s, the Alarm down and a panel working: it
+## raises nothing and never moves. A Guard walking up to it is hunting
+## within 3 s of reaching it; a second Guard passing it later does not
+## react.
+func _check_bound_left(worker: Crew3D, alarm: ShipAlarm) -> void:
+	player.global_position = Vector3(-500, 0, -500)
+	var start := worker.global_position
+	var moved := 0.0
+	var t := 0.0
+	var first: Crew3D = null
+	var second: Crew3D = null
+	var reached := INF
+	var hunting := INF
+	var second_reacted := ""
+	var second_near := false
+	while t < BOUND_QUIET:
+		await physics_frame
+		t += STEP
+		moved = maxf(moved, _flat(worker.global_position, start))
+		if first == null and hunting == INF and t >= 5.0:
+			first = _guard_to(worker)
+		if first != null and is_instance_valid(first):
+			if reached == INF and _flat(first.global_position, worker.global_position) <= GUARD_REACHED:
+				reached = t
+			if hunting == INF and first.state == Crew3D.State.HUNT:
+				hunting = t
+				first.free()
+				first = null
+			elif t > 40.0:
+				first.free()
+				first = null
+		if second == null and t >= 50.0 and t < 51.0:
+			second = _guard_to(worker)
+		if second != null and is_instance_valid(second):
+			second_near = second_near or _flat(second.global_position, worker.global_position) <= GUARD_REACHED
+			if second.state != Crew3D.State.PATROL and second_reacted == "":
+				second_reacted = "state %d at %.1f s" % [second.state, t]
+			if t >= 70.0:
+				second.free()
+				second = null
+	print("  bound left: moved %.3f m in %.0f s, Alarm %s; a Guard reached it at %.1f s and was hunting at %.1f s"
+			% [moved, BOUND_QUIET, "raised" if alarm.is_raised else "down", reached, hunting])
+	_expect(not alarm.is_raised and worker.is_bound() and moved <= HOLD_MOVE,
+			"bound left: %.0f s on the Alarm is %s and the Bound Worker moved %.2f m (state %d)"
+			% [BOUND_QUIET, "raised" if alarm.is_raised else "down", moved, worker.state])
+	_expect(hunting < INF and hunting - reached <= GUARD_HUNTS,
+			"bound left: a Guard that reached the Bound Worker at %.1f s was hunting at %.1f s, want within %.0f s" % [reached, hunting, GUARD_HUNTS])
+	_expect(worker.reported, "bound left: the Guard did not report the Bound Worker")
+	_expect(second_near and second_reacted == "", "bound left: a second Guard passing it (reached it: %s) reacted: %s" % [second_near, second_reacted])
+
+
+## A Guard on its rounds in Room B, walking up to [param worker].
+func _guard_to(worker: Crew3D) -> Crew3D:
+	var guard := _armed(load("res://resources/weapons/pistol.tres"))
+	guard.layout = hide_layout
+	guard.home_room = 1
+	guard.global_position = _hide_at(16, 6)
+	guard._hold_timer = 1000.0
+	guard._glance_timer = 1000.0
+	guard._repath_to(worker.global_position)
+	guard.set_physics_process(true)
+	return guard
+
+
+## A hidden Worker surrendered to him 3 m off, then left, the Alarm down and
+## a panel working: it hides again, comes out 20 s after it last saw him
+## (within 1 s) and raises the Alarm at the end of its walk to the panel.
+func _check_surrender_left(alarm: ShipAlarm) -> void:
+	var worker := await _hidden_worker(Vector2i(HIDE_X0 + 8, 8), _hide_at(10, 2), "surrender left")
+	if worker == null:
+		return
+	var near := _in_sight_of(worker, 3.0)
+	_expect(near != Vector3.INF, "surrender left: no open floor 3 m off in its sight")
+	if near == Vector3.INF:
+		worker.free()
+		return
+	player.global_position = near
+	var t := 0.0
+	while t < 1.0 and worker.state != Crew3D.State.SURRENDER:
+		await physics_frame
+		t += STEP
+	_expect(worker.state == Crew3D.State.SURRENDER, "surrender left: him 3 m off in its sight, the Worker did not surrender")
+	player.global_position = Vector3(-500, 0, -500)
+	var last_seen := t
+	var out := INF
+	var hid_again := false
+	while t < 120.0 and not alarm.is_raised:
+		await physics_frame
+		t += STEP
+		if worker._can_see:
+			last_seen = t
+		hid_again = hid_again or worker.state == Crew3D.State.COWER
+		if out == INF and worker.state == Crew3D.State.REPORT:
+			out = t
+	print("  surrender left: last saw him at %.2f s, came out at %.2f s, raised the Alarm at %.1f s (a %.1f s walk)"
+			% [last_seen, out, t, t - out])
+	_expect(hid_again and absf(out - last_seen - LEAVE_AFTER) <= LEAVE_TOLERANCE,
+			"surrender left: came out %.2f s after it last saw him (hid again: %s), want %.0f s within %.0f"
+			% [out - last_seen, hid_again, LEAVE_AFTER, LEAVE_TOLERANCE])
+	var panel: AlarmPanel = get_first_node_in_group(&"alarm_panels")
+	_expect(alarm.is_raised and _flat(worker.global_position, panel.use_at) < 1.5,
+			"surrender left: the Alarm %s at the end of its walk, the Worker %.1f m from the panel"
+			% ["raised" if alarm.is_raised else "not raised", _flat(worker.global_position, panel.use_at)])
+	worker.free()
+
+
+## With the Alarm up: a hidden Worker, him 8 m off in its sight with his
+## crosshair 20 degrees off it for 1 s, does not surrender; his crosshair
+## on it, it surrenders 0.5 s after it settled, within 0.1 s.
+func _check_surrender_aimed(alarm: ShipAlarm) -> void:
+	_expect(alarm.is_raised, "surrender aimed: the Alarm is not up for the aimed check")
+	var worker := await _hidden_worker(Vector2i(HIDE_X0 + 8, 8), _hide_at(10, 2), "surrender aimed")
+	if worker == null:
+		return
+	var at := _in_sight_of(worker, AIMED_FROM)
+	_expect(at != Vector3.INF, "surrender aimed: no open floor 8 m off in its sight")
+	if at == Vector3.INF:
+		worker.free()
+		return
+	player.global_position = at
+	_aim_pirate(_chest(worker))
+	player.rotation.y += deg_to_rad(AIM_OFF)
+	var off_aimed := 0.0
+	for i in 60:
+		await physics_frame
+		off_aimed = maxf(off_aimed, worker.aimed_for)
+	_expect(worker.state == Crew3D.State.COWER and off_aimed == 0.0 and worker._can_see,
+			"surrender aimed: his crosshair 20 degrees off it, the Worker is in state %d (aimed for %.2f s)" % [worker.state, off_aimed])
+	_aim_pirate(_chest(worker))
+	_expect(player.crosshair_on(worker, 10.0), "surrender aimed: his crosshair is not on the Worker's chest")
+	var t := 0.0
+	while t < 2.0 and worker.state != Crew3D.State.SURRENDER:
+		await physics_frame
+		t += STEP
+	print("  surrender aimed: surrendered %.3f s after his crosshair settled on it from %.0f m, Alarm up" % [t, AIMED_FROM])
+	_expect(absf(t - AIM_SETTLE) <= AIM_TOLERANCE, "surrender aimed: surrendered %.2f s after his crosshair settled, want %.1f within %.1f"
+			% [t, AIM_SETTLE, AIM_TOLERANCE])
+	worker.free()
+	_level_pirate()
+	player.global_position = Vector3(-500, 0, -500)
+
+
+## By the Door between Rooms A and B, a surrendered Worker 1.4 m to his
+## side: facing the Door, the interact key works the Door and ties nobody
+## up; facing the Worker, it starts tying it up and leaves the Door be.
+func _check_bind_or_door() -> void:
+	var door: Door3D = get_nodes_in_group(&"doors").filter(func(d: Node) -> bool: return hide_ship.is_ancestor_of(d))[0]
+	var worker := _hide_worker(Vector2i(HIDE_X0 + 11, 3))
+	player.global_position = door.global_position + Vector3(-1.0, 0.0, 0.0)
+	player.global_position.y = 0.0
+	worker.global_position = player.global_position + Vector3(0.0, 0.0, -1.4)
+	worker.perception.awareness = 1.0
+	worker._enter(Crew3D.State.SURRENDER)
+	worker.set_physics_process(true)
+	_aim_pirate(door.global_position + Vector3.UP * 1.5)
+	player.set_physics_process(true)
+	for i in 3:
+		await physics_frame
+	var was_open := door.is_open
+	_expect(door.in_reach_of(player) and player.bind_target() == null and player.can_interact(),
+			"bind or door: facing the Door in its reach, the surrendered Worker beside him takes the key")
+	Input.action_press("interact")
+	await physics_frame
+	Input.action_release("interact")
+	await physics_frame
+	_expect(door.is_open != was_open and not player.is_binding(),
+			"bind or door: facing the Door, the key did not work it (open %s, was %s) or started tying up" % [door.is_open, was_open])
+	if door.is_open:
+		door.close()
+	for i in 30:
+		await physics_frame
+	was_open = door.is_open
+	_aim_pirate(_chest(worker))
+	await physics_frame
+	_expect(player.bind_target() == worker and not player.can_interact(),
+			"bind or door: facing the surrendered Worker beside a Door, it is not his to tie up")
+	Input.action_press("interact")
+	await physics_frame
+	await physics_frame
+	_expect(player.is_binding() and door.is_open == was_open,
+			"bind or door: facing the Worker, the key worked the Door (open %s, was %s) or did not start tying up" % [door.is_open, was_open])
+	Input.action_release("interact")
+	await physics_frame
+	player.set_physics_process(false)
+	worker.free()
+	_level_pirate()
+	player.global_position = Vector3(-500, 0, -500)

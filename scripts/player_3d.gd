@@ -86,6 +86,10 @@ signal melee_swung(target: Node3D, killed: bool)
 ## struck its head zone: a Shotgun pellet on the head is a body hit to the
 ## eye, and a swing is never a Headshot.
 signal hit_landed(target: Node3D, killed: bool, headshot: bool)
+## He tied up a surrendered Worker: it is Bound (crew-combat ticket 24).
+signal bound(worker: Node3D)
+## The hold on a surrendered Worker began (true) or ended, bound or not.
+signal binding_changed(on: bool)
 
 enum State { WALK, SPRINT, CROUCH, SLIDE, AIR, CLAMBER }
 
@@ -277,6 +281,9 @@ var _melee_cycle_left := 0.0
 ## Seconds the lunge still owns his movement.
 var _melee_lock_left := 0.0
 var _lunge_tween: Tween
+## The surrendered Worker the interact key is held on, and for how long.
+var _binding: Crew3D
+var bind_held := 0.0
 
 
 func _ready() -> void:
@@ -326,9 +333,11 @@ func is_alive() -> bool:
 
 
 ## Damage interrupts no move: a hit mid-slide or mid-clamber just lands. It
-## does knock the sights down.
+## does knock the sights down, and cancels tying up a surrendered Worker.
 func take_damage(amount: int, from: Node = null) -> void:
 	health.take_damage(amount, from)
+	# A hit lets go of a Worker he was tying up: nothing of the hold is kept.
+	cancel_bind()
 	# A hit on the sights, or on sights still recovering from the last one:
 	# every hit of a burst is a Descope and pushes the recovery back.
 	if ads or _descope_left > 0.0:
@@ -346,9 +355,10 @@ func _flat_velocity() -> Vector3:
 	return Vector3(velocity.x, 0.0, velocity.z)
 
 
-## Doors and Containers ask before honouring the interact key.
+## Doors and Containers ask before honouring the interact key. A
+## surrendered Worker he faces more squarely takes it ([method bind_target]).
 func can_interact() -> bool:
-	return state != State.CLAMBER
+	return state != State.CLAMBER and not is_binding() and bind_target() == null
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -394,6 +404,7 @@ func _physics_process(delta: float) -> void:
 	if state == State.CLAMBER:
 		# The tween owns the body; nothing else is read until it lets go.
 		_lower_sights()
+		cancel_bind()
 		_tick_aim_progress(delta)
 		_sway_aim(delta)
 		_animate_camera(delta)
@@ -429,6 +440,7 @@ func _physics_process(delta: float) -> void:
 	_sway_aim(delta)
 	_move(delta, direction)
 
+	_tick_bind(delta)
 	if Input.is_action_just_pressed("melee"):
 		melee()
 	if Input.is_action_just_pressed("reload"):
@@ -521,7 +533,7 @@ func _walk(flat: Vector3, direction: Vector3, multiplier: float, delta: float) -
 ## committed to a move or a magazine swap.
 func _ads_allowed() -> bool:
 	return state in [State.WALK, State.CROUCH, State.AIR] and not is_reloading() and not is_meleeing() \
-			and not is_swapping()
+			and not is_swapping() and not is_binding()
 
 
 ## The newer input wins between aim and sprint: pressing aim ends a sprint,
@@ -920,14 +932,25 @@ func aim_point() -> Vector3:
 	return camera.global_position - camera.global_transform.basis.z * aim_distance
 
 
+## Whether the crosshair rests on [param body]: the first thing on the
+## world and body layers along his view, out to [param reach] metres, is
+## it. A Worker reads this to surrender (crew-combat ticket 24).
+func crosshair_on(body: Node3D, reach: float) -> bool:
+	if not is_inside_tree():
+		return false
+	var hit := _view_ray(reach, WORLD_LAYER | BODY_LAYER)
+	return not hit.is_empty() and hit.collider == body
+
+
 ## One trigger pull. Returns the shot's first projectile, the whole shot in
 ## `last_pellets`, or null when the pull did something else or nothing: a
 ## clamber ignores it, a sprint is ended by it, a reload, a swing or the
-## interval swallows it, and a dry magazine spends it on the reload. Mid
+## interval swallows it, and a dry magazine spends it on the reload; tying
+## up a surrendered Worker, the weapon is lowered and it fires nothing. Mid
 ## shell reload with a shell in, it breaks the reload and is queued to fire
 ## after the break-out.
 func fire() -> Projectile3D:
-	if state == State.CLAMBER:
+	if state == State.CLAMBER or is_binding():
 		return null
 	if state == State.SPRINT:
 		_end_sprint_latched()
@@ -1048,6 +1071,101 @@ func _scatter(direction: Vector3) -> Vector3:
 	return (direction + right * offset.x + up * offset.y).normalized()
 
 
+## --- Binding: tying up a surrendered Worker (crew-combat ticket 24) ---
+
+## Holding the interact key on a surrendered Worker.
+func is_binding() -> bool:
+	return _binding != null
+
+
+## How far the hold has got, 0 to 1 (0 with no hold).
+func bind_progress() -> float:
+	return clampf(bind_held / maxf(sandbox.bind_time, 0.001), 0.0, 1.0) if is_binding() else 0.0
+
+
+## The surrendered Worker the interact key would start tying up now: the
+## nearest within the Sandbox's bind reach (2 m), unless a Door or a
+## Container in his reach is nearer the middle of his view than it (the key
+## goes to whatever he is looking at). Null with none, or dead, or
+## mid-Clamber.
+func bind_target() -> Crew3D:
+	if not is_alive() or state == State.CLAMBER or not is_inside_tree():
+		return null
+	var forward := _flat(-global_basis.z)
+	var best: Crew3D = null
+	var best_angle := INF
+	for node in get_tree().get_nodes_in_group(&"crew"):
+		var worker := node as Crew3D
+		if worker == null or not worker.is_surrendered() or _flat_distance(worker.global_position) > sandbox.bind_reach:
+			continue
+		var angle := _view_angle(forward, worker.global_position)
+		if angle < best_angle:
+			best = worker
+			best_angle = angle
+	if best == null:
+		return null
+	for node in get_tree().get_nodes_in_group(&"doors"):
+		var door := node as Door3D
+		if door != null and door.in_reach_of(self) and _view_angle(forward, door.global_position) < best_angle:
+			return null
+	for node in get_tree().get_nodes_in_group(&"containers"):
+		var box := node as Container3D
+		if box != null and box.in_reach(self, forward) and _view_angle(forward, box.global_position) < best_angle:
+			return null
+	return best
+
+
+## Degrees on the floor plane between [param forward] and the way to
+## [param at]; 0 standing on it.
+func _view_angle(forward: Vector3, at: Vector3) -> float:
+	var to := at - global_position
+	to.y = 0.0
+	if to.length_squared() < 0.0001:
+		return 0.0
+	return rad_to_deg(forward.angle_to(to.normalized()))
+
+
+func _flat_distance(at: Vector3) -> float:
+	return Vector2(at.x - global_position.x, at.z - global_position.z).length()
+
+
+## A fresh press of the interact key on the [method bind_target] starts the
+## hold; held for the Sandbox's bind time with the Worker still surrendered
+## and in reach, it is Bound. Letting go, a hit, a swing or the Worker
+## getting up cancels it, and nothing of it is kept.
+func _tick_bind(delta: float) -> void:
+	if _binding == null:
+		if Input.is_action_just_pressed("interact"):
+			var worker := bind_target()
+			if worker != null:
+				_binding = worker
+				bind_held = 0.0
+				_lower_sights()
+				binding_changed.emit(true)
+		return
+	if not Input.is_action_pressed("interact") or not is_instance_valid(_binding) or not _binding.is_surrendered() \
+			or _flat_distance(_binding.global_position) > sandbox.bind_reach:
+		cancel_bind()
+		return
+	bind_held += delta
+	if bind_held >= sandbox.bind_time - TIMER_SLOP:
+		var worker := _binding
+		_binding = null
+		bind_held = 0.0
+		worker.bind()
+		binding_changed.emit(false)
+		bound.emit(worker)
+
+
+## Lets go of a hold on a surrendered Worker, keeping nothing of it.
+func cancel_bind() -> void:
+	bind_held = 0.0
+	if _binding == null:
+		return
+	_binding = null
+	binding_changed.emit(false)
+
+
 ## --- Melee ---
 
 func is_meleeing() -> bool:
@@ -1057,10 +1175,11 @@ func is_meleeing() -> bool:
 ## One swing. Refused mid-clamber and inside the cycle of the last one. It
 ## ends a sprint (latched) and the sights, drops a running reload, then either
 ## lunges at the target in the cone and strikes on arrival, or strikes at once
-## whatever the whiff ray finds ahead.
+## whatever the whiff ray finds ahead. A hold on a surrendered Worker ends.
 func melee() -> void:
 	if state == State.CLAMBER or is_meleeing():
 		return
+	cancel_bind()
 	_melee_cycle_left = melee_cycle
 	cancel_reload()
 	_lower_sights()
@@ -1184,6 +1303,7 @@ func _on_died(_from: Node) -> void:
 		if shot is Projectile3D and (shot as Projectile3D).shooter == self:
 			(shot as Projectile3D).disarm()
 	report_hits_now()
+	cancel_bind()
 	died.emit()
 	velocity = Vector3.ZERO
 	visible = false

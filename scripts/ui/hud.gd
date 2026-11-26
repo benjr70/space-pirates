@@ -1,7 +1,9 @@
 class_name Hud
 extends CanvasLayer
 ## First-person HUD: ship name, crosshair, Health bar, ammo counter,
-## interact prompt and a damage vignette. Built in code so it stays one file.
+## interact prompt (with a fill ring over it within reach of a surrendered
+## Worker, crew-combat ticket 24) and a damage vignette. Built in code so it
+## stays one file.
 ##
 ## The crosshair's four lines open and close with the Pirate's live spread,
 ## and collapse to a dot while he Aims Down Sights; aimed through a Sight
@@ -70,6 +72,8 @@ var _alarm_label: Label
 ## Crew Awareness bars over heads, and the spotted sting.
 var markers: AwarenessMarkers
 var _toasts: VBoxContainer
+## The fill ring over the prompt while he can tie up a surrendered Worker.
+var _bind_ring: BindRing
 
 
 func _ready() -> void:
@@ -163,6 +167,15 @@ func _ready() -> void:
 	_prompt_label.add_theme_font_size_override("font_size", 18)
 	_prompt_label.text = ""
 	root.add_child(_prompt_label)
+
+	# Over the prompt: how far the hold to tie up a surrendered Worker has got.
+	_bind_ring = BindRing.new()
+	_bind_ring.name = "BindRing"
+	_bind_ring.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	_bind_ring.position = Vector2(-BindRing.SIZE / 2.0, -110 - BindRing.SIZE - 6)
+	_bind_ring.size = Vector2(BindRing.SIZE, BindRing.SIZE)
+	_bind_ring.visible = false
+	root.add_child(_bind_ring)
 
 	# Gold carried this Raid, above the Health bar: what dying would cost.
 	_loot_label = Label.new()
@@ -407,6 +420,43 @@ func dry_fire() -> void:
 ## Empty text hides the prompt.
 func show_prompt(text: String) -> void:
 	_prompt_label.text = text
+
+
+func prompt_text() -> String:
+	return _prompt_label.text
+
+
+## The ring over the prompt, filled to [param fraction] (0 to 1) of the hold
+## that ties up a surrendered Worker; below 0 hides it.
+func set_bind_progress(fraction: float) -> void:
+	_bind_ring.visible = fraction >= 0.0
+	if _bind_ring.fraction != fraction:
+		_bind_ring.fraction = fraction
+		_bind_ring.queue_redraw()
+
+
+## How full the ring is, or -1 hidden.
+func bind_progress() -> float:
+	return _bind_ring.fraction if _bind_ring.visible else -1.0
+
+
+## A ring that fills clockwise from the top.
+class BindRing extends Control:
+	const SIZE := 34.0
+	const WIDTH := 4.0
+	const TRACK := Color(0.2, 0.24, 0.28, 0.8)
+	const FILL := Color(1.0, 1.0, 1.0, 0.95)
+	var fraction := 0.0
+
+	func _init() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	func _draw() -> void:
+		var centre := Vector2(SIZE, SIZE) / 2.0
+		var radius := SIZE / 2.0 - WIDTH
+		draw_arc(centre, radius, 0.0, TAU, 48, TRACK, WIDTH, true)
+		if fraction > 0.0:
+			draw_arc(centre, radius, -PI / 2.0, -PI / 2.0 + TAU * clampf(fraction, 0.0, 1.0), 48, FILL, WIDTH, true)
 
 
 func flash_damage() -> void:

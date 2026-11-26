@@ -10,7 +10,7 @@ being built toward is `.scratch/crew-combat/spec.md`, after spec #52
 
 | File | What it owns |
 |---|---|
-| `crew.gd` (`Crew3D`) | The body: movement, health, animation, door handling, gunnery, and the state machine that ties them together. |
+| `crew.gd` (`Crew3D`) | The body: movement, health, animation, door handling, gunnery, and the state machine that ties them together; a Worker's Surrender and being Bound (`_gives_up`, `_tick_surrender`, `bind`). |
 | `crew_hiding.gd` (`CrewHiding`) | One Worker's hiding: the 1 s freeze, the hide roll (from the ship's seed), picking a hiding place (a corner out of sight of the Room's doorways, far from him and the Guards' cover), the fair run there, staying put, giving its tile up to a Guard, and when it comes out. Every Worker holds one (`Crew3D.hiding`); it drives the Worker's COWER state. Null for a Guard. |
 | `head_zone.gd` (`HeadZone`) | The head: a 0.16 m ball on physics layer 4, riding the rig's `Head` bone through a `BoneAttachment3D`, so a bolt that strikes it is a Headshot. The capsule stays the body. |
 | `crew_perception.gd` (`CrewPerception`) | Awareness: the sight cone, how fast Awareness fills and drains, and its bands. Pure arithmetic, tested without physics. |
@@ -81,7 +81,18 @@ staying put with him 5 m off in its sight, giving its tile up to a Guard,
 the wounded hiding for good, coming out after 20 s to raise the Alarm or
 back to its routine with nothing to raise, the hiding sweep over 20 medium
 ships, and 60 s of a fight on a generated medium ship under the Alarm with
-every Worker in a corner by 25 s and none on a Guard's tile), plus the crew fight and
+every Worker in a corner by 25 s and none on a Guard's tile); and Surrender
+and Bound: a Worker running for a panel by a clear route aimed at from 8 m
+and never surrendering, a hidden one surrendering at 3.9 m within 0.2 s,
+kneeling 1.5 s later and still 30 s on, a hit leaving it kneeling, the
+interact key held 2 s binding it (let go at 1.5 s, or cut by a hit, keeping
+nothing; no shot during the hold), no Awareness bar on a Bound Worker,
+one Bound and left 120 s raising nothing, a Guard reaching it hunting and a
+second passing it by, one surrendered and left coming out after 20 s to
+raise the Alarm, one aimed at from 8 m surrendering 0.5 s after his
+crosshair settles and not with it 20 degrees off, the interact key working a
+Door he faces over a surrendered Worker beside it, and no Guard ever
+surrendering in the suite), plus the crew fight and
 each Guard's rolled gun in `tests/test_ship_3d.gd`, the gun roll's caps and
 shares in `tests/test_generator.gd`, and whole Raids in
 `tests/test_raid_smoke.gd`.
@@ -124,7 +135,8 @@ PATROL ──suspicious──▶ INVESTIGATE
                        nothing found ▶ PATROL
 ```
 
-That is a Guard. A Worker swaps HUNT for FLEE, and COWER is hiding:
+That is a Guard. A Worker swaps HUNT for FLEE, and COWER is hiding; from
+FLEE or COWER it may surrender (see Surrender and Bound):
 
 ```
 PATROL / INVESTIGATE ──spotted, 3 in 4──▶ FLEE ──raised a panel or a Guard──▶ COWER (hiding)
@@ -133,6 +145,9 @@ PATROL / INVESTIGATE ──spotted, 3 in 4──▶ FLEE ──raised a panel or
         ├──spotted with the Alarm up, wounded, or no panel and no Guard─────────────┘ │ sight or sound of him,
         └──the Alarm──────────────────────────────────────────────▶ COWER            ▼ not wounded
                                                        PATROL ◀──raised it── REPORT (On Edge, walking)
+
+FLEE / COWER ──him within 4 m, or his crosshair on it 0.5 s, and hiding or no way out──▶ SURRENDER
+SURRENDER ──out of its sight 0.5 s──▶ COWER        SURRENDER ──held interact 2 s──▶ BOUND (for good)
 ```
 
 - **PATROL**: on routine (see Routines below): walking its loop of Jobs at
@@ -540,6 +555,8 @@ mid-fill speeds it up. The weapon he holds multiplies the rate by its
 
 **Hearing** (see below) lifts Awareness to suspicious but never to spotted.
 
+A **Bound** Worker never shows a bar (crew-combat ticket 24).
+
 **Tipping into spotted** (reaching 1 from below, by sight or by being shot)
 calls `on_crew_spotted(crew)` on every node in the `awareness_listeners` group.
 
@@ -550,6 +567,7 @@ Things the Pirate leaves behind that crew can find (`CrewTraces.is_trace`):
 | Trace | When | Severity |
 |---|---|---|
 | Body | a dead crew member, where it fell | serious |
+| Bound Worker | a Worker he tied up, where it sits | serious |
 | Boarding Hatch | the Hatch his pod is docked at, standing open | serious |
 | Emptied Container | a Container he searched | minor |
 | Door left open | a Door standing open that was opened by anyone but crew | minor |
@@ -984,16 +1002,67 @@ Alarm or a Guard), COWER (hiding) and REPORT (come out, walking to report).
 - **Wounded**: a Worker shot and alive always hides, with no roll, and
   never comes out (`CrewHiding.wounded`).
 - **Cornered** (`Crew3D._cornered`: him in sight within 3 m) no longer
-  changes what a Worker does; the smoke run's bot still reads it, and
-  Surrender (ticket 24) is to use it.
+  changes what a Worker does; the smoke run's bot reads it. Surrender
+  (below) has its own 4 m.
 - **The look**: today's stance. A hiding Worker stands in the Idle clip
   (the stand-in until Workers' poses, ticket 25); it runs in the Run clip.
   For ticket 25: `CrewHiding.phase` (freezing, running, hidden, hiding where
   it stands) and its `phase_changed` signal, `wounded`, and REPORT; a sound
   of him reaching a hiding Worker arrives in `Crew3D.hear` (where it would
-  duck at a gunshot). For ticket 24: `CrewHiding.is_hidden()`, `spot` and
-  `no_way_out`; the hook for "he comes within 4 m, or his crosshair rests on
-  it" is marked at the end of `CrewHiding.tick`.
+  duck at a gunshot).
+
+## Surrender and Bound
+
+Crew-combat ticket 24 (`.scratch/crew-combat/issues/24-surrender-and-bound.md`,
+decided in `issues/09`). States SURRENDER and BOUND, Workers only.
+
+- **Surrender** (`Crew3D._gives_up`, run at the top of each FLEE and COWER
+  tick): a Worker that sees him (`_can_see`, its all-round sight in those
+  states) surrenders when he is within the Sandbox's `surrender_reach`
+  (4 m), or his crosshair has rested on it (`Player3D.crosshair_on`: the
+  first thing on the world and body layers along his view is its body) for
+  `surrender_aim_time` (0.5 s) in a row within `surrender_aim_reach`
+  (10 m), and it is hiding (on its tile, or hiding where it stands with
+  nowhere to run) or has no route away that does not pass him. "No route
+  away": fleeing, its route to the panel or Guard is not a fair run
+  (`CrewHiding.fair_run`, never nearer him than both ends less 1 m), and no
+  hiding place has one (`CrewHiding.find`); frozen, no hiding place has one.
+  That look runs at most once a second (`WAY_OUT_EVERY`). A Worker running
+  to hide (a fair run by its making) keeps running. Never a Guard. The
+  Alarm changes nothing, before or after.
+- **Surrendered** (SURRENDER): it stops, faces him (`_face`, as in a fight)
+  and after `kneel_after` (1.5 s) kneels. It holds while he is in its
+  sight. Out of it for `SURRENDER_LOST` (0.5 s, so a prop crossing the line
+  for a frame does not end it) it hides again by the hiding rules, its
+  come-out clock (`CrewHiding.quiet_for`) set to the time since it last saw
+  him: with the Alarm down it comes out 20 s after it last saw him and
+  walks to raise it. It is in combat for Awareness (pinned at 1), so the
+  bar shows red. The Alarm going up leaves it as it is.
+- **Bound** (BOUND, `Crew3D.bind`, only from SURRENDER): the Pirate holds
+  the interact key on it within `bind_reach` (2 m) for `bind_time` (2 s)
+  (`Player3D._tick_bind`). It never moves, looks, hears, reports or raises
+  anything again (`_physics_process` returns early; `on_alarm` and `hear`
+  ignore it); its Awareness is set to 0 and it shows no Awareness bar
+  (`AwarenessMarkers.mark_at`). It is a **serious trace** like a body
+  (`CrewTraces.is_trace`): a Guard that reaches it hunts from there and a
+  Worker runs for a panel, once; nobody unties it.
+- **Hit**: a shot or Melee that does not kill leaves a surrendered or Bound
+  Worker as it was (wounded, so it never comes out should it hide again).
+  A Bound Worker killed leaves a body that is a fresh trace.
+- **Stand-ins** until Workers' poses (ticket 25): surrendered, hands up and
+  kneeling alike, it plays the rig's Wave clip, looped; Bound, Idle_Neutral.
+  For ticket 25: `Crew3D.surrender` (`Surrender.HANDS_UP`, `KNEELING`,
+  `BOUND`, `NONE`) and its `surrender_changed` signal; `surrendered_for`.
+- **The interact key** (`Player3D.bind_target`): within 2 m of a surrendered
+  Worker the key is the Worker's unless a Door in his reach or a Container
+  in reach is nearer the middle of his view (the smallest angle from his
+  facing wins); the Door then gets `can_interact()` false while the Worker
+  has it, and `main_3d.gd` neither searches nor offers anything else. The
+  HUD offers "Hold E to tie up" with a ring filling over 2 s
+  (`Hud.set_bind_progress`). The weapon is lowered meanwhile (the
+  Viewmodel's sprint-low pose, no sights, `fire()` refused); letting go, a
+  hit, a swing, a Clamber, the Worker getting up or leaving reach cancels it,
+  and the next hold starts from nothing (a fresh press).
 
 ## Alarm
 
@@ -1154,14 +1223,19 @@ and `crew.gd` (`SEARCH_AWARENESS`, `INVESTIGATE_SPEED`, `INVESTIGATE_LINGER`,
 `TRIED`, `ON_TILE`, `RUN_GIVE_UP`, `LOOK_AGAIN`),
 `crew_traces.gd` (`LOOK_EVERY`, `REACH`, `AWARENESS`, `AIM_HEIGHT`),
 `ship_alarm.gd` (`RED`, `PULSE_*`), `alarm_panel.gd` (`ROLES`, `SIZE`, `HEIGHT`),
-`crew_types.gd` (`GUARD_ROLES`, `WORKER_ROLES`), `HEARD_NOISE`, `HEARD_GUNSHOT`, `HEARD_CAP`) and
+`crew_types.gd` (`GUARD_ROLES`, `WORKER_ROLES`), `HEARD_NOISE`, `HEARD_GUNSHOT`, `HEARD_CAP`,
+`SURRENDER_LOST`, `WAY_OUT_EVERY`) and
 `crew_routine.gd` (`WORK_PROPS`, `JOBS_MIN`/`MAX`, `WORK_TIME`,
 `PATROL_PAUSE`, `AWAY_CHANCE`) and `crew_noise.gd` (`SPRINT_STEP`, `WALK_STEP`, `DOOR`). They are starting values to be tuned by
 playtest. Gun numbers are not here: they are each weapon's Profile and its
 Gunnery, edited in the Sandbox sheet (`docs/sandbox.md`), as are the crew
 fight's five numbers on the Sandbox resource (how many aim true, the
 handover time, the walk-in distance, the Shotgun pellet cap, the
-suppression time); the gun roll's
+suppression time), and Surrender and Bound's six (surrender reach 4 m, aim
+time 0.5 s, aim reach 10 m, kneel after 1.5 s, bind time 2 s, bind reach
+2 m); the XP for binding and for killing a surrendered or Bound Worker are
+constants in `scripts/raid_ledger.gd` (`BIND_XP`, `SURRENDERED_KILL_XP`)
+beside the other XP; the gun roll's
 weights, multipliers and caps are constants in `scripts/ship/gun_roll.gd`
 (`BASE`, `ROOM`, `MARKSMAN_CAP`, `ALL_SHOTGUN_ROOM`).
 
@@ -1169,20 +1243,28 @@ weights, multipliers and caps are constants in `scripts/ship/gun_roll.gd`
 
 The crew's Awareness feeds the Pirate's XP (`RaidLedger`):
 - A crew member records, as it falls, whether it **died unaware**: not in
-  combat (HUNT, FIGHT, COVER, FLEE, COWER) and not spotted. A Worker come out
-  of hiding and walking to report (REPORT) is not in combat, at Awareness
-  0.15: killed then, it died unaware. A kill on one is
+  combat (HUNT, FIGHT, COVER, FLEE, COWER, SURRENDER) and not spotted. A
+  Worker come out of hiding and walking to report (REPORT) is not in combat,
+  at Awareness 0.15: killed then, it died unaware (the spec leaves this case
+  open; ticket 24 left it so). A kill on one is
   worth **150 XP** against 100, and its toast reads "+150 XP unaware". A shot
   that only wounds spots the Pirate, so the kill that follows is a normal one.
-- A kill counts through the Pirate's hit report, which waits a step and a
-  half after a shot's first strike (`SHOT_REPORT_DELAY`) so a Shotgun's late
-  pellets join it. Every way a Raid settles reports the waiting hits first
-  (`report_hits_now` in `scripts/player_3d.gd`): going down, the pod casting off, walking away
-  to the menu. A crew member felled in the step the pod casts off in is still
-  his kill.
+  A running or hiding Worker not yet surrendered is a normal kill, 100.
+- **Surrender and Bound** (crew-combat ticket 24): tying up a surrendered
+  Worker adds **50 XP** (`RaidLedger.BIND_XP`) at once, toast "+50 XP
+  bound". Killing a Worker that had surrendered or was Bound
+  (`died_surrendered`, which wins over unaware) adds **0**
+  (`SURRENDERED_KILL_XP`) and counts as a kill; its toast says why:
+  "+0 XP  it had surrendered" or "+0 XP  it was Bound". Bind XP is kept
+  whichever way the Raid ends, like kill XP (`RaidLedger.kept_xp`). The end
+  screens list Workers bound beside kills ("2 kills, 1 unaware, 2 bound").
+  A surrendered or Bound Worker killed leaves a body, a serious trace as any
+  body (a Bound one's a fresh trace even when its being Bound was reported).
 - **Ghost**: extracting with the Alarm never raised this Raid adds 150 / 250 /
   350 XP for a small / medium / large ship. The EXTRACTED tally shows unaware
-  kills and the Ghost bonus when earned. Avoiding kills earns nothing extra.
+  kills, Workers bound and the Ghost bonus when earned. Avoiding kills earns
+  nothing extra; surrenders and Bound Workers do not touch Ghost, only the
+  Alarm does.
 
 ## Not yet built
 

@@ -72,13 +72,13 @@ func _draw() -> void:
 
 
 ## Where on screen a crew member's bar goes, seen from [param camera], or
-## [code]Vector2.INF[/code] when it gets none: dead, unaware, too far, more
+## [code]Vector2.INF[/code] when it gets none: dead, Bound, unaware, too far, more
 ## than [constant NEAR] metres behind the camera, or with the ship (hull,
 ## props, shut Doors: the world layer crew sight uses) between the camera and
 ## its eyes. A bar for crew close behind the camera is pinned to the bottom
 ## edge, mirrored across the centre.
 func mark_at(crew: Crew3D, camera: Camera3D) -> Vector2:
-	if not crew.is_alive() or crew.perception.awareness <= 0.0:
+	if not crew.is_alive() or crew.is_bound() or crew.perception.awareness <= 0.0:
 		return Vector2.INF
 	var head := crew.global_position + Vector3.UP * HEAD_OFFSET
 	var distance := camera.global_position.distance_to(head)

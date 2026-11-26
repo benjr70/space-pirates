@@ -31,7 +31,8 @@ extends SceneTree
 ##              stepped out beside a wall, reloading (each gun, three moments)
 ##              and running low and upright (down_*, duck_*, popup_*,
 ##              stepout_*, reload_*, run_*.png).
-##   hud        the in-Raid HUD with known values: hud.png, hud_busy.png.
+##   hud        the in-Raid HUD with known values: hud.png, hud_busy.png,
+##              hud_bind.png.
 ##   menu       the main menu's screens (home, classes), the Loadout screen
 ##              (loadout: bare; loadout_slot: a fitted Assault Rifle with its
 ##              Underbarrel list open) and the Raid's own (pause, death,
@@ -805,7 +806,7 @@ func _hud_raid() -> Node3D:
 
 
 func _hud() -> void:
-	_expect(["hud", "hud_busy"])
+	_expect(["hud", "hud_busy", "hud_bind"])
 	var main := await _hud_raid()
 	await create_timer(0.5).timeout
 	await _snap("hud")
@@ -815,6 +816,15 @@ func _hud() -> void:
 	hud.set_ammo(0)
 	print("shots: hud_busy adds the Alarm, a toast and an empty magazine")
 	await _snap("hud_busy")
+	# Tying up a surrendered Worker (crew-combat ticket 24): the prompt and
+	# its ring 60% full, the bind toast beside the crosshair. The Raid's own
+	# prompt is held off so the values stay.
+	main.set_process(false)
+	hud.show_prompt(main.BIND_PROMPT)
+	hud.set_bind_progress(0.6)
+	hud.toast("+50 XP  bound")
+	print("shots: hud_bind shows '%s' with its ring 60%% full and the bind toast" % main.BIND_PROMPT)
+	await _snap("hud_bind")
 
 
 func _menu() -> void:
