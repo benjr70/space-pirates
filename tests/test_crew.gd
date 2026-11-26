@@ -46,6 +46,17 @@ var routine_layout: ShipLayout
 var ring_layout: ShipLayout
 var full_layout: ShipLayout
 var crates_layout: ShipLayout
+## The habit rigs (_build_habit_rigs): four 14 x 10 Rooms with crates
+## throughout, a 6 x 6 Room with one crate, the long Room a Marksman Rifle
+## perches in, and two Rooms joined by a Door for the Shotgun's ambush.
+var band_layouts: Array[ShipLayout] = []
+var small_layout: ShipLayout
+var perch_layout: ShipLayout
+var fall_back_layout: ShipLayout
+var ambush_layout: ShipLayout
+## Its Door, opened only while the ambush check runs: noise carries
+## through any open Door joining Rooms of those indices, whatever the rig.
+var ambush_door: Door3D
 
 
 func _initialize() -> void:
@@ -69,6 +80,7 @@ func _initialize() -> void:
 	_build_lane()
 	_build_pocket()
 	_build_cover_rigs()
+	_build_habit_rigs()
 	var shots := Node3D.new()
 	shots.add_to_group(&"projectiles")
 	world.add_child(shots)
@@ -114,6 +126,14 @@ func _initialize() -> void:
 	await _check_full_cover()
 	await _check_flanked_and_closed_on()
 	await _check_open_fight()
+	await _check_bands()
+	await _check_shotgun_holds_fire()
+	await _check_shotgun_ambush()
+	await _check_shotgun_rack()
+	await _check_sight_line()
+	await _check_marksman_waits_for_place()
+	await _check_marksman_small_room()
+	await _check_marksman_falls_back()
 	await _check_round_props()
 	await _check_unstick()
 	await _check_head_on_doorway()
@@ -931,6 +951,8 @@ func _record_shots(guards: Array, into: Array) -> Callable:
 				"point": shooter.last_aim_point, "origin": shooter.last_aim_origin, "aimed": shooter.last_aimed_true,
 				"walk": shooter.last_walk_in, "kind": shooter.last_miss_kind, "centre": CrewFire.body_centre(shooter.target),
 				"velocity": CrewFire.velocity_of(shooter.target), "cone": shooter.spread_degrees(),
+				"base": shooter.base_cone_degrees(), "line": shooter.cover != null and shooter.cover.line_shown(),
+				"perched": shooter.cover != null and shooter.cover.perched(),
 				"pellets": [bolt.direction]}
 		into.append(current[shooter])
 	get_first_node_in_group(&"projectiles").child_entered_tree.connect(watch)
@@ -1157,20 +1179,34 @@ func _check_lead() -> void:
 		guard.hear_position(player.global_position)
 		guard.set_physics_process(true)
 		var t := 0.0
+		# The Marksman Rifle's shot goes where its sight line pointed
+		# SIGHT_LOCK before it: his body centre and velocity as the line last
+		# followed him, per line in order.
+		var locks: Array = []
+		var was_locked := false
+		var seen_by_tick: Array = [CrewFire.body_centre(player), CrewFire.velocity_of(player)]
+		var seen_before: Array = seen_by_tick
 		while t < 15.0 and shots.filter(func(s: Dictionary) -> bool: return not s.walk).size() < 3:
 			await physics_frame
 			t += STEP
+			var locked: bool = guard.cover._locked != Vector3.INF
+			if locked and not was_locked:
+				locks.append(seen_before)
+			was_locked = locked
+			seen_before = seen_by_tick
 			var at := player.global_position + Vector3(speed * STEP, 0.0, 0.0)
 			if at.x > 6.5 or at.x < 1.5:
 				speed = -speed
 				at = player.global_position + Vector3(speed * STEP, 0.0, 0.0)
 			player.global_position = at
 			player.velocity = Vector3(speed, 0.0, 0.0)
+			seen_by_tick = [CrewFire.body_centre(player), CrewFire.velocity_of(player)]
 		guard.set_physics_process(false)
 		get_first_node_in_group(&"projectiles").child_entered_tree.disconnect(watch)
 		var wrong: Array[String] = []
 		var outside := 0
 		var counted := 0
+		var line_shot := 0
 		for s: Dictionary in shots:
 			for direction: Vector3 in s.pellets:
 				var aim: Vector3 = (s.point - s.origin).normalized()
@@ -1183,12 +1219,21 @@ func _check_lead() -> void:
 			if s.walk or not s.aimed:
 				continue
 			counted += 1
-			# The intercept, found again here by stepping the flight time.
 			var centre: Vector3 = s.centre
+			var velocity: Vector3 = s.velocity
+			if case[0] == GunRoll.MARKSMAN_RIFLE:
+				# Where he was as its sight line locked, 0.2 s before.
+				if line_shot >= locks.size():
+					wrong.append("a shot with no sight line locked before it")
+					continue
+				centre = locks[line_shot][0]
+				velocity = locks[line_shot][1]
+				line_shot += 1
+			# The intercept, found again here by stepping the flight time.
 			var flight := 0.0
 			for k in 20:
-				flight = (centre + s.velocity * flight).distance_to(s.origin) / gun.projectile_speed
-			var full: Vector3 = s.velocity * flight
+				flight = (centre + velocity * flight).distance_to(s.origin) / gun.projectile_speed
+			var full: Vector3 = velocity * flight
 			var led: Vector3 = s.point - centre
 			if case[1] == 0.0:
 				if led.length() > 0.01:
@@ -2685,7 +2730,9 @@ func _check_cover_ring() -> void:
 				r.hidden = t
 			if mode != r.mode:
 				if r.mode == CrewCover.Mode.DOWN and r.after_peek:
-					r.downs.append(t - r.since)
+					# Less any wait on its habit (a Marksman Rifle waiting for a
+					# true-aim place, ticket 20): its time down is the rhythm.
+					r.downs.append(t - r.since - guard.cover.waited)
 				if mode == CrewCover.Mode.DOWN:
 					r.after_peek = r.mode in [CrewCover.Mode.SHOOT, CrewCover.Mode.BACK]
 				if mode == CrewCover.Mode.SHOOT:
@@ -2874,21 +2921,38 @@ func _check_flanked_and_closed_on() -> void:
 				% [CrewCover.MODE_NAMES[guard.cover.mode], unfair])
 		him = flank
 
-	# Too close: him 2.5 m off in its sight, while it is down.
-	await _seconds_until(6.0, func() -> bool: return guard.cover.mode == CrewCover.Mode.DOWN)
-	var eye := guard.global_position + Vector3.UP * Crew3D.EYE_HEIGHT
+	# Too close: him 2.5 m off in its sight, while it is down, where it has
+	# a spot at least a metre further to go to (only a Shotgun takes cover
+	# within 4 m of him, so from some spots there is none: he then moves
+	# where he sees it crouched once more, and it picks again, up to three
+	# times).
 	var close := Vector3.INF
-	for k in 16:
-		var at := guard.global_position + Vector3.FORWARD.rotated(Vector3.UP, TAU * k / 16.0) * 2.5
-		at.y = 0.0
-		if not _open_tile(astar, ShipBuilder3D.world_to_tile(at)) or guard._blocked(eye, at + Vector3.UP * Crew3D.EYE_HEIGHT):
-			continue
-		# Not crowding a crate: a body there would stand inside it.
-		if not CrewPaths.clear(astar, at, at) or not _has_cover_from(guard, at, -1):
-			continue
-		close = at
-		break
-	_expect(close != Vector3.INF, "too close: no open floor 2.5 m from the Guard in its sight")
+	for round in 4:
+		await _seconds_until(6.0, func() -> bool: return guard.cover.mode == CrewCover.Mode.DOWN)
+		var eye := guard.global_position + Vector3.UP * Crew3D.EYE_HEIGHT
+		for k in 32:
+			var at := guard.global_position + Vector3.FORWARD.rotated(Vector3.UP, TAU * k / 32.0) * 2.5
+			at.y = 0.0
+			if not _open_tile(astar, ShipBuilder3D.world_to_tile(at)) or guard._blocked(eye, at + Vector3.UP * Crew3D.EYE_HEIGHT):
+				continue
+			# Not crowding a crate: a body there would stand inside it.
+			if not CrewPaths.clear(astar, at, at) or not _has_cover_from(guard, at, -1):
+				continue
+			close = at
+			break
+		if close != Vector3.INF or round == 3:
+			break
+		var seen_from := guard.global_position + Vector3.UP * Crew3D.COVER_HEIGHT
+		var held: Vector2i = guard.cover.tile
+		for tile: Vector2i in crates_layout.rooms[0].tiles():
+			var at := ShipBuilder3D.tile_to_world(tile)
+			var far := _flat(at, guard.global_position)
+			if _open_tile(astar, tile) and far >= 4.0 and far <= 8.0 and _flat(at, player.global_position) > 2.0 \
+					and not guard._blocked(seen_from, at + Vector3.UP * Crew3D.EYE_HEIGHT) and _has_cover_from(guard, at, 0):
+				player.global_position = at
+				break
+		await _seconds_until(4.0, func() -> bool: return guard.cover.tile != held and guard.cover.mode == CrewCover.Mode.DOWN)
+	_expect(close != Vector3.INF, "too close: no open floor 2.5 m from the Guard in its sight with a spot further off to go to")
 	if close != Vector3.INF and guard.cover.mode == CrewCover.Mode.DOWN:
 		var before: Vector2i = guard.cover.tile
 		var from := _flat(guard.global_position, close)
@@ -3080,3 +3144,507 @@ func _check_cover_fight_on_ship() -> void:
 		guard.free()
 	for shot in shots.get_children():
 		shot.free()
+
+
+# --- a habit per gun (crew-combat ticket 20) -------------------------------------
+
+## Seconds the band rigs run before each Guard's cover tile is judged.
+const BAND_SECONDS := 20.0
+## The band rigs: 14 x 10 tiles each, 16 apart from x 2000, a crate every
+## third tile each way from (3, 2) in, the Pirate on the middle of the west
+## wall. Each gun's Guard (GunRoll order) starts out of its band: Pistol
+## 11.2 m, Assault Rifle 13.6 m, Shotgun 8.9 m, Marksman Rifle 7.3 m.
+const BAND_X0 := 2000
+const BAND_PIRATE := Vector2i(0, 5)
+const BAND_STARTS: Array[Vector2i] = [Vector2i(11, 7), Vector2i(13, 1), Vector2i(8, 1), Vector2i(7, 7)]
+## The 6 x 6 Room: the Pirate in one corner, a crate at (2104, 4), the
+## Marksman Rifle starting in the far corner.
+const SMALL_PIRATE := Vector2i(2100, 0)
+const SMALL_START := Vector2i(2105, 5)
+## The perch Room: 9 x 13 tiles at x 2300, the Pirate at (2304, 1), a crate
+## at (2304, 10), the Marksman Rifle starting behind it at (2304, 12), 11 m
+## off.
+const PERCH_PIRATE := Vector2i(2304, 1)
+const PERCH_START := Vector2i(2304, 12)
+## The ambush rig: Room A 12 x 8 at x 2400, Room B 6 x 8 east of it, a
+## two-wide Door at (2412, 0); the Pirate at (2401, 5), a crate at
+## (2410, 2) and the Shotgun behind it at (2411, 2), 10.4 m off him.
+## The fall-back Room: 7 x 17 tiles at x 2500, the Pirate at (2503, 0),
+## crates at (2503, 12) and (2504, 14); the Marksman Rifle perches at
+## (2503, 14), 14 m off, and he walks to (2503, 10), 4 m from it, from
+## where the tile behind the second crate is a further perch 1.4 m away.
+const FALL_BACK_PIRATE := Vector2i(2503, 0)
+const FALL_BACK_START := Vector2i(2503, 14)
+const FALL_BACK_CLOSE := Vector2i(2503, 10)
+const AMBUSH_PIRATE := Vector2i(2401, 5)
+const AMBUSH_START := Vector2i(2411, 2)
+## The sight line: shown this long before a perched shot, within this.
+const LINE_SECONDS := 0.9
+const LINE_TOLERANCE := 0.1
+
+
+func _build_habit_rigs() -> void:
+	for i in 4:
+		var x0 := BAND_X0 + i * 16
+		var props: Array[Dictionary] = []
+		for x in [3, 6, 9, 12]:
+			for y in [2, 5, 8]:
+				props.append({"type": &"crate", "tile": Vector2i(x0 + x, y)})
+		band_layouts.append(_rig_room("BandShip%d" % i, Rect2i(x0, 0, 14, 10), props))
+	small_layout = _rig_room("SmallShip", Rect2i(2100, 0, 6, 6), [{"type": &"crate", "tile": Vector2i(2104, 4)}])
+	perch_layout = _rig_room("PerchShip", Rect2i(2300, 0, 9, 13), [{"type": &"crate", "tile": Vector2i(2304, 10)}])
+	fall_back_layout = _rig_room("FallBackShip", Rect2i(2500, 0, 7, 17),
+			[{"type": &"crate", "tile": Vector2i(2503, 12)}, {"type": &"crate", "tile": Vector2i(2504, 14)}])
+	ambush_layout = ShipLayout.new()
+	var a := RoomData.new()
+	a.rects = [Rect2i(2400, 0, 12, 8)]
+	a.props = [{"type": &"crate", "tile": Vector2i(2410, 2)}]
+	var b := RoomData.new()
+	b.rects = [Rect2i(2413, 0, 6, 8)]
+	ambush_layout.rooms = [a, b]
+	ambush_layout.doors = [_door(0, 1, Vector2i(2412, 0), false)]
+	var ship := Node3D.new()
+	ship.name = "AmbushShip"
+	world.add_child(ship)
+	ShipBuilder3D.build(ambush_layout, ship)
+	ambush_door = ship.get_node("Doors").get_child(0)
+
+
+## A Pirate of the check's own at [param at]: standing, physics off, too
+## tough to fall.
+func _own_pirate(at: Vector3) -> CharacterBody3D:
+	var pirate: CharacterBody3D = load("res://scenes/player_3d.tscn").instantiate()
+	pirate.auto_respawn = false
+	pirate.position = at
+	world.add_child(pirate)
+	pirate.set_physics_process(false)
+	pirate.state = pirate.State.WALK
+	pirate.health.max_health = 100000
+	pirate.health.reset()
+	return pirate
+
+
+## The shared Pirate held still at [param at] for a check, too tough to
+## fall. Returns what to put back: [physics on, max Health].
+func _hold_player(at: Vector3) -> Array:
+	var was := [player.is_physics_processing(), player.health.max_health]
+	player.set_physics_process(false)
+	player.health.max_health = 100000
+	player.health.reset()
+	player.global_position = at
+	player.state = player.State.WALK
+	player.velocity = Vector3.ZERO
+	return was
+
+
+func _release_player(was: Array) -> void:
+	player.velocity = Vector3.ZERO
+	player.health.max_health = was[1]
+	player.health.reset()
+	player.set_physics_process(was[0])
+
+
+## In a 14 x 10 m Room with crates throughout, each gun's Guard starting
+## out of its band, after 20 s its cover tile is inside its band from the
+## stationary Pirate, within 1 m: Shotgun 2 to 5 m, Pistol 4 to 8, Assault
+## Rifle 5 to 10, Marksman Rifle 8 to 14. The four run side by side, each in
+## its own Room with its own Pirate.
+func _check_bands() -> void:
+	var pirates: Array[CharacterBody3D] = []
+	var guards: Array[Crew3D] = []
+	for i in 4:
+		var x0 := BAND_X0 + i * 16
+		var him := ShipBuilder3D.tile_to_world(Vector2i(x0, 0) + BAND_PIRATE)
+		var pirate := _own_pirate(him)
+		pirates.append(pirate)
+		var guard := _rig_guard(GunRoll.weapon(i), band_layouts[i], Vector2i(x0, 0) + BAND_STARTS[i], him)
+		guard.target = pirate
+		guards.append(guard)
+	for i in 2:
+		await physics_frame
+	for i in 4:
+		guards[i].hear_position(pirates[i].global_position)
+		guards[i].set_physics_process(true)
+	for frame in roundi(BAND_SECONDS / STEP):
+		await physics_frame
+	for i in 4:
+		var guard := guards[i]
+		guard.set_physics_process(false)
+		var gunnery: Gunnery = guard.gunnery
+		var tile: Vector2i = guard.cover.tile
+		var far := _flat(ShipBuilder3D.tile_to_world(tile), pirates[i].global_position) if tile != Vector2i.MAX else -1.0
+		_expect(tile != Vector2i.MAX and far >= gunnery.range_near - 1.0 and far <= gunnery.range_far + 1.0,
+				"bands: after %.0f s a %s Guard's cover tile %s is %.1f m from the Pirate (mode %s), want %.0f to %.0f m within 1 m"
+				% [BAND_SECONDS, Gunnery.NAMES[i], tile, far, CrewCover.MODE_NAMES[guard.cover.mode], gunnery.range_near, gunnery.range_far])
+		guard.free()
+	for pirate in pirates:
+		pirate.free()
+	_clear_shots()
+
+
+## A Shotgun Guard fires no shot at a Pirate in its sight 10 m off in 10 s
+## (it holds fire beyond 8 m), and does at 6 m. The empty test Room: no
+## cover, no Door to wait beside.
+func _check_shotgun_holds_fire() -> void:
+	var was := _hold_player(CREW_AT + Vector3.FORWARD * 10.0)
+	var guard := _armed(GunRoll.weapon(GunRoll.SHOTGUN))
+	guard.face_direction(Vector3.FORWARD)
+	for i in 2:
+		await physics_frame
+	var shots: Array = []
+	var watch := _record_shots([guard], shots)
+	guard.hear_position(player.global_position)
+	guard.set_physics_process(true)
+	var saw := 0
+	for frame in roundi(10.0 / STEP):
+		await physics_frame
+		saw += int(guard._can_see)
+	_expect(saw >= roundi(9.0 / STEP) and shots.is_empty(), "shotgun: with him in its sight %.1f s of 10 s at 10 m it fired %d shots, want none"
+			% [saw * STEP, shots.size()])
+	player.global_position = CREW_AT + Vector3.FORWARD * 6.0
+	var fired := await _seconds_until(10.0, func() -> bool: return not shots.is_empty())
+	_expect(fired >= 0.0, "shotgun: with him in its sight at 6 m it fired no shot in 10 s (mode %s)" % CrewCover.MODE_NAMES[guard.cover.mode])
+	guard.set_physics_process(false)
+	get_first_node_in_group(&"projectiles").child_entered_tree.disconnect(watch)
+	guard.free()
+	_clear_shots()
+	_release_player(was)
+
+
+## A Shotgun Guard behind a crate 10 m from him, with only open floor
+## between it and its band, is within 10 s within 5 m of the doorway of his
+## Room nearest to it and out of his sight, waiting in ambush, having
+## crossed no more than 2.5 m of floor in his view.
+func _check_shotgun_ambush() -> void:
+	var him := ShipBuilder3D.tile_to_world(AMBUSH_PIRATE)
+	var was := _hold_player(him)
+	var guard := _rig_guard(GunRoll.weapon(GunRoll.SHOTGUN), ambush_layout, AMBUSH_START, him)
+	var door := ShipBuilder3D.door_center_world(ambush_layout.doors[0])
+	ambush_door.open()
+	for i in 2:
+		await physics_frame
+	guard.hear_position(him)
+	guard.set_physics_process(true)
+	var trail: Array = [guard.global_position]
+	var t := 0.0
+	var waiting := false
+	while t < 10.0 and not waiting:
+		await physics_frame
+		t += STEP
+		trail.append(guard.global_position)
+		waiting = guard.cover.mode == CrewCover.Mode.AMBUSH
+	guard.set_physics_process(false)
+	var near := _flat(guard.global_position, door)
+	var hidden := guard._blocked(guard.global_position + Vector3.UP * Crew3D.EYE_HEIGHT, him + Vector3.UP * Crew3D.EYE_HEIGHT)
+	_expect(waiting and near <= CrewHabit.AMBUSH_REACH and hidden,
+			"ambush: after %.1f s the Shotgun Guard is %.1f m from the doorway (mode %s, out of his sight: %s), want within 10 s in ambush within 5 m and out of his sight"
+			% [t, near, CrewCover.MODE_NAMES[guard.cover.mode], hidden])
+	var unfair := _walk_unfair(guard, trail, him)
+	_expect(unfair == "", "ambush: the Shotgun Guard's walk to its ambush: %s" % unfair)
+	guard.free()
+	ambush_door.close()
+	_clear_shots()
+	_release_player(was)
+
+
+## The Shotgun racks (its Profile's action sound) between 0.2 and 1.0 s
+## before each shot after it pops up over a crate (the ring) and after it
+## steps out from behind a locker; it pumps after none.
+func _check_shotgun_rack() -> void:
+	var shotgun := GunRoll.weapon(GunRoll.SHOTGUN)
+	for rig in [[ring_layout, RING_STARTS[0], ShipBuilder3D.tile_to_world(RING_CENTRE), "pops up over a crate"],
+			[full_layout, FULL_START, ShipBuilder3D.tile_to_world(FULL_PIRATE), "steps out from a locker"]]:
+		var was := _hold_player(rig[2])
+		var guard := _rig_guard(shotgun, rig[0], rig[1], rig[2])
+		for i in 2:
+			await physics_frame
+		var shots: Array = []
+		var watch := _record_shots([guard], shots)
+		var racks: Array[int] = []
+		var listen := func(node: Node) -> void:
+			var sound := node as AudioStreamPlayer3D
+			if sound != null and sound.stream == shotgun.action_sound:
+				racks.append(Engine.get_physics_frames())
+		var parent := get_first_node_in_group(&"projectiles")
+		parent.child_entered_tree.connect(listen)
+		guard.hear_position(rig[2])
+		guard.set_physics_process(true)
+		var peeks := 0
+		var last_mode: CrewCover.Mode = guard.cover.mode
+		var t := 0.0
+		while t < 40.0 and shots.size() < 5:
+			await physics_frame
+			t += STEP
+			var mode: CrewCover.Mode = guard.cover.mode
+			if mode != last_mode and last_mode == CrewCover.Mode.DOWN and mode in [CrewCover.Mode.SHOOT, CrewCover.Mode.OUT]:
+				peeks += 1
+			last_mode = mode
+		guard.set_physics_process(false)
+		parent.child_entered_tree.disconnect(watch)
+		parent.child_entered_tree.disconnect(listen)
+		var wrong: Array[String] = []
+		for s: Dictionary in shots:
+			var before := racks.filter(func(f: int) -> bool: return f < s.frame).map(func(f: int) -> float: return (s.frame - f) * STEP)
+			var nearest: float = before.min() if not before.is_empty() else INF
+			if nearest < 0.2 - 0.001 or nearest > 1.0 + 0.001:
+				wrong.append("%.2f s" % nearest)
+		_expect(shots.size() >= 5 and peeks >= 5 and wrong.is_empty(),
+				"rack: a Shotgun Guard that %s fired %d shots after %d peeks; the rack before each was %s, want 0.2 to 1.0 s before every one"
+				% [rig[3], shots.size(), peeks, wrong if not wrong.is_empty() else "in time"])
+		_expect(racks.size() <= shots.size() + peeks, "rack: a Shotgun Guard that %s racked %d times for %d shots, want no pump after a shot"
+				% [rig[3], racks.size(), shots.size()])
+		guard.free()
+		_clear_shots()
+		_release_player(was)
+
+
+## A perched Marksman Rifle Guard 11 m from him behind a crate: its sight
+## line is visible from 0.9 s (within 0.1 s) before every shot until the
+## shot; with him standing still its shot is aimed at him (his body centre,
+## within 0.01 m); with him stepping 1.5 m aside in the last 0.15 s of the
+## line its shot does not hit him; hit during its line it fires no shot
+## from that line (it ducks).
+func _check_sight_line() -> void:
+	var him := ShipBuilder3D.tile_to_world(PERCH_PIRATE)
+	var was := _hold_player(him)
+	var guard := _rig_guard(GunRoll.weapon(GunRoll.MARKSMAN_RIFLE), perch_layout, PERCH_START, him)
+	for i in 2:
+		await physics_frame
+	var shots: Array = []
+	var watch := _record_shots([guard], shots)
+	var hits := {}
+	var count_hits := func(node: Node) -> void:
+		var bolt := node as Projectile3D
+		if bolt != null and bolt.shooter == guard:
+			# This shot's index: _record_shots (connected first) has it already.
+			var n := shots.size() - 1
+			bolt.hit.connect(func(body: Node3D, _head: bool) -> void:
+				if body == player:
+					hits[n] = hits.get(n, 0) + 1)
+	var parent := get_first_node_in_group(&"projectiles")
+	parent.child_entered_tree.connect(count_hits)
+	guard.hear_position(him)
+	guard.set_physics_process(true)
+	var shown: Array[bool] = []
+	var start_frame := Engine.get_physics_frames()
+	# Phase 0 still, 1 the sidestep, 2 hit during the line.
+	var phase := 0
+	var stepping := -1
+	var hit_frame := -1
+	var after_hit: Array = []
+	var t := 0.0
+	while t < 40.0:
+		await physics_frame
+		t += STEP
+		shown.append(guard.cover.line_shown())
+		if phase == 1 and shots.size() == 1:
+			if stepping < 0 and guard.cover.line_left >= 0.0 and guard.cover.line_left <= 0.15:
+				stepping = 0
+			if stepping >= 0 and stepping < 9:
+				player.global_position += Vector3.RIGHT * (1.5 / 9.0)
+				stepping += 1
+		if phase == 0 and shots.size() == 1:
+			phase = 1
+		elif phase == 1 and shots.size() == 2:
+			phase = 2
+		elif phase == 2 and Engine.get_physics_frames() - shots[1].frame == 30:
+			# Back where he was once that shot's bolt is spent.
+			player.global_position = him
+		elif phase == 2 and hit_frame < 0 and guard.cover.line_left > 0.3 and guard.cover.line_left < 0.6:
+			hit_frame = Engine.get_physics_frames()
+			guard.take_damage(1, player)
+			after_hit = [guard.cover.line_shown(), guard.cover.mode]
+		elif phase == 2 and hit_frame >= 0 and Engine.get_physics_frames() - hit_frame >= roundi(1.5 / STEP):
+			break
+	guard.set_physics_process(false)
+	parent.child_entered_tree.disconnect(watch)
+	parent.child_entered_tree.disconnect(count_hits)
+	_expect(shots.size() >= 2, "sight line: the perched Marksman Rifle fired %d shots in 40 s, want 2 before the hit" % shots.size())
+	# Shown from 0.9 s before each shot, without a break, until it.
+	var wrong: Array[String] = []
+	for s: Dictionary in shots.slice(0, 2):
+		var at: int = s.frame - start_frame - 1
+		var first := at
+		while first > 0 and shown[first - 1]:
+			first -= 1
+		var lead: float = (s.frame - start_frame - first) * STEP
+		if not s.perched or not s.line or absf(lead - LINE_SECONDS) > LINE_TOLERANCE:
+			wrong.append("shown %.2f s before (perched %s, at the shot %s)" % [lead, s.perched, s.line])
+	_expect(wrong.is_empty(), "sight line: before each perched shot the line was %s, want shown from 0.9 s before within 0.1 s" % [wrong])
+	if shots.size() >= 2:
+		var still: Dictionary = shots[0]
+		_expect(still.aimed and still.point.distance_to(still.centre) <= 0.01,
+				"sight line: with him standing still the shot was aimed %.3f m from his body centre (true: %s), want at him"
+				% [still.point.distance_to(still.centre), still.aimed])
+		_expect(stepping == 9 and hits.get(1, 0) == 0, "sight line: with him stepping 1.5 m aside in the last 0.15 s (%d of 9 steps), %d pellets of the shot hit him, want none"
+				% [stepping, hits.get(1, 0)])
+	var from_line := shots.filter(func(s: Dictionary) -> bool: return s.frame >= hit_frame).size() if hit_frame >= 0 else -1
+	_expect(hit_frame >= 0 and from_line == 0 and not after_hit[0] and after_hit[1] == CrewCover.Mode.DOWN,
+			"sight line: hit during its line (at frame %d) the Marksman Rifle fired %d shots in 1.5 s (line still shown: %s, mode %s), want none and down"
+			% [hit_frame, from_line, after_hit[0] if hit_frame >= 0 else "-", CrewCover.MODE_NAMES[after_hit[1]] if hit_frame >= 0 else "-"])
+	guard.free()
+	_clear_shots()
+	_release_player(was)
+
+
+## A perched Marksman Rifle Guard fires nothing while both true-aim places
+## are held by two other Guards in sight of him, and fires within 2 s of one
+## freeing (that Guard leaving the fight).
+func _check_marksman_waits_for_place() -> void:
+	var him := ShipBuilder3D.tile_to_world(PERCH_PIRATE)
+	var was := _hold_player(him)
+	var guard := _rig_guard(GunRoll.weapon(GunRoll.MARKSMAN_RIFLE), perch_layout, PERCH_START, him)
+	# Two Pistol Guards stood in the open in his sight, fighting, holding
+	# their places for good (a handover time they never reach).
+	var sticky: Sandbox = (load(Sandbox.PATH) as Sandbox).duplicate()
+	sticky.true_aim_handover = 1000.0
+	var others: Array[Crew3D] = []
+	for tile in [Vector2i(2302, 6), Vector2i(2306, 6)]:
+		var other := _rig_guard(GunRoll.weapon(GunRoll.PISTOL), perch_layout, tile, him)
+		other.sandbox = sticky
+		other._last_seen = him
+		other.state = Crew3D.State.FIGHT
+		others.append(other)
+	for i in 2:
+		await physics_frame
+	var fire := CrewFire.of(player)
+	fire.update()
+	var shots: Array = []
+	var watch := _record_shots([guard], shots)
+	guard.hear_position(him)
+	guard.set_physics_process(true)
+	# Until it has waited down a second for a place, then four more.
+	var both_held := 0
+	var broken := 0
+	var waited_for := 0.0
+	var t := 0.0
+	while t < 20.0 and waited_for < 4.0:
+		await physics_frame
+		t += STEP
+		fire.update()
+		var theirs := fire.holders.filter(func(g: Crew3D) -> bool: return g in others).size()
+		if theirs == 2:
+			both_held += 1
+		else:
+			broken += 1
+		if guard.cover.waited > 1.0:
+			waited_for += STEP
+	_expect(both_held > 0 and broken == 0 and shots.is_empty() and waited_for >= 4.0,
+			"true-aim place: with both places held by others (%d frames, %d not) the Marksman Rifle fired %d shots and waited %.1f s, want none fired while it waits"
+			% [both_held, broken, shots.size(), waited_for])
+	# One leaves the fight: its place frees.
+	others[0].state = Crew3D.State.PATROL
+	var fired := await _seconds_until(4.0, func() -> bool: return not shots.is_empty())
+	_expect(fired >= 0.0 and fired <= 2.0, "true-aim place: the Marksman Rifle fired %.2f s after a place freed, want within 2 s" % fired)
+	guard.set_physics_process(false)
+	get_first_node_in_group(&"projectiles").child_entered_tree.disconnect(watch)
+	guard.free()
+	for other in others:
+		other.free()
+	_clear_shots()
+	_release_player(was)
+
+
+## In the 6 x 6 Room a Marksman Rifle Guard takes a cover spot and fires
+## within 6 s; it does not change tile in 20 s with him hidden; with him
+## walked to 4 m and no fair walk to a further perch, its next shot has no
+## sight line and twice its aim (its base cone, the gun's own plus its aim
+## error).
+func _check_marksman_small_room() -> void:
+	var him := ShipBuilder3D.tile_to_world(SMALL_PIRATE)
+	var was := _hold_player(him)
+	var guard := _rig_guard(GunRoll.weapon(GunRoll.MARKSMAN_RIFLE), small_layout, SMALL_START, him)
+	var perched_cone := guard.base_cone_degrees()
+	for i in 2:
+		await physics_frame
+	var shots: Array = []
+	var watch := _record_shots([guard], shots)
+	guard.hear_position(him)
+	guard.set_physics_process(true)
+	var fired := await _seconds_until(6.0, func() -> bool: return not shots.is_empty())
+	_expect(fired >= 0.0 and shots[0].perched, "small room: the Marksman Rifle fired after %.2f s (on a cover spot: %s, tile %s), want from cover within 6 s"
+			% [fired, shots[0].perched if not shots.is_empty() else false, guard.cover.tile])
+	await _seconds_until(6.0, func() -> bool: return guard.cover.mode == CrewCover.Mode.DOWN)
+	# Hidden: out of its sight and out of the Room.
+	var held: Vector2i = guard.cover.tile
+	player.global_position = him + Vector3(0.0, 0.0, -40.0)
+	var moved := 0
+	for frame in roundi(20.0 / STEP):
+		await physics_frame
+		if guard.cover.tile != held or not guard.state in [Crew3D.State.FIGHT, Crew3D.State.COVER]:
+			moved += 1
+	_expect(held != Vector2i.MAX and moved == 0, "perch: with him hidden for 20 s the Marksman Rifle left its tile %s on %d frames (now %s, state %d), want it held"
+			% [held, moved, guard.cover.tile, guard.state])
+	# Walked to 4 m where it can see him, with no further perch.
+	var astar := CrewPaths.grid(small_layout)
+	var eye := guard.global_position + Vector3.UP * Crew3D.EYE_HEIGHT
+	var close := Vector3.INF
+	for tile: Vector2i in small_layout.rooms[0].tiles():
+		var at := ShipBuilder3D.tile_to_world(tile)
+		var far := _flat(at, guard.global_position)
+		if _open_tile(astar, tile) and far >= 3.6 and far <= 4.4 and not guard._blocked(eye, at + Vector3.UP * Crew3D.EYE_HEIGHT) \
+				and not _has_cover_from(guard, at, -1):
+			close = at
+			break
+	_expect(close != Vector3.INF, "perch: the small Room has no tile 4 m from the Marksman Rifle in its sight")
+	if close != Vector3.INF:
+		await _walk_player(him, close)
+		var from := shots.size()
+		var lined := false
+		var t := 0.0
+		while t < 10.0 and shots.size() == from:
+			await physics_frame
+			t += STEP
+			lined = lined or guard.cover.line_shown()
+		var hip: Dictionary = shots[from] if shots.size() > from else {}
+		_expect(not hip.is_empty() and not lined and not hip.line and is_equal_approx(hip.base, perched_cone * 2.0),
+				"perch: with him at 4 m and nowhere further, its next shot (after %.1f s) showed a sight line: %s, with a base cone of %.1f degrees, want none and %.1f (twice %.1f)"
+				% [t, lined or (hip.line if not hip.is_empty() else false), hip.base if not hip.is_empty() else -1.0, perched_cone * 2.0, perched_cone])
+	guard.set_physics_process(false)
+	get_first_node_in_group(&"projectiles").child_entered_tree.disconnect(watch)
+	guard.free()
+	_clear_shots()
+	_release_player(was)
+
+
+## The shared Pirate walked from [param from] to [param to] at 4 m/s, a
+## step a frame.
+func _walk_player(from: Vector3, to: Vector3) -> void:
+	var steps := maxi(ceili(_flat(from, to) / (4.0 * STEP)), 1)
+	for i in steps:
+		player.global_position = from.lerp(to, float(i + 1) / steps)
+		await physics_frame
+
+
+## In the fall-back Room, a perched Marksman Rifle Guard with him walked to
+## 4 m and a fair walk to a further perch has moved there (on a tile at
+## least a metre further from him than the one it held) within 5 s.
+func _check_marksman_falls_back() -> void:
+	var him := ShipBuilder3D.tile_to_world(FALL_BACK_PIRATE)
+	var was := _hold_player(him)
+	var guard := _rig_guard(GunRoll.weapon(GunRoll.MARKSMAN_RIFLE), fall_back_layout, FALL_BACK_START, him)
+	for i in 2:
+		await physics_frame
+	guard.hear_position(him)
+	guard.set_physics_process(true)
+	await _seconds_until(8.0, func() -> bool: return guard.cover.mode == CrewCover.Mode.DOWN)
+	var old: Vector2i = guard.cover.tile
+	var close := ShipBuilder3D.tile_to_world(FALL_BACK_CLOSE)
+	var old_far := _flat(ShipBuilder3D.tile_to_world(old), close)
+	var eye := guard.global_position + Vector3.UP * Crew3D.EYE_HEIGHT
+	var ready := old != Vector2i.MAX and absf(old_far - 4.0) <= 0.5 and not guard._blocked(eye, close + Vector3.UP * Crew3D.EYE_HEIGHT) \
+			and _has_cover_from(guard, close, -1)
+	_expect(ready, "fall back: the Marksman Rifle perched at %s, %.1f m from where he walks to, with a further perch from there: %s; want 4 m and one"
+			% [old, old_far, _has_cover_from(guard, close, -1)])
+	if ready:
+		await _walk_player(him, close)
+		var there := await _seconds_until(5.0, func() -> bool:
+			var now: Vector2i = guard.cover.tile
+			return now != old and now != Vector2i.MAX and _flat(ShipBuilder3D.tile_to_world(now), close) >= old_far + 1.0 \
+					and _flat(guard.global_position, ShipBuilder3D.tile_to_world(now)) <= 0.5)
+		_expect(there >= 0.0, "fall back: with him walked to 4 m the Marksman Rifle was not on a perch a metre further than %s within 5 s (now %s, mode %s, hip %s)"
+				% [old, guard.cover.tile, CrewCover.MODE_NAMES[guard.cover.mode], guard.cover.hip])
+	guard.set_physics_process(false)
+	guard.free()
+	_clear_shots()
+	_release_player(was)

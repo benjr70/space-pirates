@@ -201,13 +201,20 @@ const SPOT_CLOSE := Vector2(1.5, 3.0)
 ## longer than its longest time down (CrewCover.longest_down: its
 ## Gunnery's time down ceiling varied up 30%, plus the 0.8 s near-miss
 ## hold; 3.4 s Pistol, 4.05 s Assault Rifle, 2.75 s Shotgun, 6.0 s Marksman
-## Rifle) and COVER_SLACK fails the Raid: it should have peeked. One trying
+## Rifle) and COVER_SLACK fails the Raid: it should have peeked. Time it
+## spends down waiting on its gun's habit (CrewCover.waited: a Marksman
+## Rifle waiting for a true-aim place to start its sight line, a Shotgun
+## holding fire with him beyond 8 m; crew-combat ticket 20) is left out:
+## that is the habit, not a missed peek; for the Rifle at most
+## PLACE_WAIT_HANDOVERS true-aim handovers, each doubled (it is queued
+## first for the next place to free). One trying
 ## to walk in a fight for FIGHT_STUCK_TIME without moving FIGHT_STUCK_MOVE
 ## (a second's standing still starts the count again) fails it too. These
 ## replace the old limit on time in COVER (crew-combat ticket 18), which a
 ## Guard dug in now rightly passes: it holds a spot, hiding or trading
 ## shots, for as long as the fight lasts there.
 const COVER_SLACK := 0.5
+const PLACE_WAIT_HANDOVERS := 2.0
 const FIGHT_STUCK_TIME := 5.0
 const FIGHT_STUCK_MOVE := 0.3
 ## A crew member putting this many shots (a Shotgun's pellets one shot) in a row into the ship within
@@ -329,7 +336,7 @@ var box_blocked := false
 ## The sights come down once this passes without a shot taken.
 var _aim_until := 0.0
 ## Per Guard fighting from cover: [stretch down in sight began, downs,
-## near misses] and [anchor, seconds walking, seconds still].
+## near misses, its habit wait then] and [anchor, seconds walking, seconds still].
 var _down_in_sight := {}
 var _fight_walk := {}
 ## Crew shots in a row that hit the ship rather than a body, by shooter.
@@ -739,10 +746,14 @@ func _stuck_in_fight(member: Crew3D) -> String:
 	if cover.mode != CrewCover.Mode.DOWN or not member._can_see:
 		_down_in_sight.erase(member)
 	elif not _down_in_sight.has(member) or _down_in_sight[member][1] != cover.downs or _down_in_sight[member][2] != cover.near_misses:
-		_down_in_sight[member] = [t, cover.downs, cover.near_misses]
-	elif t - _down_in_sight[member][0] > cover.longest_down() + COVER_SLACK:
-		return "%s stayed down %.1f s with him in its sight, longer than %.2f + %.1f s (t=%.1f s)" % [what, t - _down_in_sight[member][0],
-				cover.longest_down(), COVER_SLACK, t]
+		_down_in_sight[member] = [t, cover.downs, cover.near_misses, cover.waited]
+	else:
+		var habit: float = cover.waited - _down_in_sight[member][3]
+		if cover.gun == CrewHabit.Gun.MARKSMAN_RIFLE:
+			habit = minf(habit, PLACE_WAIT_HANDOVERS * 2.0 * member.sandbox.true_aim_handover)
+		if t - _down_in_sight[member][0] - habit > cover.longest_down() + COVER_SLACK:
+			return "%s stayed down %.1f s (%.1f s of it waiting on its habit) with him in its sight, longer than %.2f + %.1f s (t=%.1f s)" % [what,
+					t - _down_in_sight[member][0], habit, cover.longest_down(), COVER_SLACK, t]
 	var flat := _flat(member.global_position)
 	if not _fight_walk.has(member) or flat.distance_to(_fight_walk[member][0]) > FIGHT_STUCK_MOVE:
 		_fight_walk[member] = [flat, 0.0, 0.0]

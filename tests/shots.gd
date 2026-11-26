@@ -505,7 +505,7 @@ func _room_camera(room: RoomData) -> Array:
 # --- crew ------------------------------------------------------------------
 
 func _crew() -> void:
-	_expect(["front", "side"])
+	_expect(["front", "side", "sight_line"])
 	var world := _test_room()
 	var crew: Array[Crew3D] = []
 	var types := [CrewTypes.Type.GUARD, CrewTypes.Type.WORKER]
@@ -528,6 +528,15 @@ func _crew() -> void:
 	for body in crew:
 		body.face_direction(Vector3.LEFT)
 	await _snap("side")
+	# The Marksman Rifle's sight line (crew-combat ticket 20) from the
+	# Guard's muzzle to a point across the room, as a Guard shows it.
+	crew[0].face_direction(Vector3.RIGHT)
+	var line := CrewSightLine.new()
+	world.add_child(line)
+	var muzzle := crew[0].global_position + Vector3.UP * Crew3D.MUZZLE_HEIGHT + Vector3.RIGHT * Crew3D.MUZZLE_FORWARD
+	line.show_between(muzzle, muzzle + Vector3(6.0, -0.3, 1.5))
+	print("shots: the Guard's sight line runs from its muzzle off to the right")
+	await _snap("sight_line")
 
 
 # --- hud and menu ----------------------------------------------------------

@@ -56,7 +56,8 @@ static func build(weapons: Array, sandbox_resource: Sandbox, gunneries: Array = 
 				+ "Aim error adds to the weapon's base cone. Each Guard draws its own %s-%sx on time between shots at spawn. "
 				% [SheetTable.format(CrewCombat.JITTER.x), SheetTable.format(CrewCombat.JITTER.y)]
 				+ "Spread opens at the opening spread times (base cone plus aim error) on first sight and closes to 1x over the closing time. "
-				+ "Not read yet: hold before shifting (a habit per gun) and reload factor (crew magazines and reloads).")
+				+ "Range band is where it likes to fight from (a term in its cover score); hold before shifting is how long it holds a spot out of its band before moving one nearer or further, negative never (the Marksman Rifle). "
+				+ "Not read yet: reload factor (crew magazines and reloads).")
 		sheet.add_table(gunnery)
 	if not attachments.is_empty():
 		var names_of := PackedStringArray()

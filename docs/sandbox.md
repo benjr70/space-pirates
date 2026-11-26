@@ -122,7 +122,7 @@ Melee from behind (inside the 120.0 degree cone behind the target's facing) kill
 | **Reload** | | | | |
 | Reload Factor | 1.5 | 1.5 | 1.5 | 1.5 |
 
-A Guard fires the gun it rolled at ship build: that weapon's damage, projectile, pellets, time between shots and sounds. Aim error adds to the weapon's base cone. Each Guard draws its own 0.75-1.35x on time between shots at spawn. Spread opens at the opening spread times (base cone plus aim error) on first sight and closes to 1x over the closing time. Not read yet: hold before shifting (a habit per gun) and reload factor (crew magazines and reloads).
+A Guard fires the gun it rolled at ship build: that weapon's damage, projectile, pellets, time between shots and sounds. Aim error adds to the weapon's base cone. Each Guard draws its own 0.75-1.35x on time between shots at spawn. Spread opens at the opening spread times (base cone plus aim error) on first sight and closes to 1x over the closing time. Range band is where it likes to fight from (a term in its cover score); hold before shifting is how long it holds a spot out of its band before moving one nearer or further, negative never (the Marksman Rifle). Not read yet: reload factor (crew magazines and reloads).
 
 ## Attachments
 

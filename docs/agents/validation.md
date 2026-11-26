@@ -141,7 +141,9 @@ re-measured on 2026-11-25 over eight passing runs after the cover checks
 which add about 9 s of simulated fights, and again on 2026-11-25 over
 nine passing runs after the fair fire checks
 (ticket `.scratch/crew-combat/issues/19-fair-fire.md`), whose median time to
-die runs twenty Pirates and Guards side by side for up to 60 s per gun.
+die runs twenty Pirates and Guards side by side for up to 60 s per gun. The
+habit checks (ticket `.scratch/crew-combat/issues/20-a-habit-per-gun.md`)
+add about 2 s (352 checks).
 The `crew`, `raid_smoke` and full gate rows were re-measured later on
 2026-11-22 over twenty passing full gates after the crew give-way fix
 (ticket `.scratch/raid-smoke-bugs/issues/06-crew-block-each-other.md`),
@@ -173,7 +175,11 @@ given through `Raid.arm` as a Raid from the menu gives it. Every Raid is played 
   with the Pirate in its sight longer than its longest time down
   (`CrewCover.longest_down`: its Gunnery's time-down ceiling plus 30 %, plus
   the 0.8 s near-miss hold) plus 0.5 s since it got down or last ducked a
-  near miss, or tries to walk 5 s without moving 0.3 m (a second standing
+  near miss, leaving out time spent waiting on its gun's habit
+  (`CrewCover.waited`: a Shotgun holding fire with him beyond 8 m, or a
+  Marksman Rifle waiting for a true-aim place, at most two doubled
+  handovers, 3.2 s; crew-combat ticket 20), or tries to walk 5 s without
+  moving 0.3 m (a second standing
   still starts the count again); these replaced the old limit on time in
   COVER (crew-combat ticket 18), since a dug-in Guard now rightly holds a
   spot as long as the fight lasts; none puts 4 shots (a Shotgun's 12 pellets count as one) in a
@@ -261,7 +267,7 @@ reading the checks that use it.
 
 | Code | Suites | What asserts on it |
 | ---- | ------ | ------------------ |
-| `scripts/crew/` | `crew`; `ship_3d`, `pirate`, `raid_smoke` in part | `crew`: Awareness, hearing, routines (`CrewRoutine`), Guards and Workers (`CrewTypes`; a cornered Worker unarmed, never firing in 30 s and cowering), each weapon's `Gunnery` file and a Guard firing each gun (pellets, projectile, bursts, time down),  the Alarm and Alarm panels, fair fire (`CrewFire`: `_check_exposure_ramp` 3x to 1x over 2 s, held while it ducks, 3x again on broken sight and on a hit; `_check_walk_in`; `_check_true_aim`, five Guards for 20 s with at most two aiming true in any frame and one whenever any has a clear muzzle line, and every miss 0.4 to 0.8 m off his body centre; `_check_miss_at_cover`; `_check_lead`, the intercept fraction per gun, halved mid Slide, every pellet inside a real cone; `_check_pellet_cap`, 117 of 150 from 12 pellets, and the four crew fight numbers on the Sandbox; `_check_time_to_die`, the median of 20 fixed-seed runs per gun, and no bolt into the crate a Guard fires over), combat (a cover spot it cannot reach, holding fire with the muzzle line blocked), fighting from cover (`CrewCover`: `_check_cover_ring` hidden within 6 s by a fair walk, low cover fired from, the capsule lowered, 20 peeks of each gun's shots per burst and time down; `_check_full_cover`; `_check_flanked_and_closed_on`; `_check_open_fight`; `_check_cover_fight_on_ship`, 60 s of three Guards on a generated medium ship with none stuck, no shared tile, none beside a Breaker), steering round props and bodies (`CrewPaths`), two crew blocking each other (one gives way), one crew member per work spot, bodies and traces (`CrewTraces`). `ship_3d`: crew spawn, shooting and death on a built ship. `pirate`: crew models and the crew shot. `raid_smoke`: whole Raids against the crew: a Guard killing a Pirate who stands in view, no crew member stuck on its way to a Job, no Guard fighting from cover stuck down with him in sight past its longest time down or stuck walking, none emptying bolts into cover at its muzzle, the HUD's spotted stings matching the crew that tipped into spotted, kills matching the crew down, and across the sweep enough Quiet Raids unseen into a Ghost Extraction |
+| `scripts/crew/` | `crew`; `ship_3d`, `pirate`, `raid_smoke` in part | `crew`: Awareness, hearing, routines (`CrewRoutine`), Guards and Workers (`CrewTypes`; a cornered Worker unarmed, never firing in 30 s and cowering), each weapon's `Gunnery` file and a Guard firing each gun (pellets, projectile, bursts, time down),  the Alarm and Alarm panels, fair fire (`CrewFire`: `_check_exposure_ramp` 3x to 1x over 2 s, held while it ducks, 3x again on broken sight and on a hit; `_check_walk_in`; `_check_true_aim`, five Guards for 20 s with at most two aiming true in any frame and one whenever any has a clear muzzle line, and every miss 0.4 to 0.8 m off his body centre; `_check_miss_at_cover`; `_check_lead`, the intercept fraction per gun, halved mid Slide, every pellet inside a real cone; `_check_pellet_cap`, 117 of 150 from 12 pellets, and the four crew fight numbers on the Sandbox; `_check_time_to_die`, the median of 20 fixed-seed runs per gun, and no bolt into the crate a Guard fires over), combat (a cover spot it cannot reach, holding fire with the muzzle line blocked), fighting from cover (`CrewCover`: `_check_cover_ring` hidden within 6 s by a fair walk, low cover fired from, the capsule lowered, 20 peeks of each gun's shots per burst and time down; `_check_full_cover`; `_check_flanked_and_closed_on`; `_check_open_fight`; `_check_cover_fight_on_ship`, 60 s of three Guards on a generated medium ship with none stuck, no shared tile, none beside a Breaker), a habit per gun (`CrewHabit`, ticket 20: `_check_bands`, each gun's cover tile inside its band within 1 m after 20 s in a 14 x 10 m Room; `_check_shotgun_holds_fire`, no shot at 10 m in 10 s, a shot at 6 m; `_check_shotgun_ambush`, in ambush within 5 m of the doorway and out of his sight within 10 s by a fair walk; `_check_shotgun_rack`, the action sound 0.2 to 1.0 s before every shot popping up and stepping out; `_check_sight_line`, the line shown from 0.9 s (within 0.1 s) before each perched shot, aimed at a still Pirate, missing a 1.5 m sidestep in the last 0.15 s, no shot when hit during it; `_check_marksman_waits_for_place`, nothing fired while both true-aim places are held by others and a shot within 2 s of one freeing; `_check_marksman_small_room`, cover and a shot within 6 s in a 6 x 6 m Room, its tile held 20 s with him hidden, and from the hip with him at 4 m: no line, twice its base cone; `_check_marksman_falls_back`, on a further perch within 5 s with him at 4 m), steering round props and bodies (`CrewPaths`), two crew blocking each other (one gives way), one crew member per work spot, bodies and traces (`CrewTraces`). `ship_3d`: crew spawn, shooting and death on a built ship. `pirate`: crew models and the crew shot. `raid_smoke`: whole Raids against the crew: a Guard killing a Pirate who stands in view, no crew member stuck on its way to a Job, no Guard fighting from cover stuck down with him in sight past its longest time down or stuck walking, none emptying bolts into cover at its muzzle, the HUD's spotted stings matching the crew that tipped into spotted, kills matching the crew down, and across the sweep enough Quiet Raids unseen into a Ghost Extraction |
 | `scripts/data/` | `layouts`, `ship_3d`, `generator` | `RoomDataChecks` (in `layouts` and `ship_3d`): Room rects, fight core, floor rule, Corridor width, display name. `generator`: every `ShipLayout` it emits through `ShipInvariants` |
 | `scripts/gen/` | `generator`; `ship_3d` in part | `generator`: the sweep, distributions, determinism and `ShipInvariants` (with its self-test) over everything `ShipGenerator` calls. `ship_3d`: generated ships built in 3D, `ShipNamer` prefixes, `Interiors` props in the built sample. `generator` also checks `ShipDumper` (`_check_dumper`: glyph set, one listing line per Room and Door). **Uncovered:** `dump_ship.gd` (command-line wrapper, debug output only; loaded by `static`, run by hand in ticket `.scratch/agent-verification/issues/10-ship-dumper-checks.md`) |
 | `scripts/layouts/` | `layouts`, `ship_3d` | `PlayerShipLayout` is the built sample both suites walk |
@@ -317,7 +323,7 @@ tests/shots.sh viewmodel wheel=1             # the same for the next weapon (Ass
 tests/shots.sh attachments                   # each gun bare and in two builds, side-on and at the hip
 tests/shots.sh scoped                        # aimed through each scope's lens and the Reflex Sight, measured
 tests/shots.sh ship class=medium seed=1      # room_<i>_<role>.png per Room, overview.png
-tests/shots.sh crew                          # front.png, side.png: Guard left, Worker right
+tests/shots.sh crew                          # front.png, side.png: Guard left, Worker right; sight_line.png
 tests/shots.sh hud                           # hud.png, hud_busy.png
 tests/shots.sh menu                          # home, classes, loadout, loadout_slot, pause, death, extracted
 tests/shots.sh sheet                         # sheet, sheet_attachments, sheet_attachments_end
@@ -363,7 +369,10 @@ tests/shots.sh scene path=res://scenes/props3d/prop_crate_3d.tscn cam=2,1.5,2 lo
   prints `rooms=<n> counted=<n>` (all Rooms, and the Class count without
   Corridors) and warns `SHOT_WARN` when a camera starts inside geometry.
 - **crew:** one of each crew type (Guard, Worker) side by side in the test
-  room, facing the camera, then turned side-on.
+  room, facing the camera, then turned side-on; then `sight_line.png`, the
+  Guard turned right with a Marksman Rifle's sight line (`CrewSightLine`)
+  from its muzzle across the room: one thin red line, unshaded, starting
+  just in front of the Guard's chest.
 - **hud:** a Raid on small seed 1, the Pirate in his Boarding Pod, the HUD set
   to known values (health 2 short of full, ammo 5, Loot 240); `hud_busy` adds
   the Alarm, an XP toast and an empty magazine.

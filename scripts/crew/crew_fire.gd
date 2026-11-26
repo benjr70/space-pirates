@@ -12,6 +12,11 @@ extends RefCounted
 ## per physics frame ([method update]), at the start of the frame, before
 ## any Guard has moved or fired in it: the first Guard to tick or ask does
 ## the work, and nothing changes who aims true until the next frame.
+##
+## A Marksman Rifle firing by its sight line ([method CrewCover.wants_place])
+## needs a place to shoot at all: it is queued first for the next place to
+## free, and a place it holds for its line is never handed on or swapped
+## until it gives it up after the shot.
 
 ## Rounds of a walk-in before the last are aimed at least this fraction of
 ## the walk-in distance to the side: from the whole distance on the first
@@ -117,7 +122,7 @@ func update() -> void:
 	for held in holders.duplicate():
 		if waiting.is_empty():
 			break
-		if not held in clear:
+		if not held in clear and not pinned(held):
 			_drop(held)
 			_take(waiting.pop_front())
 	while holders.size() < places and not waiting.is_empty():
@@ -125,7 +130,7 @@ func update() -> void:
 	for held in holders.duplicate():
 		if waiting.is_empty():
 			break
-		if _held_for.get(held, 0.0) >= handover_time(held):
+		if not pinned(held) and _held_for.get(held, 0.0) >= handover_time(held):
 			_drop(held)
 			_take(waiting.pop_front())
 	if _last_held.size() > 64:
@@ -166,9 +171,19 @@ func handover_time(crew: Crew3D) -> float:
 	return time
 
 
-## Of two Guards waiting for true aim, whether [param a] goes first: the one
-## that held it least recently (never first), then the one nearer him.
+## A Marksman Rifle holding a place for its sight line: kept until it gives
+## it up.
+static func pinned(crew: Variant) -> bool:
+	return is_instance_valid(crew) and crew.cover != null and crew.cover.uses_line() and crew.cover.wants_place()
+
+
+## Of two Guards waiting for true aim, whether [param a] goes first: a
+## Marksman Rifle waiting to start its sight line, then the one that held it
+## least recently (never first), then the one nearer him.
 func _sooner(a: Crew3D, b: Crew3D) -> bool:
+	var ma := pinned(a)
+	if ma != pinned(b):
+		return ma
 	var la: float = _last_held.get(a, -INF)
 	var lb: float = _last_held.get(b, -INF)
 	if la != lb:

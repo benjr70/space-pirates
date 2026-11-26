@@ -121,11 +121,6 @@ static var _bolt_ball := _ball(MUZZLE_BALL)
 ## A spot a Guard fighting in the open moves to for a clear shot is at
 ## least this far from where it stands, a real step rather than a shuffle.
 const FIRING_STEP := 1.0
-## A flanking Guard that sees the Pirate this close turns to fight him, and
-## a Guard fighting in the open looks for a clear shot within this of him,
-## whatever its gun, until "A habit per gun" of the crew-combat spec
-## replaces it.
-const ENGAGE_RANGE := 10.6
 
 @export_group("Movement")
 @export var max_speed := 3.59
@@ -211,6 +206,11 @@ var last_aim_point := Vector3.ZERO
 var last_aimed_true := false
 var last_walk_in := false
 var last_miss_kind := ""
+## Where its next shot goes, set by its habit for that one shot: the
+## Marksman Rifle's sight line, fixed before the shot. INF otherwise.
+var aim_override := Vector3.INF
+## The physics frame it last racked its gun (the Shotgun's tell).
+var _rack_frame := -1000000
 var _share_timer := 0.0
 ## A Guard going round through another Door while another pins him.
 var flanking := false
@@ -382,10 +382,14 @@ func get_team() -> StringName:
 
 ## Degrees either side a shot may stray once its aim has closed (1x): the
 ## weapon's base cone plus its Gunnery's aim error.
+## A Marksman Rifle firing from the hip has it doubled ([constant CrewHabit.HIP_CONE]).
 func base_cone_degrees() -> float:
 	if weapon == null:
 		return 0.0
-	return weapon.spread_base_degrees + (gunnery.aim_error_degrees if gunnery != null else 0.0)
+	var cone := weapon.spread_base_degrees + (gunnery.aim_error_degrees if gunnery != null else 0.0)
+	if cover != null and cover.hip:
+		cone *= CrewHabit.HIP_CONE
+	return cone
 
 
 ## Degrees either side a shot strays now: its base cone times the exposure
@@ -402,21 +406,21 @@ func spread_degrees() -> float:
 ## Whether it could aim true now: a Guard in the fight with the Pirate in
 ## sight from its eyes and a clear muzzle line. Judged afresh, at the start
 ## of a frame, by [CrewFire]. (A reload, when crew have one, rules it out
-## too.)
+## too.) A Shotgun holding its fire takes none; a Marksman Rifle firing by
+## its sight line wants one only to start its line
+## ([method CrewCover.wants_place]).
 func can_aim_true() -> bool:
 	if is_worker() or not is_alive() or target == null or not is_instance_valid(target):
+		return false
+	if cover != null and cover.uses_line():
+		return cover.wants_place()
+	if cover != null and cover.holds_fire():
 		return false
 	if _flat_distance(global_position, target.global_position) > vision_range:
 		return false
 	if _blocked(global_position + Vector3.UP * EYE_HEIGHT, target.global_position + Vector3.UP * EYE_HEIGHT):
 		return false
 	return not _muzzle_blocked()
-
-
-## Metres off the Pirate this crew member opens fire from:
-## [constant ENGAGE_RANGE], whatever its gun.
-func engage_range() -> float:
-	return ENGAGE_RANGE
 
 
 ## Starts a fresh burst: its Gunnery's shots per burst, drawn.
@@ -447,8 +451,11 @@ func take_damage(amount: int, from: Node = null) -> void:
 		return
 	if health.take_damage(amount, from):
 		return
-	# Hit: its aim is spoiled, thrown back open to close again.
+	# Hit: its aim is spoiled, thrown back open to close again; a Marksman
+	# Rifle hit during its sight line loses the shot.
 	_exposed_for = 0.0
+	if cover != null:
+		cover.hit()
 	# Being shot at from somewhere unseen still tells you roughly where to look.
 	if from != null and is_instance_valid(from) and from is Node3D:
 		_last_seen = (from as Node3D).global_position
@@ -1012,7 +1019,7 @@ func _try_flank() -> void:
 func _tick_hunt() -> void:
 	if flanking:
 		_flank_clock += get_physics_process_delta_time()
-		if _can_see and _flat_distance(global_position, target.global_position) <= engage_range():
+		if _can_see:
 			_enter(State.FIGHT)
 		elif _path.is_empty() or _flank_clock > CrewCombat.FLANK_GIVE_UP:
 			# Arrived, or given up: back to hunting him the straight way.
@@ -1585,7 +1592,8 @@ func _fire() -> Projectile3D:
 		last_pellets.append(shot)
 	if not weapon.shot_sounds.is_empty():
 		SoundAt.play(_shot_parent(), origin, weapon.shot_sounds.pick_random(), shot_volume_db, 0.06, "Shot")
-	if weapon.action_sound != null:
+	if weapon.action_sound != null and not CrewHabit.racks(weapon):
+		# (A Shotgun racks before its shot instead: [method rack].)
 		_play_action_later(weapon.action_sound, weapon.action_sound_delay)
 	CrewNoise.make(get_tree(), global_position, CrewNoise.Kind.GUNSHOT, weapon.loudness, self)
 	return last_pellets[0]
@@ -1626,6 +1634,10 @@ func _aim_point(from: Vector3, in_burst: int) -> Vector3:
 		return last_aim_point
 	var fire := CrewFire.of(target)
 	last_aimed_true = fire.aims_true(self)
+	if aim_override != Vector3.INF:
+		last_aim_point = aim_override
+		aim_override = Vector3.INF
+		return last_aim_point
 	if not last_aimed_true:
 		var kind := []
 		last_aim_point = fire.miss_point(self, _rng, kind)
@@ -1640,6 +1652,19 @@ func _aim_point(from: Vector3, in_burst: int) -> Vector3:
 			at += CrewFire.side_axis(from, at) * _walk_side * off
 	last_aim_point = at
 	return at
+
+
+## Racks its gun now: the Profile's action sound at the muzzle, the
+## Shotgun's tell before it shows itself ([CrewCover]).
+func rack() -> void:
+	_rack_frame = Engine.get_physics_frames()
+	if weapon != null and weapon.action_sound != null:
+		_play_action(weapon.action_sound)
+
+
+## Seconds since it last racked its gun.
+func rack_age() -> float:
+	return float(Engine.get_physics_frames() - _rack_frame) / Engine.physics_ticks_per_second
 
 
 ## The gun's action (a pump, a bolt) [param delay] seconds after a shot, at
@@ -1734,8 +1759,12 @@ func _find_firing_position() -> Vector3:
 	var aim_at := _last_seen + Vector3.UP * TORSO_HEIGHT
 	var best := Vector3.INF
 	var best_score := -INF
+	# Within its sight of him; a Shotgun, within the range it fires at.
+	var reach := vision_range
+	if CrewHabit.gun_of(weapon) == CrewHabit.Gun.SHOTGUN:
+		reach = minf(reach, CrewHabit.SHOTGUN_HOLD_FIRE)
 	for point in _candidate_points():
-		if _flat_distance(point, _last_seen) > engage_range():
+		if _flat_distance(point, _last_seen) > reach:
 			continue
 		if _flat_distance(point, global_position) < FIRING_STEP:
 			continue  # where it stands already has no shot: a real step
@@ -1749,25 +1778,27 @@ func _find_firing_position() -> Vector3:
 
 
 ## Tile centres in the current room within the search radius, minus any that
-## are inside the hull or a prop.
+## are inside the hull or a prop. Stood in a doorway, both Rooms its Door
+## joins; outside every Room, its Post.
 func _candidate_points() -> Array[Vector3]:
 	var points: Array[Vector3] = []
 	if layout == null:
 		return points
-	var room := layout.room_at(ShipBuilder3D.world_to_tile(global_position))
-	if room == -1:
-		room = home_room
-	var breakers := _breaker_tiles(room)
-	for tile: Vector2i in layout.rooms[room].tiles():
-		var point := ShipBuilder3D.tile_to_world(tile)
-		if _flat_distance(global_position, point) > cover_search_radius:
-			continue
-		if _solid(point):
-			continue
-		# A Breaker is the pirate's cover on the way in, never the defender's.
-		if breakers.has(tile):
-			continue
-		points.append(point)
+	var rooms := CrewNoise.rooms_at(layout, global_position)
+	if rooms.is_empty() and home_room >= 0 and home_room < layout.rooms.size():
+		rooms.append(home_room)
+	for room in rooms:
+		var breakers := _breaker_tiles(room)
+		for tile: Vector2i in layout.rooms[room].tiles():
+			var point := ShipBuilder3D.tile_to_world(tile)
+			if _flat_distance(global_position, point) > cover_search_radius:
+				continue
+			if _solid(point):
+				continue
+			# A Breaker is the pirate's cover on the way in, never the defender's.
+			if breakers.has(tile):
+				continue
+			points.append(point)
 	return points
 
 

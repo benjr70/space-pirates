@@ -20,7 +20,9 @@ being built toward is `.scratch/crew-combat/spec.md`, after spec #52
 | `crew_traces.gd` (`CrewTraces`) | What the Pirate leaves behind that crew find: bodies, the open boarding Hatch, emptied Containers, Doors left open. |
 | `crew_combat.gd` (`CrewCombat`) | Guard teamwork: sharing the Pirate's position, staggered bursts, flank routes. |
 | `crew_fire.gd` (`CrewFire`) | Fair fire: who aims true (at most two at once, handed on by a timer), and where every shot is aimed before its spread: at him, led and walking in, or at a miss point beside him. One per Pirate, shared by every Guard fighting him. |
-| `crew_cover.gd` (`CrewCover`) | One Guard's fight from cover: finding and claiming a spot, the fair walk there, holding it, peeking in its gun's rhythm, leaving it, and fighting with no cover in reach. Every Guard holds one (`Crew3D.cover`); it drives the Guard's FIGHT and COVER states. |
+| `crew_cover.gd` (`CrewCover`) | One Guard's fight from cover: finding and claiming a spot, the fair walk there, holding it, peeking in its gun's rhythm, leaving it, and fighting with no cover in reach; and its gun's habit: the Shotgun's ambush and rack, the Marksman Rifle's perch, sight line and hip fire. Every Guard holds one (`Crew3D.cover`); it drives the Guard's FIGHT and COVER states. |
+| `crew_habit.gd` (`CrewHabit`) | A habit per gun: which of the four guns a Guard carries (`gun_of`, by its weapon's file) and the habit numbers (the Shotgun's 4 m and 8 m, its ambush reach and rack timing; the Marksman Rifle's perch radius, line length and weight, 5 m, sight lock and hip fire). |
+| `crew_sight_line.gd` (`CrewSightLine`) | The Marksman Rifle's sight line: a thin red unshaded line from the rifle to where it aims, made on first use under the Guard. |
 | `ship_alarm.gd` (`ShipAlarm`) | The ship-wide Alarm: raised once, red lights, every crew member told. Built per ship as `Ship/Alarm`. |
 | `alarm_panel.gd` (`AlarmPanel`) | The wall panels the Alarm is raised from, where they go, and breaking them. Built under `Ship/AlarmPanels`. |
 | `crew_noise.gd` (`CrewNoise`) | Hearing: noise events (footsteps, gunshots, doors), how far each reaches, and which Rooms it carries into. |
@@ -33,7 +35,13 @@ types, On Edge, Guards sharing his position, each weapon's
 Gunnery and a Guard firing each gun, fair fire (the exposure ramp, the
 walk-in, five Guards with at most two aiming true, miss points in the open
 and at cover, lead, the Shotgun's pellet cap, and the median time to die
-against a Pistol and an Assault Rifle), staggered bursts,
+against a Pistol and an Assault Rifle), a habit per gun (each gun's cover
+tile in its band after 20 s, the Shotgun holding fire at 10 m, waiting in
+ambush beside a doorway, racking before each shot; the Marksman Rifle's
+sight line before every perched shot, dodged by a late sidestep, lost when
+it is hit, waiting for a true-aim place, holding its perch with him hidden,
+falling back to a further perch and firing from the hip in a small Room),
+staggered bursts,
 flanking, a cover spot it cannot reach, facing a body in its way, holding
 fire when its muzzle line is blocked, fighting from cover (the ring of four
 Guards, one per gun: hidden within 6 s by a fair walk, firing from low
@@ -124,24 +132,28 @@ PATROL / INVESTIGATE ──spotted──▶ FLEE ──reached its Guard──�
 - **HUNT**: runs to his last-seen position by the door graph (or flanks, see
   Guard combat). Once that position is within 18 m (`CrewCover.TAKE_OVER`)
   and it is not flanking, it fights from cover instead. A flanker that sees
-  him within 10.6 m (`ENGAGE_RANGE`, until "A habit per gun") turns to fight
-  him the same way. 3 s with him out of sight sends a hunter to SEARCH. A
+  him, at any distance, turns to fight him the same way. 3 s with him out of sight sends a hunter to SEARCH. A
   Guard hunting where a trace says he was (a body, the open boarding Hatch,
   or told so by the Guard that found it) keeps hunting the old way, into his
   Boarding Pod if that is where the trace leads, until it sees him.
 - **COVER / FIGHT**: the cover fight (see Guard combat). COVER while it walks
-  to a spot, is down behind it or steps back to it; FIGHT while it is up,
-  stepping out to fire, or fighting in the open. 14 s without seeing him
-  sends it to SEARCH, which walks to the last-seen spot and waits 2.5 s.
-- **A clear shot**: a Guard fires only while its muzzle line is clear as
+  to a spot, is down behind it, steps back to it or waits in ambush (a
+  Shotgun); FIGHT while it is up, stepping out to fire, or fighting in the
+  open. 14 s without seeing him sends it to SEARCH, which walks to the
+  last-seen spot and waits 2.5 s; a Marksman Rifle on its perch never
+  searches (see A habit per gun).
+- **A clear shot**: a Guard fires whenever it has him in sight and a clear
+  muzzle line, at any distance, except the Shotgun beyond 8 m (the old
+  engage range is gone). It fires only while its muzzle line is clear as
   well as its eye line. The muzzle line is a ball 0.1 m across (a bolt's
   overlap sphere is 0.09 m) swept from the body's axis at muzzle height
   (1.3 m) to 0.4 m short of the Pirate's torso, plus the two edges of its
   current spread for the first 1.5 m, so a crate he crouches behind, or a
   prop at its own shoulder that the barrel pokes past, stops it firing. Up
   in cover with no clear shot it waits 1.2 s and ducks; in the open it
-  walks to the nearest tile at least 1 m away, within 10.6 m of him, whose
-  muzzle line is clear.
+  walks to the nearest tile at least 1 m away, within its sight of him
+  (14.4 m; a Shotgun's 8 m), whose muzzle line is clear, in its Room (both
+  Rooms if it stands in a doorway).
 - **DEAD**: collision off, death clip or tip-over; its cover spot is freed.
 
 ### Guns: one of four weapons and its Gunnery
@@ -153,7 +165,8 @@ shot takes its damage, projectile speed and lifetime, every pellet (a
 Shotgun shot throws all 12, each inside the cone on its own, and at most
 the Sandbox's pellet cap of them, 9, do damage: 117 of his 150), the time
 between shots in a burst, its shot sound, its action sound (the Shotgun's
-pump) and its loudness. Crew ignore its magazine, reloads, bloom, Aim Down
+pump, which a crew Shotgun racks before each shot as its tell rather than
+after it) and its loudness. Crew ignore its magazine, reloads, bloom, Aim Down
 Sights, recoil and Viewmodel: they fire their bursts from cover and go
 down, and never count rounds (the time down stands in for a reload until
 "Crew magazines and reloads"). How a Guard handles its gun is that gun's **Gunnery**
@@ -173,10 +186,11 @@ down, and never count rounds (the time down stands in for a reload until
 | reload factor | 1.5 | 1.5 | 1.5 | 1.5 |
 
 Read today: the aim error, opening spread, closing time and lead (see Fair
-fire), and the rhythm and range band of the cover fight: shots per burst,
-bursts per peek, gap between bursts, settle, time down, range band near and
-far (see Guard combat). Hold before shifting and reload factor are filled
-in for the habit and reload tickets of `.scratch/crew-combat/spec.md`. All
+fire), and the rhythm, range band and hold of the cover fight: shots per
+burst, bursts per peek, gap between bursts, settle (the Marksman Rifle's is
+its sight line), time down, range band near and far, hold before shifting
+(see Guard combat and A habit per gun). Reload factor is filled in for the
+reload ticket of `.scratch/crew-combat/spec.md`. All
 are read at the moment of use, so a Sandbox sheet edit reaches crew already
 in the Raid.
 
@@ -383,18 +397,24 @@ its rules and numbers kept.
     steps back.
 - **Picking.** Filter: within 8 m of it as the crow flies and 12 m by its
   walk (`WALK_REACH`), in its Room, his Room or one joined to either,
-  hidden, unclaimed, with a peek. Score: near it 20 (falling to 0 at 8 m),
-  low cover 40 (full 20), inside its Gunnery's range band 20 (falling to 0
-  4 m outside), minus 20 if another Guard or its spot is within 2 m. One
-  Guard per spot: claimed on choosing, freed on leaving or dying. Of the
-  best six it takes the first whose walk is fair and passes no closer than
-  0.6 m to another crew member standing still (it would stall against the
-  body).
+  hidden, unclaimed, with a peek, and (for every gun but the Shotgun) at
+  least 4 m from him. Score: near it 20 (falling to 0 at 8 m), low cover 40
+  (full 20), inside its Gunnery's range band 20 (falling to 0 4 m outside),
+  minus 20 if another Guard or its spot is within 2 m. The band is a term
+  in the score, never a filter. (The Marksman Rifle searches and scores
+  differently: see A habit per gun.) One Guard per spot: claimed on
+  choosing, freed on leaving or dying. Of the best six it takes the first
+  whose walk is fair and passes no closer than 0.6 m to another crew member
+  standing still or stuck trying to walk (it would stall against the body).
 - **A fair walk** (its planned route sampled every 0.5 m) never comes nearer
   his last-seen spot than both its ends do, less 1 m, and crosses no more
   than 2.5 m of floor whose torso height he can see.
 - **Getting there**: it runs, and stands on the spot (a last step if its
-  walk ended short). Walking 3 s without moving 0.5 m it gives up the spot,
+  walk ended short; a spot it is already within its arrive radius of is
+  walked onto too, so its lines, judged from the tile's centre, hold). A
+  walk passing within 0.6 m of a crew member standing still, or stuck
+  trying to walk, is out of reach; stood aside letting another by, it is
+  not stalling. Walking 3 s without moving 0.5 m it gives up the spot,
   passes it over for 10 s and thinks again.
 - **Rhythm**: down, then up: a settle, its bursts, down again. Per gun from
   its Gunnery: shots per burst (a fresh draw each burst), bursts per peek,
@@ -411,13 +431,19 @@ its rules and numbers kept.
   - **Flanked**: he can see it crouched for 0.4 s: it picks again (that
     holds for a Guard hiding with no shot too).
   - **Too close**: he is in sight within 3 m: it picks a spot at least 1 m
-    further from him.
-  - **No shot**: two peeks running with nothing to shoot: it picks again.
-  - **Out of band**: held 6 s with its spot outside its range band, it
-    looks for a spot at least 1 m nearer or further, taking it only if it
-    scores 20 % better. (The per-gun holds come with "A habit per gun".)
+    further from him. Not the Shotgun, which stays; the Marksman Rifle's
+    own rule at 5 m takes its place.
+  - **No shot**: two peeks running with nothing to shoot: it picks again
+    (a Marksman Rifle with him hidden holds its perch).
+  - **Out of band**: held its Gunnery's hold before shifting (Pistol 4 s,
+    Assault Rifle 8 s, Shotgun 4 s; counted while it holds the spot, down
+    or up) with its spot outside its range band, it looks for a spot at
+    least 1 m nearer or further, taking it only if it scores 20 % better.
+    The Shotgun first tries a walk into its band, then its ambush (see A
+    habit per gun). The Marksman Rifle never shifts.
   - **Unseen 5 s**: it moves to a spot at least 1 m nearer where he was
-    last seen. **Unseen 14 s**: it searches.
+    last seen (never the Marksman Rifle). **Unseen 14 s**: it searches
+    (never a Marksman Rifle on its perch).
   - Only one Guard moves up or back (out of band, unseen) at a time; the
     mover holds the place 4 s.
 - **Near misses**: a shot of his whose line (from his camera) passes within
@@ -444,7 +470,7 @@ its rules and numbers kept.
   round: the Door into the Pirate's Room furthest from the pinning Guard, if
   that is not the Door its own straight route would use anyway, reached by a
   route that avoids the Pirate's Room, then through the Door and one metre in.
-  It turns to fight as soon as it has him within 10.6 m and in sight, and
+  It turns to fight as soon as it has him in sight, at any distance, and
   drops the flank on arrival or after 20 s.
 
 ## Fair fire
@@ -511,7 +537,96 @@ note `docs/research/fair-fire-and-cover.md` (branch `research/fair-fire-and-cove
 - **No distance penalty** beyond the cone.
 
 The Marksman Rifle's sight line, its claim on a true-aim place and the
-Shotgun's rack come with "A habit per gun".
+Shotgun's rack are in A habit per gun below.
+
+## A habit per gun
+
+What the gun changes about how a Guard fights (`CrewHabit`, used by
+`CrewCover`), from `.scratch/crew-combat/issues/07-where-each-gun-stands.md`
+and the tells of `issues/06`. Which gun a Guard carries is read from its
+weapon's file (`CrewHabit.gun_of`).
+
+| Gun | Range band | Holds before shifting | Habit |
+|---|---|---|---|
+| Shotgun | 2 to 5 m | 4 s | ambushes |
+| Pistol | 4 to 8 m | 4 s | shifts |
+| Assault Rifle | 5 to 10 m | 8 s | anchors |
+| Marksman Rifle | 8 to 14 m | never moves up (-1) | perches |
+
+Band and hold are each Gunnery's `range_near`/`range_far` and
+`hold_before_shifting`. **Pistol: shifts** and **Assault Rifle: anchors**
+are the out-of-band rule above with their holds.
+
+- **Firing range.** A Guard fires at any distance with sight and a clear
+  muzzle line. The Shotgun holds fire with him beyond 8 m
+  (`SHOTGUN_HOLD_FIRE`): down, it does not peek (it waits, counted in
+  `CrewCover.waited`); up, it has no shot; it takes no true-aim place.
+- **Shotgun: ambushes.**
+  - The only gun that may take a spot within 4 m of him (`SHOTGUN_CLOSE`);
+    too close (3 m) does not send it back.
+  - Out of its band (beyond 5 m) after holding 4 s with no fair walk to a
+    spot inside its band, it goes to its **ambush** (`CrewCover.ambush_spot`):
+    the doorway of his Room nearest to it, a tile in either Room the Door
+    joins within 5 m of the opening (`AMBUSH_REACH`), where he cannot see a
+    standing body, nearest the opening first, reached by a fair walk. With
+    no cover at all (in the open) the same after 4 s in the open. His Room
+    with no Door: no ambush, and it shifts as the others do.
+  - **Waiting** (mode AMBUSH, state COVER) it stands facing the doorway.
+    He comes into sight within 8 m with a clear muzzle line: it fires from
+    where it stands and fights on from there by the cover rules (the tile
+    counts as low cover). Seen further off, it picks again. A fair walk into
+    its band appearing (looked for every 1.5 s), it takes it. Unseen 14 s,
+    it searches.
+  - **The rack**, its tell: the Profile's action sound (the pump), played
+    before the shot instead of after it. Down behind low cover it racks
+    0.3 s before its time down ends (`RACK_LEAD`) and pops up; behind full
+    cover it racks as it starts its step out, and its settle is cut so the
+    shot comes no later than 0.95 s after the rack (`RACK_LATEST`). Every
+    shot (the open fight and the ambush too) comes 0.2 to 0.95 s after a
+    rack: one older is racked again and the shot waits 0.3 s.
+- **Marksman Rifle: perches.**
+  - It searches out to 14 m (`PERCH_RADIUS`, 21 m by its walk) and scores a
+    spot by the length of its clear line to him from where it fires (low
+    cover: the spot; full cover: its step-out tile), up to its 14.4 m sight
+    (`PERCH_LINE`), weighted 40 (`W_LINE`), in place of the band term; a
+    spot whose line is longer than its sight is no perch. It tries the best
+    18 (`PERCH_TRIED`) for a fair walk, not six, since the longest lines
+    are often across open floor.
+  - A perch in a Room one back counts only while the Door between stands
+    open: a shut Door blocks the sight and muzzle rays, so the spot has no
+    peek. It opens no Door for the purpose (a Door it opens on its walk is
+    one it walks through).
+  - It never moves up: no out-of-band shift, no advance when he hides, no
+    search however long he is unseen while it holds a perch, and no new
+    spot after blind peeks while he is hidden. It leaves when flanked, or:
+  - **Him inside 5 m** (`PERCH_CLOSE`, from where it last saw him): it falls
+    back to a spot at least 1 m further from him by a fair walk, if one
+    exists; if not it fires **from the hip**: no sight line, its base cone
+    (the gun's 3 degrees plus its aim error of 0) doubled (`HIP_CONE`), a
+    settle of 0.35 s, and an ordinary gun for true aim (it may aim at a miss
+    point and needs no place of its own). It looks again for a further
+    perch every 1.5 s, and is off the hip once he is 5 m off again. Up with
+    its line showing when he comes inside 5 m, it drops the line and ducks.
+- **The sight line** (`CrewSightLine`, the Marksman Rifle's tell). Every
+  shot not from the hip, perched or in the open:
+  - It needs one of the true-aim places to shoot at all. Down with its time
+    down spent, or up with a shot, it wants one (`CrewCover.wants_place`):
+    `CrewFire` queues it ahead of the other waiting Guards, and fills an
+    empty place or hands one on to it as usual. It waits down until it has
+    one (counted in `CrewCover.waited`, which watchers timing a stretch
+    down leave out), then pops up or steps out. A place it holds while it
+    wants it is never handed on or swapped.
+  - Up with its place and a clear shot, the line shows from the rifle's
+    muzzle to him (led by its Gunnery's 1.0, so the full intercept) for its
+    Gunnery's settle (0.9 s), following him until 0.2 s before the shot
+    (`SIGHT_LOCK`), then fixed. The shot goes where the line was fixed
+    (`Crew3D.aim_override`), so a sidestep in the last 0.2 s dodges it. It
+    then gives up its place. It never fires a deliberate miss.
+  - Losing sight or its muzzle line, the line goes and it waits as any Guard
+    up with no shot. Hit during the line, it loses the shot, gives up its
+    place and ducks (in the open, pauses). A near miss ducks it too.
+  - The line starts no burst within the stagger of another Guard's, so the
+    shot is never held past its line.
 
 ## Alarm
 
@@ -633,7 +748,7 @@ All numbers above are constants in `crew_perception.gd` (`CONE_HALF_DEGREES`,
 and `crew.gd` (`SEARCH_AWARENESS`, `INVESTIGATE_SPEED`, `INVESTIGATE_LINGER`,
 `GLANCE_DEGREES`, `TURN_RATE`, `INVESTIGATE_GIVE_UP`, `ROUTINE_SPEED`,
 `WALK_ANIM_SPEED`, `DOOR_CLOSE_AFTER`, `DOOR_FORGET`, `DOOR_ADOPT`, `CHAT_*`,
-`JOB_GIVE_UP`, `CORNERED_RANGE`, `ENGAGE_RANGE`, `HIDE_CHANCE`,
+`JOB_GIVE_UP`, `CORNERED_RANGE`, `HIDE_CHANCE`,
 `GUARD_REACH`, `COWER_CALM`, `PANEL_REACH`,
 `ON_EDGE_PAUSE`, `SWEEP_PAUSE`, `MUZZLE_BALL`,
 `MUZZLE_TARGET_GAP`, `MUZZLE_NEAR`, `OWN_COVER`, `FIRING_STEP`, `UNSTICK_AFTER`,
@@ -647,10 +762,14 @@ and `crew.gd` (`SEARCH_AWARENESS`, `INVESTIGATE_SPEED`, `INVESTIGATE_LINGER`,
 `crew_cover.gd` (`TAKE_OVER`, `SEARCH_RADIUS`, `FALL_BACK_RADIUS`,
 `WALK_REACH`, `OPEN_RUN`, `NEARER_SLACK`, `TRIED`, the score's `W_*`,
 `FULL_SHARE`, `BAND_FALLOFF`, `SPACING`, `JITTER`, `WAIT_UP`, `BLIND_PEEKS`,
-`FLANKED_AFTER`, `TOO_CLOSE`, `HOLD_BEFORE_SHIFTING`, `BETTER`,
+`FLANKED_AFTER`, `TOO_CLOSE`, `BETTER`,
 `UNSEEN_ADVANCE`, `UNSEEN_SEARCH`, `NEAR_MISS`, `NEAR_MISS_HOLD`,
 `LOOK_HIDING`, `LOOK_OPEN`, `MOVER_TIME`, `ARRIVE_DOWN`, `MOVE_GIVE_UP`,
 `UNREACHABLE_FOR`, `STEP_GIVE_UP`, `OPEN_PAUSE`, `SINK`, `CROUCH`),
+`crew_habit.gd` (`SHOTGUN_CLOSE`, `SHOTGUN_HOLD_FIRE`, `AMBUSH_REACH`,
+`RACK_LEAD`, `RACK_EARLIEST`, `RACK_LATEST`, `PERCH_RADIUS`, `PERCH_LINE`,
+`W_LINE`, `PERCH_TRIED`, `PERCH_CLOSE`, `SIGHT_LOCK`, `HIP_CONE`,
+`HIP_SETTLE`), `crew_sight_line.gd` (`WIDTH`, `COLOUR`),
 `crew_traces.gd` (`LOOK_EVERY`, `REACH`, `AWARENESS`, `AIM_HEIGHT`),
 `ship_alarm.gd` (`RED`, `PULSE_*`), `alarm_panel.gd` (`ROLES`, `SIZE`, `HEIGHT`),
 `crew_types.gd` (`GUARD_ROLES`, `WORKER_ROLES`), `HEARD_NOISE`, `HEARD_GUNSHOT`, `HEARD_CAP`) and

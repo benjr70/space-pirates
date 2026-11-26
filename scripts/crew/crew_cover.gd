@@ -5,7 +5,10 @@ extends RefCounted
 ## to fire (up over low cover, out to the side of full cover), in its gun's
 ## rhythm. It leaves when flanked, closed on, left with no shot, out of its
 ## range band, or when the Pirate has been gone a while. With no cover in
-## reach it falls back out of his sight, or fights where it stands.
+## reach it falls back out of his sight, or fights where it stands. What its
+## gun changes is its habit ([CrewHabit]): the Shotgun ambushes at a
+## doorway and racks before it shows itself, the Marksman Rifle perches and
+## shows a sight line before each shot.
 ##
 ## Every Guard holds one ([member Crew3D.cover]). The body drives it from
 ## its FIGHT and COVER states: [method begin] on entering either, [method
@@ -15,8 +18,8 @@ extends RefCounted
 ## from the walking grid ([CrewPaths]) and sight rays when needed; nothing is
 ## authored. See "Guard combat" in `CREW_AI.md`.
 
-enum Mode { NONE, MOVE, DOWN, OUT, SHOOT, BACK, OPEN }
-const MODE_NAMES: PackedStringArray = ["none", "to cover", "down", "stepping out", "up", "back in", "in the open"]
+enum Mode { NONE, MOVE, DOWN, OUT, SHOOT, BACK, OPEN, AMBUSH }
+const MODE_NAMES: PackedStringArray = ["none", "to cover", "down", "stepping out", "up", "back in", "in the open", "in ambush"]
 
 ## A fighting Guard is driven by these rules while the Pirate's last-seen
 ## spot is within this many metres; further off, and while flanking,
@@ -61,10 +64,9 @@ const BLIND_PEEKS := 2
 const FLANKED_AFTER := 0.4
 ## In sight this close, it picks a spot further off.
 const TOO_CLOSE := 3.0
-## Seconds held out of its range band before it shifts a spot nearer or
-## further, and how much better that spot must score. (The per-gun holds
-## come with "A habit per gun".)
-const HOLD_BEFORE_SHIFTING := 6.0
+## A spot out of its range band, held its Gunnery's hold before shifting,
+## is left for one nearer or further only if that one scores this much
+## better.
 const BETTER := 0.2
 ## Seconds he has been unseen before it moves a spot nearer where he was,
 ## and before it gives up and searches.
@@ -107,6 +109,8 @@ const SINK := 0.8
 const CROUCH := 0.55
 
 var crew: Crew3D
+## The gun it fights with, for its habit.
+var gun: CrewHabit.Gun
 var mode := Mode.NONE
 ## The claimed tile, its centre, the tile it steps out to (INF for low
 ## cover or none), and what kind of spot it is.
@@ -140,6 +144,31 @@ var unreachable := {}
 ## miss: a watcher can tell one stretch down from the next.
 var downs := 0
 var near_misses := 0
+## Seconds of this stretch down spent waiting on its habit rather than its
+## time down: for a true-aim place to start its sight line (Marksman Rifle),
+## or holding fire with him beyond SHOTGUN_HOLD_FIRE (Shotgun). A watcher
+## timing how long it stays down leaves these out.
+var waited := 0.0
+## A Marksman Rifle with him inside PERCH_CLOSE and no fair walk to a
+## further perch fires from the hip: no sight line, its cone doubled, an
+## ordinary gun for true aim.
+var hip := false
+## A Shotgun walking to, or waiting at, its ambush beside the doorway at
+## door_at.
+var ambushing := false
+var door_at := Vector3.INF
+## The Marksman Rifle's sight line: seconds left on it (negative with none
+## showing), where it points now, and where it locked SIGHT_LOCK before the
+## shot.
+var line_left := -1.0
+var line: CrewSightLine
+var _line_at := Vector3.INF
+var _locked := Vector3.INF
+## It fired (or lost) its shot this peek: it wants no true-aim place again
+## until it next gets down.
+var _peek_spent := false
+## Racked for the pop up ahead (Shotgun).
+var _racked := false
 ## Had its one step onto the point this mode ([method _walk_onto]).
 var _nudged := false
 ## Where it last made progress on its walk, and how long ago.
@@ -153,6 +182,7 @@ var _stand_y := 0.85
 
 func _init(body: Crew3D) -> void:
 	crew = body
+	gun = CrewHabit.gun_of(body.weapon)
 	_shape = body.get_node_or_null("CollisionShape3D") as CollisionShape3D
 	if _shape != null and _shape.shape is CapsuleShape3D:
 		# Its own, so lowering it lowers no one else's.
@@ -178,6 +208,10 @@ func begin() -> void:
 	blind = 0
 	exposed = 0.0
 	think = 0.0
+	waited = 0.0
+	hip = false
+	ambushing = false
+	_racked = false
 
 
 ## Out of the fight (searching, dead, back on routine): stands up and frees
@@ -185,7 +219,11 @@ func begin() -> void:
 func release() -> void:
 	_stand()
 	_unclaim()
+	_end_line()
+	_give_up_place()
 	mover_clock = 0.0
+	hip = false
+	ambushing = false
 	mode = Mode.NONE
 
 
@@ -209,16 +247,24 @@ func tick(delta: float) -> void:
 		unreachable[key] -= delta
 		if unreachable[key] <= 0.0:
 			unreachable.erase(key)
-	if crew._seen_ago > UNSEEN_SEARCH or crew.target == null or not is_instance_valid(crew.target):
+	if crew.target == null or not is_instance_valid(crew.target) \
+			or (crew._seen_ago > UNSEEN_SEARCH and not perched()):
 		crew._enter(Crew3D.State.SEARCH)
 		return
+	if mode in [Mode.DOWN, Mode.OUT, Mode.SHOOT, Mode.BACK]:
+		held += delta
+	if hip and _flat(crew.global_position, crew._last_seen) >= CrewHabit.PERCH_CLOSE:
+		hip = false
 	match mode:
 		Mode.NONE:
 			if not _pick(0):
 				_no_cover()
 		Mode.MOVE:
 			if crew._path.is_empty() and not _walk_onto(spot):
-				_get_down(ARRIVE_DOWN)
+				if ambushing:
+					_set_mode(Mode.AMBUSH)
+				else:
+					_get_down(ARRIVE_DOWN)
 			elif _stalling(delta) > MOVE_GIVE_UP:
 				# Cannot get there: think again, and not about this spot.
 				unreachable[tile] = UNREACHABLE_FOR
@@ -226,9 +272,17 @@ func tick(delta: float) -> void:
 				_unclaim()
 				_set_mode(Mode.NONE)
 		Mode.DOWN:
-			held += delta
-			if not _watch(delta) and timer <= 0.0:
-				_start_peek()
+			if not _watch(delta):
+				if timer <= 0.0:
+					if _holds_down():
+						waited += delta
+					else:
+						_start_peek()
+				elif gun == CrewHabit.Gun.SHOTGUN and has_peek and (low or step == Vector3.INF) \
+						and not _racked and timer <= CrewHabit.RACK_LEAD and not holds_fire():
+					# Racked while still down: the tell before it pops up.
+					crew.rack()
+					_racked = true
 		Mode.OUT:
 			if (crew._path.is_empty() and not _walk_onto(step)) or clock > STEP_GIVE_UP:
 				crew._path.clear()
@@ -241,6 +295,8 @@ func tick(delta: float) -> void:
 				_get_down(_down_time())
 		Mode.OPEN:
 			_fight_in_open(delta)
+		Mode.AMBUSH:
+			_wait_in_ambush()
 
 
 # --- choosing a spot ------------------------------------------------------------
@@ -258,7 +314,11 @@ func _pick(want: int, relaxed := false) -> bool:
 
 
 ## The spot it would pick: {tile, at, low, step, peek, score}, or empty.
-func find(want: int, relaxed := false) -> Dictionary:
+## [param max_far]: only a spot no further than this from him (a Shotgun's
+## walk into its band). Only a Shotgun takes a spot within SHOTGUN_CLOSE of
+## him. A Marksman Rifle searches out to PERCH_RADIUS and scores a spot by
+## its clear line to him ([method _score]).
+func find(want: int, relaxed := false, max_far := INF) -> Dictionary:
 	var layout := crew.layout
 	if layout == null:
 		return {}
@@ -269,6 +329,8 @@ func find(want: int, relaxed := false) -> Dictionary:
 	var here := crew.global_position
 	var here_far := _flat(here, last)
 	var radius := FALL_BACK_RADIUS if relaxed else SEARCH_RADIUS
+	if gun == CrewHabit.Gun.MARKSMAN_RIFLE:
+		radius = maxf(radius, CrewHabit.PERCH_RADIUS)
 	var rooms: Array[int] = []
 	for at: Vector3 in [here, last]:
 		for room in CrewNoise.rooms_at(layout, at):
@@ -290,6 +352,10 @@ func find(want: int, relaxed := false) -> Dictionary:
 			if _flat(here, at) > radius:
 				continue
 			var far := _flat(at, last)
+			if far > max_far:
+				continue
+			if gun != CrewHabit.Gun.SHOTGUN and far < CrewHabit.SHOTGUN_CLOSE:
+				continue
 			if want > 0 and far > here_far - 1.0:
 				continue
 			if want < 0 and far < here_far + 1.0:
@@ -314,14 +380,21 @@ func find(want: int, relaxed := false) -> Dictionary:
 			var peek := is_low or out != Vector3.INF
 			if not peek and not relaxed:
 				continue
+			# The length of its clear line to him from where it fires.
+			var line_far := far
+			if peek:
+				line_far = _flat(at if is_low else out, last)
+				if gun == CrewHabit.Gun.MARKSMAN_RIFLE and line_far > CrewHabit.PERCH_LINE:
+					continue  # past its sight: no line from there
 			found.append({"tile": t, "at": at, "low": is_low, "step": out, "peek": peek,
-					"score": _score(at, far, is_low, radius, others)})
+					"score": _score(at, far, is_low, radius, others, line_far if peek else 0.0)})
 	found.sort_custom(func(x: Dictionary, y: Dictionary) -> bool: return x.score > y.score)
 
 	# Only the best few are walked: is the way there one it would take?
+	var tries := CrewHabit.PERCH_TRIED if gun == CrewHabit.Gun.MARKSMAN_RIFLE else TRIED
 	var tried := 0
 	for entry in found:
-		if tried >= TRIED:
+		if tried >= tries:
 			break
 		tried += 1
 		if fair_walk(entry.at, radius * WALK_REACH, not relaxed):
@@ -360,17 +433,25 @@ func _step_out(astar: AStarGrid2D, t: Vector2i, torso: Vector3, claimed: Diction
 	return best
 
 
-func _score(at: Vector3, far: float, is_low: bool, radius: float, others: Array[Vector3]) -> float:
-	var fit := 1.0
+## The score: near it, low cover, its range band, less crowding. A
+## Marksman Rifle scores the length of its clear line to him
+## ([param line_far], up to PERCH_LINE) in place of its band.
+func _score(at: Vector3, far: float, is_low: bool, radius: float, others: Array[Vector3], line_far := 0.0) -> float:
+	var reach := 0.0
 	var gunnery := crew.gunnery
-	if gunnery != null:
-		if far < gunnery.range_near:
-			fit = clampf(1.0 - (gunnery.range_near - far) / BAND_FALLOFF, 0.0, 1.0)
-		elif far > gunnery.range_far:
-			fit = clampf(1.0 - (far - gunnery.range_far) / BAND_FALLOFF, 0.0, 1.0)
+	if gun == CrewHabit.Gun.MARKSMAN_RIFLE:
+		reach = CrewHabit.W_LINE * clampf(line_far / CrewHabit.PERCH_LINE, 0.0, 1.0)
+	else:
+		var fit := 1.0
+		if gunnery != null:
+			if far < gunnery.range_near:
+				fit = clampf(1.0 - (gunnery.range_near - far) / BAND_FALLOFF, 0.0, 1.0)
+			elif far > gunnery.range_far:
+				fit = clampf(1.0 - (far - gunnery.range_far) / BAND_FALLOFF, 0.0, 1.0)
+		reach = W_RANGE * fit
 	var near := 1.0 - clampf(_flat(crew.global_position, at) / radius, 0.0, 1.0)
 	var crowded := others.any(func(p: Vector3) -> bool: return _flat(p, at) < SPACING)
-	return W_NEAR * near + W_RANGE * fit + W_LOW * (1.0 if is_low else FULL_SHARE) - (W_CROWD if crowded else 0.0)
+	return W_NEAR * near + reach + W_LOW * (1.0 if is_low else FULL_SHARE) - (W_CROWD if crowded else 0.0)
 
 
 ## Whether the walk from where it stands to [param to] is no longer than
@@ -425,20 +506,30 @@ func fair_walk(to: Vector3, reach := INF, fair := true) -> bool:
 	return true
 
 
-func _claim(found: Dictionary) -> void:
+## Claims [param found] and sets off for it; [param ambush]: to wait there
+## in ambush (Shotgun) rather than get down.
+func _claim(found: Dictionary, ambush := false) -> void:
+	if found.tile != tile:
+		held = 0.0
 	tile = found.tile
 	spot = found.at
 	step = found.step
 	low = found.low
 	has_peek = found.peek
 	score = found.score
-	held = 0.0
 	blind = 0
 	exposed = 0.0
+	ambushing = ambush
+	door_at = found.get("door", Vector3.INF)
 	_stand()
-	if _flat(crew.global_position, spot) <= crew.arrive_radius:
+	# Already on it (a walk ends within its arrive radius, so a spot that
+	# near is still walked onto: its lines were judged from the centre).
+	if _flat(crew.global_position, spot) <= ON_SPOT:
 		crew._path.clear()
-		_get_down(ARRIVE_DOWN)
+		if ambush:
+			_set_mode(Mode.AMBUSH)
+		else:
+			_get_down(ARRIVE_DOWN)
 		return
 	crew._repath_to(spot)
 	_set_mode(Mode.MOVE)
@@ -446,7 +537,8 @@ func _claim(found: Dictionary) -> void:
 
 ## Seconds its walk has gone without moving MOVE_PROGRESS metres.
 func _stalling(delta: float) -> float:
-	if _progress_at == Vector3.INF or _flat(crew.global_position, _progress_at) > MOVE_PROGRESS:
+	# Stood aside letting another crew member by is waiting, not stalling.
+	if _progress_at == Vector3.INF or _flat(crew.global_position, _progress_at) > MOVE_PROGRESS or crew._yield_to != null:
 		_progress_at = crew.global_position
 		_stalled = 0.0
 	else:
@@ -505,12 +597,13 @@ func _other_spots() -> Array[Vector3]:
 
 
 ## Where the other crew stand still near it (down in cover, working,
-## hiding): a walk through one of them would stall against its body.
+## hiding), or are stuck trying to walk (jammed against someone): a walk
+## through one of them would stall against its body.
 func _bodies_in_the_way() -> Array[Vector3]:
 	var out: Array[Vector3] = []
 	for node in crew.get_tree().get_nodes_in_group(&"crew"):
 		var other := node as Crew3D
-		if other != null and other != crew and other.is_alive() and not other.is_walking() \
+		if other != null and other != crew and other.is_alive() and (not other.is_walking() or other._stuck_tries > 0) \
 				and _flat(other.global_position, crew.global_position) < FALL_BACK_RADIUS * WALK_REACH:
 			out.append(other.global_position)
 	return out
@@ -542,6 +635,9 @@ func _no_cover() -> void:
 func _get_down(time: float) -> void:
 	timer = time
 	downs += 1
+	waited = 0.0
+	_racked = false
+	_peek_spent = false
 	_crouch()
 	var look := crew._last_seen - crew.global_position
 	look.y = 0.0
@@ -567,7 +663,13 @@ func _watch(delta: float) -> bool:
 		if not _pick(0):
 			_no_cover()
 		return true
-	if crew._can_see and far < TOO_CLOSE:
+	if gun == CrewHabit.Gun.MARKSMAN_RIFLE:
+		# Him close: back to a further perch, or the hip. It takes the place
+		# of "too close".
+		if _marksman_close():
+			return true
+	elif crew._can_see and far < TOO_CLOSE and gun != CrewHabit.Gun.SHOTGUN:
+		# Too close; the Shotgun stays.
 		if not _pick(-1):
 			_no_cover()
 		return true
@@ -584,26 +686,53 @@ func _watch(delta: float) -> bool:
 			return true
 	if blind >= BLIND_PEEKS:
 		blind = 0
-		if _pick(0):
+		# A Marksman Rifle with him hidden holds its perch.
+		if (gun != CrewHabit.Gun.MARKSMAN_RIFLE or crew._seen_ago < WAIT_UP) and _pick(0):
 			return true
 	if think <= 0.0 and not _someone_moving():
-		var cover_far := _flat(spot, crew._last_seen)
-		var hidden := crew._seen_ago > UNSEEN_ADVANCE
-		var want := 0
-		if hidden:
+		return _shift()
+	return false
+
+
+## Moving one spot by its habit: out of its band after holding it its
+## Gunnery's hold before shifting (a Shotgun into its band, else to its
+## ambush), or nearer where he was after UNSEEN_ADVANCE unseen. A Marksman
+## Rifle never moves up. True when it set off.
+func _shift() -> bool:
+	var gunnery := crew.gunnery
+	var hold := gunnery.hold_before_shifting if gunnery != null else -1.0
+	if gun == CrewHabit.Gun.MARKSMAN_RIFLE or gunnery == null:
+		return false
+	var cover_far := _flat(spot, crew._last_seen)
+	var out_of_band := hold >= 0.0 and held > hold
+	if gun == CrewHabit.Gun.SHOTGUN and out_of_band and cover_far > gunnery.range_far:
+		think = LOOK_SHIFT
+		var into := find(0, false, gunnery.range_far)
+		if not into.is_empty():
+			mover_clock = MOVER_TIME
+			_claim(into)
+			return true
+		var lie := ambush_spot()
+		if not lie.is_empty():
+			mover_clock = MOVER_TIME
+			_claim(lie, true)
+			return true
+	var hidden := crew._seen_ago > UNSEEN_ADVANCE
+	var want := 0
+	if hidden:
+		want = 1
+	elif out_of_band:
+		if cover_far > gunnery.range_far:
 			want = 1
-		elif held > HOLD_BEFORE_SHIFTING and crew.gunnery != null:
-			if cover_far > crew.gunnery.range_far:
-				want = 1
-			elif cover_far < crew.gunnery.range_near:
-				want = -1
-		if want != 0:
-			think = LOOK_SHIFT
-			var found := find(want)
-			if not found.is_empty() and (hidden or found.score > score * (1.0 + BETTER)):
-				mover_clock = MOVER_TIME
-				_claim(found)
-				return true
+		elif cover_far < gunnery.range_near:
+			want = -1
+	if want != 0:
+		think = LOOK_SHIFT
+		var found := find(want)
+		if not found.is_empty() and (hidden or found.score > score * (1.0 + BETTER)):
+			mover_clock = MOVER_TIME
+			_claim(found)
+			return true
 	return false
 
 
@@ -616,20 +745,51 @@ func _start_peek() -> void:
 	if not crew._can_see and crew._seen_ago > UNSEEN_STAY_DOWN and crew._rng.randf() < 0.5:
 		# Nothing to shoot at: stay down a little longer rather than bob.
 		timer = _down_time() * 0.5
+		_racked = false
 		return
+	var pops_up := low or step == Vector3.INF
+	if gun == CrewHabit.Gun.SHOTGUN and CrewHabit.racks(crew.weapon):
+		# The rack, its tell: still down RACK_LEAD before a pop up, or as it
+		# starts its step out from behind full cover.
+		if pops_up and not _racked:
+			crew.rack()
+			_racked = true
+			timer = CrewHabit.RACK_LEAD
+			return
+		if not pops_up:
+			crew.rack()
 	_stand()
-	if low or step == Vector3.INF:
+	if pops_up:
 		_begin_shooting()
 	else:
 		crew._path.assign([step])
 		_set_mode(Mode.OUT)
 
 
+## Down with its time down spent, it stays down for its habit: a Shotgun
+## with him beyond SHOTGUN_HOLD_FIRE, or a Marksman Rifle waiting for a
+## true-aim place to start its sight line (it is queued for one,
+## [method wants_place]).
+func _holds_down() -> bool:
+	if holds_fire():
+		return true
+	return uses_line() and has_peek and not _holds_place()
+
+
 func _begin_shooting() -> void:
 	bursts = crew.gunnery.bursts_per_peek if crew.gunnery != null else 1
 	_start_burst()
 	wait = 0.0
-	timer = crew.gunnery.settle * _jitter() if crew.gunnery != null else 0.0
+	_peek_spent = false
+	var settle := crew.gunnery.settle * _jitter() if crew.gunnery != null else 0.0
+	if gun == CrewHabit.Gun.MARKSMAN_RIFLE:
+		# Its sight line is its settle; from the hip, an ordinary one.
+		settle = CrewHabit.HIP_SETTLE * _jitter() if hip else 0.0
+	elif CrewHabit.racks(crew.weapon):
+		# Its first shot RACK_EARLIEST to RACK_LATEST after its rack.
+		var age := crew.rack_age()
+		settle = clampf(settle, CrewHabit.RACK_EARLIEST - age, CrewHabit.RACK_LATEST - age)
+	timer = settle
 	_set_mode(Mode.SHOOT)
 
 
@@ -640,13 +800,29 @@ func _start_burst() -> void:
 func _shoot(delta: float) -> void:
 	if timer > 0.0:
 		return  # settling, or between bursts
-	if not crew._can_see or crew._muzzle_blocked():
+	if uses_line() and _flat(crew.global_position, crew._last_seen) < CrewHabit.PERCH_CLOSE:
+		# Him close: no line; down, to fall back or take to the hip.
+		_duck()
+		return
+	if not crew._can_see or crew._muzzle_blocked() or holds_fire():
+		_end_line()
 		wait += delta
 		if wait > WAIT_UP:
 			blind += 1
 			_duck()
 		return
 	wait = 0.0
+	if uses_line():
+		if _peek_spent or crew._shots_left <= 0:
+			blind = 0
+			_duck()
+			return
+		if _line_up(delta) == LINE_WAITING:
+			# Up with no true-aim place (it lost one): it waits, then ducks.
+			wait += delta
+			if wait > WAIT_UP:
+				_duck()
+		return
 	if crew._shots_left <= 0:
 		bursts -= 1
 		if bursts <= 0:
@@ -666,6 +842,15 @@ func _shoot(delta: float) -> void:
 func _fire_when_ready() -> void:
 	if crew._shot_timer > 0.0:
 		return
+	if CrewHabit.racks(crew.weapon):
+		# Every Shotgun shot comes RACK_EARLIEST to RACK_LATEST after a rack.
+		var age := crew.rack_age()
+		if age > CrewHabit.RACK_LATEST:
+			crew.rack()
+			crew._shot_timer = CrewHabit.RACK_LEAD
+			return
+		if age < CrewHabit.RACK_EARLIEST:
+			return
 	if crew._shots_left == crew.burst_length:
 		if CrewCombat.burst_blocked(crew):
 			crew._shot_timer = 0.05
@@ -708,10 +893,22 @@ func _jitter() -> float:
 ## stepping to a spot with a clear shot when it has none, and looking again
 ## for cover every LOOK_OPEN seconds.
 func _fight_in_open(delta: float) -> void:
+	if gun == CrewHabit.Gun.MARKSMAN_RIFLE and not hip and _marksman_close():
+		return
 	if think <= 0.0:
 		think = LOOK_OPEN
 		if _pick(0):
 			return
+		var gunnery := crew.gunnery
+		if gun == CrewHabit.Gun.SHOTGUN and gunnery != null and gunnery.hold_before_shifting >= 0.0 \
+				and clock > gunnery.hold_before_shifting and not _someone_moving() \
+				and _flat(crew.global_position, crew._last_seen) > gunnery.range_far:
+			# Out of its band with no cover: to its ambush, if it has one.
+			var lie := ambush_spot()
+			if not lie.is_empty():
+				mover_clock = MOVER_TIME
+				_claim(lie, true)
+				return
 		if crew._path.is_empty() and (not crew._can_see or crew._muzzle_blocked()):
 			var to := crew._find_firing_position()
 			if to != Vector3.INF:
@@ -720,7 +917,14 @@ func _fight_in_open(delta: float) -> void:
 		crew._path.clear()
 	if timer > 0.0:
 		return
-	if not crew._can_see or crew._muzzle_blocked():
+	if not crew._can_see or crew._muzzle_blocked() or holds_fire():
+		_end_line()
+		return
+	if uses_line():
+		if _line_up(delta) == LINE_FIRED:
+			_start_burst()
+			timer = _down_time() * OPEN_PAUSE
+			_peek_spent = false
 		return
 	if crew._shots_left <= 0:
 		_start_burst()
@@ -740,6 +944,7 @@ func near_miss(from: Vector3, along: Vector3) -> bool:
 	near_misses += 1
 	if mode == Mode.DOWN:
 		timer = maxf(timer, minf(timer + NEAR_MISS_HOLD, longest_down()))
+		_racked = false
 	elif mode == Mode.SHOOT and spot != Vector3.INF:
 		_duck()
 		timer += NEAR_MISS_HOLD
@@ -775,6 +980,10 @@ func longest_down() -> float:
 
 
 func _set_mode(next: Mode) -> void:
+	if not next in [Mode.OUT, Mode.SHOOT]:
+		# The peek is over: its sight line goes, and its true-aim place.
+		_end_line()
+		_give_up_place()
 	mode = next
 	clock = 0.0
 	_nudged = false
@@ -789,3 +998,235 @@ static func _alive(node: Node) -> bool:
 
 static func _flat(a: Vector3, b: Vector3) -> float:
 	return Vector2(a.x - b.x, a.z - b.z).length()
+
+
+# --- the Shotgun's ambush ---------------------------------------------------------
+
+## Where a Shotgun waits in ambush: beside the doorway of his Room nearest
+## to it, within AMBUSH_REACH of the opening, where he cannot see it
+## standing, by a fair walk; the tile nearest the opening first. Empty with
+## none (his Room has no Door, or nowhere hidden near it).
+func ambush_spot() -> Dictionary:
+	var layout := crew.layout
+	if layout == null:
+		return {}
+	var last := crew._last_seen
+	var his := CrewNoise.rooms_at(layout, last)
+	var door: DoorData = null
+	var door_far := INF
+	for d in layout.doors:
+		if d.locked or not (d.room_a in his or d.room_b in his):
+			continue
+		var far := _flat(crew.global_position, ShipBuilder3D.door_center_world(d))
+		if far < door_far:
+			door_far = far
+			door = d
+	if door == null:
+		return {}
+	var centre := ShipBuilder3D.door_center_world(door)
+	var eye := last + Vector3.UP * Crew3D.EYE_HEIGHT
+	var astar := CrewPaths.grid(layout)
+	var claimed := _claimed()
+	var found: Array[Dictionary] = []
+	for room in [door.room_a, door.room_b]:
+		if room < 0 or room >= layout.rooms.size():
+			continue
+		var breakers := crew._breaker_tiles(room)
+		for t: Vector2i in layout.rooms[room].tiles():
+			if not astar.is_in_boundsv(t) or astar.is_point_solid(t) or breakers.has(t) or claimed.has(t) or unreachable.has(t):
+				continue
+			var at := ShipBuilder3D.tile_to_world(t)
+			var near := _flat(at, centre)
+			if near > CrewHabit.AMBUSH_REACH:
+				continue
+			if not crew._blocked(at + Vector3.UP * Crew3D.EYE_HEIGHT, eye):
+				continue  # he would see it there
+			found.append({"tile": t, "at": at, "low": false, "step": Vector3.INF, "peek": false,
+					"score": -near, "door": centre})
+	found.sort_custom(func(x: Dictionary, y: Dictionary) -> bool: return x.score > y.score)
+	var tried := 0
+	for entry in found:
+		if tried >= TRIED:
+			break
+		tried += 1
+		if fair_walk(entry.at, FALL_BACK_RADIUS * WALK_REACH):
+			return entry
+	return {}
+
+
+## Waiting in ambush, stood beside the doorway facing it, out of his sight.
+## He comes into sight: within SHOTGUN_HOLD_FIRE with a clear muzzle line it
+## fires from where it stands (and fights on from there by the cover
+## rules), else it picks again. A fair walk into its band appearing, it
+## takes it. Unseen UNSEEN_SEARCH, it searches ([method tick]).
+func _wait_in_ambush() -> void:
+	_stand()
+	var look := door_at - crew.global_position
+	look.y = 0.0
+	if door_at != Vector3.INF and look.length_squared() > 0.01:
+		crew._aim = look.normalized()
+	if crew._can_see:
+		ambushing = false
+		if _flat(crew.global_position, crew.target.global_position) <= CrewHabit.SHOTGUN_HOLD_FIRE \
+				and not crew._muzzle_blocked():
+			low = true
+			has_peek = true
+			_begin_shooting()
+		elif not _pick(0):
+			_no_cover()
+		return
+	var gunnery := crew.gunnery
+	if think <= 0.0 and gunnery != null and not _someone_moving():
+		think = LOOK_SHIFT
+		var into := find(0, false, gunnery.range_far)
+		if not into.is_empty():
+			mover_clock = MOVER_TIME
+			_claim(into)
+
+
+# --- the Marksman Rifle's perch and sight line -------------------------------------
+
+## What [method _line_up] did this tick.
+enum { LINE_WAITING, LINE_SHOWING, LINE_FIRED }
+
+
+## A Marksman Rifle firing by its sight line (not from the hip).
+func uses_line() -> bool:
+	return gun == CrewHabit.Gun.MARKSMAN_RIFLE and not hip
+
+
+## A Marksman Rifle on a cover spot with a peek: it holds it however long
+## he is unseen.
+func perched() -> bool:
+	return gun == CrewHabit.Gun.MARKSMAN_RIFLE and has_peek and spot != Vector3.INF
+
+
+## A Shotgun with him beyond SHOTGUN_HOLD_FIRE: it holds its fire.
+func holds_fire() -> bool:
+	if gun != CrewHabit.Gun.SHOTGUN or crew.target == null or not is_instance_valid(crew.target):
+		return false
+	var at: Vector3 = crew.target.global_position if crew._can_see else crew._last_seen
+	return _flat(crew.global_position, at) > CrewHabit.SHOTGUN_HOLD_FIRE
+
+
+## A Marksman Rifle wanting one of the true-aim places, or holding one for
+## its sight line: down and ready to peek, stepping out or up, or in the
+## open with a shot. [CrewFire] queues it first and never hands its place on
+## while it wants it; it gives the place up after the shot.
+func wants_place() -> bool:
+	if not uses_line() or _peek_spent:
+		return false
+	match mode:
+		Mode.DOWN:
+			return timer <= 0.0 and has_peek
+		Mode.OUT:
+			return true
+		Mode.SHOOT:
+			return line_left >= 0.0 or (crew._can_see and not crew._muzzle_blocked())
+		Mode.OPEN:
+			return timer <= 0.0 and crew._can_see and not crew._muzzle_blocked()
+	return false
+
+
+func _holds_place() -> bool:
+	var fire := CrewFire.of(crew.target)
+	return fire != null and crew in fire.holders
+
+
+func _give_up_place() -> void:
+	if not uses_line() or crew.target == null:
+		return
+	var fire := CrewFire.of(crew.target)
+	if fire != null:
+		fire.give_up(crew)
+
+
+## Its sight line, up and with a shot: once it holds a true-aim place, a
+## line from the rifle to him for its Gunnery's settle (0.9 s), following
+## him (led) until SIGHT_LOCK before the shot and fixed there; the shot goes
+## where it was fixed. Then it gives the place up.
+func _line_up(delta: float) -> int:
+	if not _holds_place():
+		_end_line()
+		return LINE_WAITING
+	if line_left < 0.0:
+		if CrewCombat.burst_blocked(crew):
+			return LINE_WAITING
+		crew.burst_frame = Engine.get_physics_frames()
+		line_left = crew.gunnery.settle if crew.gunnery != null else 0.9
+		_line_at = Vector3.INF
+		_locked = Vector3.INF
+	line_left -= delta
+	var from := crew.global_position + Vector3.UP * Crew3D.MUZZLE_HEIGHT
+	if line_left > CrewHabit.SIGHT_LOCK or _line_at == Vector3.INF:
+		_line_at = CrewFire.lead_point(crew, from)
+	elif _locked == Vector3.INF:
+		_locked = _line_at
+	var at := _locked if _locked != Vector3.INF else _line_at
+	var along := (at - from).normalized()
+	crew._aim = along
+	_sight_line().show_between(from + along * Crew3D.MUZZLE_FORWARD, at)
+	if line_left > 0.0:
+		return LINE_SHOWING
+	crew._path.clear()
+	crew.aim_override = at
+	crew._fire()
+	_peek_spent = true
+	_end_line()
+	_give_up_place()
+	return LINE_FIRED
+
+
+func _end_line() -> void:
+	line_left = -1.0
+	_locked = Vector3.INF
+	_line_at = Vector3.INF
+	if line != null:
+		line.visible = false
+
+
+func _sight_line() -> CrewSightLine:
+	if line == null:
+		line = CrewSightLine.new()
+		crew.add_child(line)
+	return line
+
+
+## Whether its sight line shows now.
+func line_shown() -> bool:
+	return line != null and line.visible
+
+
+## Hit by him. During its sight line it loses the shot and ducks.
+func hit() -> void:
+	if line_left < 0.0:
+		return
+	_end_line()
+	_give_up_place()
+	_peek_spent = true
+	if mode == Mode.SHOOT:
+		_duck()
+	elif mode == Mode.OPEN:
+		_start_burst()
+		timer = _down_time() * OPEN_PAUSE
+		_peek_spent = false
+
+
+## A Marksman Rifle with him inside PERCH_CLOSE falls back to a perch at
+## least a metre further from him by a fair walk, else fires from the hip
+## (looking again every LOOK_SHIFT). True when it set off.
+func _marksman_close() -> bool:
+	if _flat(crew.global_position, crew._last_seen) >= CrewHabit.PERCH_CLOSE:
+		hip = false
+		return false
+	if hip and think > 0.0:
+		return false
+	think = LOOK_SHIFT
+	var further := find(-1)
+	if not further.is_empty():
+		hip = false
+		mover_clock = MOVER_TIME
+		_claim(further)
+		return true
+	hip = true
+	return false
