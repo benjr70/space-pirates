@@ -83,6 +83,7 @@ func _initialize() -> void:
 	_check_health_and_damage()
 	_check_died_unaware()
 	_check_sting()
+	await _check_bar_behind_walls()
 	await _check_hearing()
 	_check_doorway()
 	_check_loudness()
@@ -291,6 +292,72 @@ func _check_sting() -> void:
 		crew._update_perception(STEP)
 	_expect(markers.stings == before + 2, "a second tip into red did not ring the sting again")
 	crew.free()
+
+
+## The Awareness bar is drawn only with a clear line from the camera to the
+## crew member's eye height: none through a wall or a shut Door at 8 m on
+## screen, one with the line clear (the open Room, the open Door); a crew
+## member 4 m behind the camera is pinned to the bottom edge with the line
+## clear and gets none through a wall; and one tipping into spotted behind a
+## wall still rings the sting once.
+func _check_bar_behind_walls() -> void:
+	player.camera.make_current()
+	player.head.rotation = Vector3.ZERO
+	var crew := _crew()
+	crew.perception.awareness = 0.5
+	var screen := markers.get_viewport_rect().size
+	# Pair ships: Room A (x 100-107) and Room B (x 109-116), the wall at
+	# x 108, the Door through it on z 3-5.
+	var a_wall := Vector3(104.0, 0.0, 6.5)
+	var b_wall := Vector3(112.0, 0.0, 6.5)
+	pair_door.close()
+	for i in 3:
+		await physics_frame
+	_bar_case(crew, a_wall, b_wall, false, "on screen 8 m away through a wall")
+	_bar_case(crew, Vector3(104.0, 0.0, 4.0), Vector3(112.0, 0.0, 4.0), false, "on screen 8 m away behind a shut Door")
+	pair_door.open()
+	for i in 3:
+		await physics_frame
+	var open_at := _bar_case(crew, Vector3(104.0, 0.0, 4.0), Vector3(112.0, 0.0, 4.0), true, "on screen 8 m away through an open Door")
+	_expect(not player.camera.is_position_behind(crew.global_position) and open_at.y < screen.y - AwarenessMarkers.BAR.y,
+			"the bar through the open Door is not on screen (%s)" % open_at)
+	var clear_at := _bar_case(crew, CREW_AT + Vector3.FORWARD * 8.0, CREW_AT, true, "on screen 8 m away in the open")
+	_expect(clear_at.y < screen.y - AwarenessMarkers.BAR.y, "the bar in the open is pinned, not over the head (%s)" % clear_at)
+	# 4 m behind the camera, the Pirate facing away.
+	var behind_at := _bar_case(crew, CREW_AT + Vector3.FORWARD * 4.0, CREW_AT, true, "4 m behind with a clear line",
+			CREW_AT + Vector3.FORWARD * 8.0)
+	_expect(is_equal_approx(behind_at.y, screen.y - AwarenessMarkers.BAR.y),
+			"4 m behind: the bar is at y %.1f, not pinned to the bottom edge (%.1f)" % [behind_at.y, screen.y - AwarenessMarkers.BAR.y])
+	_bar_case(crew, Vector3(106.0, 0.0, 6.5), Vector3(110.0, 0.0, 6.5), false, "4 m behind through a wall",
+			Vector3(102.0, 0.0, 6.5))
+	# Tipping into spotted behind the wall: no bar, one sting.
+	_bar_case(crew, a_wall, b_wall, false, "spotted through a wall")
+	crew.perception.awareness = 0.0
+	var before := markers.stings
+	crew.take_damage(1, player)
+	_expect(crew.perception.awareness == 1.0 and markers.stings == before + 1,
+			"tipping into spotted behind a wall rang the sting %d times, want once" % (markers.stings - before))
+	_expect(markers.mark_at(crew, player.camera) == Vector2.INF, "a crew member spotted behind a wall has a bar drawn")
+	crew.free()
+	player.rotation.y = 0.0
+	# Left shut, as _check_doorway expects to find it: shutting it there would
+	# ring the Door's own noise into its listening crew member.
+	pair_door.close()
+	for i in 3:
+		await physics_frame
+
+
+## Puts the Pirate at [param pirate] looking at [param look] (the crew
+## member when not given) and the crew member at [param at], checks whether
+## it has a bar, and returns where.
+func _bar_case(crew: Crew3D, pirate: Vector3, at: Vector3, want: bool, what: String, look := Vector3.INF) -> Vector2:
+	player.global_position = pirate
+	crew.global_position = at
+	var to := (at if look == Vector3.INF else look) - pirate
+	player.rotation.y = atan2(-to.x, -to.z)
+	var mark := markers.mark_at(crew, player.camera)
+	_expect((mark != Vector2.INF) == want, "%s: bar drawn %s, want %s" % [what, mark != Vector2.INF, want])
+	return mark
 
 
 func _expect(condition: bool, message: String) -> void:

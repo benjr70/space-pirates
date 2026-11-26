@@ -474,7 +474,13 @@ spotted. It marks crew on screen within 22 m, and crew within 6 m even behind
 the camera (pinned to the bottom edge, mirrored), so something closing in at
 his back still reads.
 
-It rings the **spotted sting** once per tip into red. The sting is a
+A bar is drawn only while there is a **clear line** from the Pirate's camera
+to the crew member's eye height (1.5 m) on the same world layer crew sight
+uses (hull, props, shut Doors), tested every frame, on screen and pinned
+alike. Crew through the hull or behind a shut Door show no bar.
+
+It rings the **spotted sting** once per tip into red, whether or not the bar
+is drawn. The sting is a
 placeholder (`kenney_impact/impactMetal_light_001.ogg`) until one is picked by
 ear in the sound booth.
 
