@@ -18,7 +18,7 @@ See the spec's "Testing Decisions" and `issues/14`.
 
 ## Acceptance criteria
 
-- [ ] (agent) `tests/run_all.sh only=raid_smoke seeds=20` passes with the new invariants reported in its check count.
+- [x] (agent) `tests/run_all.sh only=raid_smoke seeds=20` passes with the new invariants reported in its check count.
 - [x] (agent) With the fair-walk rule switched off for one run (a mutation), the cover invariant or a cover check fails on at least one seed, showing the invariant bites.
 - [x] (agent) At least one scripted Raid in the default sweep binds a Worker, and the suite reports it.
 - [ ] (agent) `tests/run_all.sh` passes, and the smoke suite takes no more than 20% longer than before this ticket.
@@ -52,3 +52,8 @@ Built 2026-11-26 (build order 13). Not resolved: the new "no crew member stuck" 
 
 (none: this ticket has no `(human)` lines)
 
+
+- Final verification, 2026-11-26, by the coordinator on the whole branch at `2f70b4d` (after the two stuck-crew fix rounds, `.scratch/raid-smoke-bugs/issues/12-crew-pinned-by-their-own-walking-rules.md`):
+  - `tests/run_all.sh only=raid_smoke seed=166163022 seeds=20`: PASS, 5087 checks, 180 Raids, none failed, 1279 s (run by the fix builder on the final code). The same seed had failed 4 checks before the second fix round. First line ticked.
+  - `tests/run_all.sh`: PASS, seed 21166296, every suite (static 182, generator 358259, layouts 252, ship_3d 3733, pirate 2402, crew 555, sandbox 537, attachments 1674, raid_smoke 1285), 493 s.
+  - Timing half of the last line is NOT met: the smoke suite took 307 s in that gate (327 s in the gate before it) against 195 s before this ticket on seed 1111, about 57% longer, not 20%. The line stays unticked and the ticket stays `ready-for-agent` until the user rules: accept the longer run, or trim the suite.
