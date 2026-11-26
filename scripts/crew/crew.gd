@@ -114,6 +114,9 @@ const MUZZLE_BALL := 0.1
 const MUZZLE_TARGET_GAP := 0.4
 ## How far out from the muzzle the edges of its spread must be clear too.
 const MUZZLE_NEAR := 1.5
+## A pellet straying up or down is kept out of the ship for this far past
+## the muzzle ([method _over_own_cover]).
+const OWN_COVER := 2.5
 static var _bolt_ball := _ball(MUZZLE_BALL)
 ## A spot a Guard fighting in the open moves to for a clear shot is at
 ## least this far from where it stands, a real step rather than a shuffle.
@@ -190,9 +193,24 @@ var _alarm: ShipAlarm
 ## The physics frame this crew member last started a burst on, so no two
 ## start in step ([method CrewCombat.burst_blocked]).
 var burst_frame := -1000
-## Seconds the Pirate has been in its sight without a break: its aim
-## tightens with it ([method CrewCombat.spread]).
+## Seconds the Pirate has been in its sight without a break: its spread
+## closes with it ([method spread_degrees]). Held, not reset, while it is
+## down behind its own cover or stepping out or back (it ducked; he did not
+## break sight); reset when he breaks sight, and when he hits it.
 var _exposed_for := 0.0
+## Bursts it has started in this sighting: the first walks in.
+var _sighting_bursts := 0
+## The burst it is on walks in, and to which side (+1 right, -1 left).
+var _walk_in := false
+var _walk_side := 1.0
+## Its last shot, before spread: where it was aimed from and at, whether it
+## aimed true, whether it was a walk-in round, and for a miss whether he was
+## behind cover ("cover") or in the open ("open").
+var last_aim_origin := Vector3.ZERO
+var last_aim_point := Vector3.ZERO
+var last_aimed_true := false
+var last_walk_in := false
+var last_miss_kind := ""
 var _share_timer := 0.0
 ## A Guard going round through another Door while another pins him.
 var flanking := false
@@ -362,15 +380,37 @@ func get_team() -> StringName:
 	return TEAM
 
 
-## Takes Health from the Sandbox, full: at spawn, and when the Sandbox sheet
-## changes it mid-Raid on anyone still standing.
-## Degrees either side a shot may stray before aim tightens
-## ([method CrewCombat.spread]): the weapon's base cone plus its Gunnery's
-## aim error.
+## Degrees either side a shot may stray once its aim has closed (1x): the
+## weapon's base cone plus its Gunnery's aim error.
 func base_cone_degrees() -> float:
 	if weapon == null:
 		return 0.0
 	return weapon.spread_base_degrees + (gunnery.aim_error_degrees if gunnery != null else 0.0)
+
+
+## Degrees either side a shot strays now: its base cone times the exposure
+## ramp, its Gunnery's opening spread (3x) on first sight closing to 1x over
+## its closing time (2 s) of unbroken sight. Never under 1x.
+func spread_degrees() -> float:
+	var base := base_cone_degrees()
+	if gunnery == null:
+		return base
+	var closed := clampf(_exposed_for / gunnery.closing_time, 0.0, 1.0) if gunnery.closing_time > 0.0 else 1.0
+	return base * lerpf(maxf(gunnery.opening_spread, 1.0), 1.0, closed)
+
+
+## Whether it could aim true now: a Guard in the fight with the Pirate in
+## sight from its eyes and a clear muzzle line. Judged afresh, at the start
+## of a frame, by [CrewFire]. (A reload, when crew have one, rules it out
+## too.)
+func can_aim_true() -> bool:
+	if is_worker() or not is_alive() or target == null or not is_instance_valid(target):
+		return false
+	if _flat_distance(global_position, target.global_position) > vision_range:
+		return false
+	if _blocked(global_position + Vector3.UP * EYE_HEIGHT, target.global_position + Vector3.UP * EYE_HEIGHT):
+		return false
+	return not _muzzle_blocked()
 
 
 ## Metres off the Pirate this crew member opens fire from:
@@ -385,6 +425,8 @@ func _new_burst() -> void:
 	_shots_left = burst_length
 
 
+## Takes Health from the Sandbox, full: at spawn, and when the Sandbox sheet
+## changes it mid-Raid on anyone still standing.
 func apply_sandbox() -> void:
 	health.max_health = sandbox.crew_health
 	health.reset()
@@ -405,6 +447,8 @@ func take_damage(amount: int, from: Node = null) -> void:
 		return
 	if health.take_damage(amount, from):
 		return
+	# Hit: its aim is spoiled, thrown back open to close again.
+	_exposed_for = 0.0
 	# Being shot at from somewhere unseen still tells you roughly where to look.
 	if from != null and is_instance_valid(from) and from is Node3D:
 		_last_seen = (from as Node3D).global_position
@@ -426,6 +470,9 @@ func _physics_process(delta: float) -> void:
 	if not is_on_floor():
 		velocity.y -= _gravity * delta
 
+	if not is_worker() and target != null and is_instance_valid(target):
+		# Who aims true this frame, settled before anyone moves or fires.
+		CrewFire.of(target).update()
 	_update_perception(delta)
 	_shot_timer = maxf(_shot_timer - delta, 0.0)
 	_hold_timer = maxf(_hold_timer - delta, 0.0)
@@ -495,9 +542,10 @@ func _update_perception(delta: float) -> void:
 				CrewCombat.share(self, _last_seen)
 		else:
 			_seen_ago += delta
-			_exposed_for = 0.0
+			if cover == null or not cover.behind_own_cover():
+				_break_sight()
 		return
-	_exposed_for = 0.0
+	_break_sight()
 
 	_look_for_traces(delta)
 	var crouched: bool = target.has_method("is_crouched") and target.is_crouched()
@@ -512,6 +560,12 @@ func _update_perception(delta: float) -> void:
 		_announce_spotted()
 	else:
 		_seen_ago += delta
+
+
+## He broke its sight: its spread opens again and its next burst walks in.
+func _break_sight() -> void:
+	_exposed_for = 0.0
+	_sighting_bursts = 0
 
 
 ## A noise reached this crew member (see [CrewNoise]). Raises Awareness toward
@@ -1492,27 +1546,41 @@ func _face() -> void:
 # --- gunnery ------------------------------------------------------------------
 
 ## One shot of its gun: every pellet of it, each thrown inside the cone on
-## its own, with the gun's shot sound, action sound and loudness. Returns
-## the first projectile ([member last_pellets] holds them all), or null
-## unarmed.
+## its own, with the gun's shot sound, action sound and loudness. Aimed
+## first by fair fire ([CrewFire]): true at him (led, and walking in on the
+## first burst of a sighting) or at a miss point beside him; then each
+## pellet strays inside its spread ([method spread_degrees]), a real cone.
+## A Shotgun shot hurts with at most the Sandbox's pellet cap. Returns the
+## first projectile ([member last_pellets] holds them all), or null unarmed.
 func _fire() -> Projectile3D:
 	last_pellets.clear()
 	if projectile_scene == null or weapon == null or gunnery == null:
 		return null
+	var in_burst := burst_length - _shots_left
+	if in_burst <= 0:
+		# The first round of a burst: the first of a sighting walks in.
+		_walk_in = _sighting_bursts == 0
+		_walk_side = 1.0 if _rng.randf() < 0.5 else -1.0
+		_sighting_bursts += 1
 	_shots_left -= 1
 	_shot_timer = weapon.fire_interval * _gap_jitter
 
-	var cone := CrewCombat.spread(base_cone_degrees(), _exposed_for)
-	var origin := global_position + Vector3.UP * MUZZLE_HEIGHT + _aim * MUZZLE_FORWARD
+	var from := global_position + Vector3.UP * MUZZLE_HEIGHT
+	var aim_at := _aim_point(from, maxi(in_burst, 0))
+	var along := (aim_at - from).normalized() if aim_at.distance_squared_to(from) > 0.0001 else _aim
+	var origin := from + along * MUZZLE_FORWARD
+	var cone := spread_degrees()
+	var volley := Projectile3D.Volley.new()
+	volley.cap = sandbox.shotgun_pellet_cap if sandbox != null and weapon.pellet_count > 1 else -1
 	for i in maxi(weapon.pellet_count, 1):
-		var spread := deg_to_rad(_rng.randf_range(-cone, cone))
-		var direction := _aim.rotated(Vector3.UP, spread)
+		var direction := _over_own_cover(from, along, CrewFire.scatter(along, cone, _rng), aim_at)
 		var shot: Projectile3D = projectile_scene.instantiate()
 		shot.damage = weapon.damage
 		shot.headshot_multiplier = weapon.headshot_multiplier
 		shot.speed = weapon.projectile_speed
 		shot.lifetime = weapon.projectile_lifetime
-		shot.launch(global_position + Vector3.UP * MUZZLE_HEIGHT + direction * MUZZLE_FORWARD, direction, self, TEAM)
+		shot.volley = volley
+		shot.launch(from + direction * MUZZLE_FORWARD, direction, self, TEAM)
 		_shot_parent().add_child(shot)
 		last_pellets.append(shot)
 	if not weapon.shot_sounds.is_empty():
@@ -1521,6 +1589,57 @@ func _fire() -> Projectile3D:
 		_play_action_later(weapon.action_sound, weapon.action_sound_delay)
 	CrewNoise.make(get_tree(), global_position, CrewNoise.Kind.GUNSHOT, weapon.loudness, self)
 	return last_pellets[0]
+
+
+## [param direction], a pellet's draw inside the cone round [param along],
+## kept out of the prop or wall just in front of the muzzle (the low cover it
+## fires over): a draw whose first OWN_COVER metres (or less, short of
+## [param aim_at]) would strike the ship has its up-and-down stray turned the
+## other way, and failing that dropped. A real cone strays down as well as
+## sideways, and a Guard holds its gun over its cover, not into it.
+func _over_own_cover(from: Vector3, along: Vector3, direction: Vector3, aim_at: Vector3) -> Vector3:
+	var reach := minf(OWN_COVER, from.distance_to(aim_at) - MUZZLE_TARGET_GAP)
+	if reach <= 0.0 or not _ball_blocked(from, direction * reach):
+		return direction
+	var right := along.cross(Vector3.UP)
+	if right.length_squared() < 0.0001:
+		return direction
+	right = right.normalized()
+	var up := right.cross(along).normalized()
+	var rise := direction.dot(up)
+	var flipped := (direction - up * rise * 2.0).normalized()
+	if not _ball_blocked(from, flipped * reach):
+		return flipped
+	return (direction - up * rise).normalized()
+
+
+## Where this shot goes before its spread, from the muzzle at [param from],
+## round [param in_burst] (from 0) of its burst. Records it in the
+## last_aim_* fields.
+func _aim_point(from: Vector3, in_burst: int) -> Vector3:
+	last_aim_origin = from
+	last_walk_in = false
+	last_miss_kind = ""
+	if target == null or not is_instance_valid(target):
+		last_aimed_true = false
+		last_aim_point = from + _aim
+		return last_aim_point
+	var fire := CrewFire.of(target)
+	last_aimed_true = fire.aims_true(self)
+	if not last_aimed_true:
+		var kind := []
+		last_aim_point = fire.miss_point(self, _rng, kind)
+		last_miss_kind = kind[0] if not kind.is_empty() else ""
+		return last_aim_point
+	var at := CrewFire.lead_point(self, from)
+	if _walk_in:
+		var distance := sandbox.walk_in_distance if sandbox != null else 1.0
+		var off := CrewFire.walk_in_offset(in_burst, burst_length, distance)
+		if off > 0.0:
+			last_walk_in = true
+			at += CrewFire.side_axis(from, at) * _walk_side * off
+	last_aim_point = at
+	return at
 
 
 ## The gun's action (a pump, a bolt) [param delay] seconds after a shot, at
@@ -1590,7 +1709,7 @@ func _muzzle_blocked_from(at: Vector3, torso: Vector3) -> bool:
 	var along := (torso - from).normalized()
 	if _ball_blocked(from, along * reach):
 		return true
-	var cone := deg_to_rad(CrewCombat.spread(base_cone_degrees(), _exposed_for))
+	var cone := deg_to_rad(spread_degrees())
 	for side in [-1.0, 1.0]:
 		if _ball_blocked(from, along.rotated(Vector3.UP, side * cone) * minf(reach, MUZZLE_NEAR)):
 			return true

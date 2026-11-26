@@ -1,17 +1,12 @@
 class_name CrewCombat
 extends RefCounted
 ## How Guards fight as a team: sharing where the Pirate is with Guards
-## nearby, aim that tightens the longer he stays exposed, bursts that never
-## start in step, and one Guard flanking through another Door while
-## another pins him. The crew body asks; this works it out. How each Guard
-## fights from cover is [CrewCover].
+## nearby, bursts that never start in step, and one Guard flanking through
+## another Door while another pins him. The crew body asks; this works it
+## out. How each Guard fights from cover is [CrewCover]; where its shots are
+## aimed, and who may aim true, is [CrewFire].
 ## See `CREW_AI.md`.
 
-## A Guard's spread on first sight of the Pirate, and once he has been in
-## its sight for TIGHTEN_TIME seconds straight, as multiples of its base.
-const OPEN_SPREAD := 1.5
-const TIGHT_SPREAD := 0.5
-const TIGHTEN_TIME := 3.0
 ## No two crew start a burst within this many physics frames of each other.
 const BURST_STAGGER_FRAMES := 18
 ## How often a Guard that can see him tells the others, in seconds.
@@ -22,20 +17,13 @@ const FLANK_GIVE_UP := 20.0
 const JITTER := Vector2(0.75, 1.35)
 
 
-## Degrees of spread for a crew member with base [param base] that has had
-## the Pirate in sight for [param exposed] seconds straight.
-static func spread(base: float, exposed: float) -> float:
-	var t := clampf(exposed / TIGHTEN_TIME, 0.0, 1.0)
-	return base * lerpf(OPEN_SPREAD, TIGHT_SPREAD, t)
-
-
-## Whether another crew member started a burst too recently for
-## [param crew] to start one now.
+## Whether another crew member fighting the same Pirate started a burst
+## too recently for [param crew] to start one now.
 static func burst_blocked(crew: Crew3D) -> bool:
 	var now := Engine.get_physics_frames()
 	for node in crew.get_tree().get_nodes_in_group(&"crew"):
 		var other := node as Crew3D
-		if other == null or other == crew or not other.is_alive():
+		if other == null or other == crew or not other.is_alive() or other.target != crew.target:
 			continue
 		if now - other.burst_frame < BURST_STAGGER_FRAMES:
 			return true

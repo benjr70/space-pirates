@@ -89,6 +89,11 @@ Every Sandbox number, generated from `resources/weapons/`, `resources/sandbox.tr
 | Crew Health | 100 |
 | **Melee** | |
 | Melee Damage | 75 |
+| **Crew fight** | |
+| True Aim Count | 2 |
+| True Aim Handover | 0.8 |
+| Walk In Distance | 1.0 |
+| Shotgun Pellet Cap | 9 |
 
 Melee from behind (inside the 120.0 degree cone behind the target's facing) kills outright, whatever the damage.
 
@@ -117,7 +122,7 @@ Melee from behind (inside the 120.0 degree cone behind the target's facing) kill
 | **Reload** | | | | |
 | Reload Factor | 1.5 | 1.5 | 1.5 | 1.5 |
 
-A Guard fires the gun it rolled at ship build: that weapon's damage, projectile, pellets, time between shots and sounds. Aim error adds to the weapon's base cone. Each Guard draws its own 0.75-1.35x on time between shots at spawn. Read today: aim error, shots per burst and time down; the other fields wait for the cover, fair fire and habit rules.
+A Guard fires the gun it rolled at ship build: that weapon's damage, projectile, pellets, time between shots and sounds. Aim error adds to the weapon's base cone. Each Guard draws its own 0.75-1.35x on time between shots at spawn. Spread opens at the opening spread times (base cone plus aim error) on first sight and closes to 1x over the closing time. Not read yet: hold before shifting (a habit per gun) and reload factor (crew magazines and reloads).
 
 ## Attachments
 

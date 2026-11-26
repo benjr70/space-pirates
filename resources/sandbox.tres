@@ -7,3 +7,7 @@ script = ExtResource("1")
 pirate_health = 150
 crew_health = 100
 melee_damage = 75
+true_aim_count = 2
+true_aim_handover = 0.8
+walk_in_distance = 1.0
+shotgun_pellet_cap = 9

@@ -44,6 +44,10 @@ var shooter: Node3D
 ## Shots pass straight through anyone on the shooter's own side.
 var team: StringName = &""
 
+## Shared by every pellet of one shot: at most its cap of them do damage
+## (a crew Shotgun shot's pellet cap); null, and every pellet does.
+var volley: Volley
+
 var _age := 0.0
 ## Metres flown, which is as long as the streak's tail may be.
 var _travelled := 0.0
@@ -174,7 +178,23 @@ func _strike(body: Node3D, on_head := false) -> void:
 	if _struck:
 		return
 	_struck = true
-	if body.has_method("take_damage"):
+	if body.has_method("take_damage") and (volley == null or volley.hurts()):
 		body.take_damage(WeaponProfile.head_damage(damage, headshot_multiplier) if on_head else damage, shooter)
 	hit.emit(body, on_head)
 	queue_free()
+
+
+## The pellets of one shot, counting how many have done damage.
+class Volley extends RefCounted:
+	## How many may do damage; negative, all of them.
+	var cap := -1
+	var hurt := 0
+
+	## Whether one more pellet may do damage, counting it if so.
+	func hurts() -> bool:
+		if cap < 0:
+			return true
+		if hurt >= cap:
+			return false
+		hurt += 1
+		return true

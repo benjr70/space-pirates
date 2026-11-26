@@ -97,8 +97,14 @@ func _initialize() -> void:
 	await _check_worker()
 	_check_on_edge()
 	await _check_share()
-	_check_aim()
+	_check_exposure_ramp()
 	_check_gunnery()
+	await _check_walk_in()
+	await _check_true_aim()
+	_check_miss_at_cover()
+	await _check_lead()
+	await _check_pellet_cap()
+	await _check_time_to_die()
 	await _check_stagger()
 	_check_flank()
 	await _check_cover_blocked()
@@ -851,23 +857,495 @@ func _check_share() -> void:
 	told.free()
 
 
-## Spread opens at 1.5x base and closes to half that or less after 3 s of
-## exposure; breaking line of sight resets it.
-func _check_aim() -> void:
-	_expect(is_equal_approx(CrewCombat.spread(7.0, 0.0), 10.5) and CrewCombat.spread(7.0, 3.0) <= 10.5 / 2.0,
-			"aim: spread does not tighten from 10.5 to half over 3 s")
+## --- Fair fire ---
+
+## Seconds a Guard is watched for true aim, with five in sight of him.
+const TRUE_AIM_SECONDS := 20.0
+## Runs per gun of standing exposed until dead, and how long each may take.
+const DIE_RUNS := 20
+const DIE_LIMIT := 60.0
+
+
+## The exposure ramp: a Guard's spread is 3x its base (gun spread plus aim
+## error) on first sight and 1x after 2 s of unbroken sight, each within 5%,
+## never below 1x in 10 s; held while it is down behind its own cover; 3x
+## again after he breaks sight and comes back, and after he hits it.
+func _check_exposure_ramp() -> void:
+	# Held where the check puts him, whatever an earlier check left running.
+	var pirate_physics := player.is_physics_processing()
+	player.set_physics_process(false)
 	var guard := _crew()
 	guard.state = Crew3D.State.FIGHT
 	_place(5.0)
-	var opening := CrewCombat.spread(guard.base_cone_degrees(), guard._exposed_for)
-	for i in 185:
-		guard._update_perception(STEP)
-	var tight := CrewCombat.spread(guard.base_cone_degrees(), guard._exposed_for)
-	_expect(tight <= opening / 2.0, "aim: after 3 s exposed the spread is %.1f°, opening %.1f°" % [tight, opening])
-	player.global_position = CREW_AT + Vector3.FORWARD * 40.0
+	var base := guard.base_cone_degrees()
 	guard._update_perception(STEP)
-	_expect(guard._exposed_for == 0.0, "aim: losing sight did not reset the tightening")
+	var first := guard.spread_degrees() / base
+	_expect(absf(first - 3.0) <= 3.0 * 0.05, "ramp: on first sight the spread is %.3fx its base, want 3x within 5%%" % first)
+	for i in 119:
+		guard._update_perception(STEP)
+	var closed := guard.spread_degrees() / base
+	_expect(absf(closed - 1.0) <= 0.05, "ramp: after 2 s of sight the spread is %.3fx its base, want 1x within 5%%" % closed)
+	var least := INF
+	for i in 480:
+		guard._update_perception(STEP)
+		least = minf(least, guard.spread_degrees() / base)
+	_expect(least >= 1.0 - 0.0001, "ramp: over 10 s of sight the spread fell to %.3fx its base, want never below 1x" % least)
+	# Down behind its own cover, out of his sight because it ducked: held.
+	var held := guard._exposed_for
+	guard.cover.mode = CrewCover.Mode.DOWN
+	player.global_position = CREW_AT + Vector3.FORWARD * 40.0
+	for i in 30:
+		guard._update_perception(STEP)
+	_expect(is_equal_approx(guard._exposed_for, held), "ramp: ducking behind its own cover changed its exposure from %.2f to %.2f s" % [held, guard._exposed_for])
+	guard.cover.mode = CrewCover.Mode.NONE
+	guard._update_perception(STEP)
+	_place(5.0)
+	guard._update_perception(STEP)
+	var again := guard.spread_degrees() / base
+	_expect(absf(again - 3.0) <= 3.0 * 0.05, "ramp: after sight broke and came back the spread is %.3fx its base, want 3x within 5%%" % again)
+	# Hit after 2 s of sight: thrown back open.
+	for i in 120:
+		guard._update_perception(STEP)
+	guard.take_damage(1, player)
+	var hit := guard.spread_degrees() / base
+	_expect(absf(hit - 3.0) <= 3.0 * 0.05, "ramp: hit after 2 s of sight its spread is %.3fx its base, want 3x within 5%%" % hit)
 	guard.free()
+	player.set_physics_process(pirate_physics)
+
+
+## Each shot [param guard] fires, as it leaves: where it was aimed (before
+## spread), from where, whether true, whether a walk-in round, and where his
+## body centre was. Returns the Callable connected to the projectiles node.
+func _record_shots(guards: Array, into: Array) -> Callable:
+	var current := {}
+	var watch := func(node: Node) -> void:
+		var bolt := node as Projectile3D
+		if bolt == null or not bolt.shooter in guards:
+			return
+		var shooter: Crew3D = bolt.shooter
+		var frame := Engine.get_physics_frames()
+		if current.has(shooter) and current[shooter].frame == frame:
+			current[shooter].pellets.append(bolt.direction)  # another pellet of the same shot
+			return
+		current[shooter] = {"guard": shooter, "frame": frame, "burst": shooter.burst_frame, "length": shooter.burst_length,
+				"point": shooter.last_aim_point, "origin": shooter.last_aim_origin, "aimed": shooter.last_aimed_true,
+				"walk": shooter.last_walk_in, "kind": shooter.last_miss_kind, "centre": CrewFire.body_centre(shooter.target),
+				"velocity": CrewFire.velocity_of(shooter.target), "cone": shooter.spread_degrees(),
+				"pellets": [bolt.direction]}
+		into.append(current[shooter])
+	get_first_node_in_group(&"projectiles").child_entered_tree.connect(watch)
+	return watch
+
+
+## The first burst of a sighting from an Assault Rifle Guard walks in: every
+## round but the last aimed at least 0.3 m to one side of him, the last at
+## him (before spread); its next burst all at him. Twice, his sight broken
+## between.
+func _check_walk_in() -> void:
+	# Held where the check puts him, whatever an earlier check left running.
+	var pirate_physics := player.is_physics_processing()
+	player.set_physics_process(false)
+	var pirate_health: int = player.health.max_health
+	player.health.max_health = 100000
+	player.health.reset()
+	var guard := _armed(GunRoll.weapon(GunRoll.ASSAULT_RIFLE))
+	guard.face_direction(Vector3.FORWARD)
+	_place(7.0)
+	var him := player.global_position
+	for i in 2:
+		await physics_frame
+	var shots: Array = []
+	var watch := _record_shots([guard], shots)
+	guard.hear_position(him)
+	guard.set_physics_process(true)
+	var sightings: Array = []
+	for sighting in 2:
+		var from := shots.size()
+		var t := 0.0
+		while t < 12.0:
+			await physics_frame
+			t += STEP
+			if _whole_bursts(shots.slice(from)).size() >= 2:
+				break
+		sightings.append(_whole_bursts(shots.slice(from)))
+		# Out of its sight a moment, then back where he was.
+		player.global_position = CREW_AT + Vector3.FORWARD * 40.0
+		for i in 30:
+			await physics_frame
+		player.global_position = him
+	guard.set_physics_process(false)
+	get_first_node_in_group(&"projectiles").child_entered_tree.disconnect(watch)
+	for n in sightings.size():
+		var bursts: Array = sightings[n]
+		_expect(bursts.size() >= 2, "walk-in: sighting %d saw %d whole bursts, want 2" % [n + 1, bursts.size()])
+		if bursts.size() < 2:
+			continue
+		var offsets: Array = bursts[0].map(func(s: Dictionary) -> float: return s.point.distance_to(s.centre))
+		var walked := true
+		for i in offsets.size() - 1:
+			walked = walked and offsets[i] >= 0.3
+		_expect(offsets.size() >= 3 and walked and offsets[-1] <= 0.01 and bursts[0].all(func(s: Dictionary) -> bool: return s.aimed),
+				"walk-in: sighting %d's first burst aimed %s m off him, want each round but the last 0.3 m or more to one side and the last on him"
+				% [n + 1, offsets.map(func(d: float) -> String: return "%.2f" % d)])
+		var next: Array = bursts[1].map(func(s: Dictionary) -> float: return s.point.distance_to(s.centre))
+		_expect(next.all(func(d: float) -> bool: return d <= 0.01), "walk-in: sighting %d's second burst aimed %s m off him, want all on him"
+				% [n + 1, next.map(func(d: float) -> String: return "%.2f" % d)])
+	guard.free()
+	_clear_shots()
+	player.health.max_health = pirate_health
+	player.health.reset()
+	player.set_physics_process(pirate_physics)
+
+
+## [param shots] (one Guard's, in order) split into its whole bursts: each
+## run of one burst whose count reached its length.
+func _whole_bursts(shots: Array) -> Array:
+	var out: Array = []
+	var run: Array = []
+	for shot in shots:
+		if not run.is_empty() and run[0].burst != shot.burst:
+			run = []
+		run.append(shot)
+		if run.size() == shot.length:
+			out.append(run)
+			run = []
+	return out
+
+
+## Five Guards in sight of him in the open for 20 s: no physics frame has
+## more than two aiming true, every frame in which any has a clear muzzle
+## line has at least one, true aim passes round, and every shot from a
+## Guard not aiming true is aimed 0.4 to 0.8 m from his body centre.
+func _check_true_aim() -> void:
+	# Held where the check puts him, whatever an earlier check left running.
+	var pirate_physics := player.is_physics_processing()
+	player.set_physics_process(false)
+	var pirate_health: int = player.health.max_health
+	player.health.max_health = 100000
+	player.health.reset()
+	var him := Vector3(4.0, 0.0, 10.0)
+	player.global_position = him
+	player.state = player.State.WALK
+	var spots: Array[Vector3] = [Vector3(1.5, 0, 16.0), Vector3(4.0, 0, 17.0), Vector3(6.5, 0, 16.0), Vector3(2.0, 0, 3.5), Vector3(6.0, 0, 4.0)]
+	var guns: Array[int] = [GunRoll.PISTOL, GunRoll.ASSAULT_RIFLE, GunRoll.PISTOL, GunRoll.ASSAULT_RIFLE, GunRoll.SHOTGUN]
+	var guards: Array[Crew3D] = []
+	for i in spots.size():
+		var guard := _armed(GunRoll.weapon(guns[i]))
+		guard.global_position = spots[i]
+		guard.face_direction(him - spots[i])
+		guards.append(guard)
+	for i in 2:
+		await physics_frame
+	var shots: Array = []
+	var watch := _record_shots(guards, shots)
+	for guard in guards:
+		guard.hear_position(him)
+		guard.set_physics_process(true)
+	var fire := CrewFire.of(player)
+	var most := 0
+	var bare := 0
+	var with_line := 0
+	var held_by := {}
+	for frame in roundi(TRUE_AIM_SECONDS / STEP):
+		await physics_frame
+		# The frame's own decision, made before any Guard ticks in it.
+		fire.update()
+		var holding := fire.holders.filter(func(g: Crew3D) -> bool: return g in guards)
+		most = maxi(most, holding.size())
+		for g in holding:
+			held_by[g] = true
+		var clear := guards.filter(func(g: Crew3D) -> bool:
+			return g.state in [Crew3D.State.FIGHT, Crew3D.State.COVER] \
+					and not g._blocked(g.global_position + Vector3.UP * Crew3D.EYE_HEIGHT, him + Vector3.UP * Crew3D.EYE_HEIGHT) \
+					and not g._muzzle_blocked())
+		if not clear.is_empty():
+			with_line += 1
+			if holding.is_empty():
+				bare += 1
+	get_first_node_in_group(&"projectiles").child_entered_tree.disconnect(watch)
+	for guard in guards:
+		guard.set_physics_process(false)
+	_expect(most <= 2, "true aim: %d Guards aimed true in one frame, want at most 2" % most)
+	_expect(with_line > 600 and bare == 0, "true aim: %d of %d frames with a clear muzzle line had no Guard aiming true, want none"
+			% [bare, with_line])
+	_expect(held_by.size() >= 3, "true aim: only %d of 5 Guards ever aimed true in %.0f s, want it passed round" % [held_by.size(), TRUE_AIM_SECONDS])
+	var misses := shots.filter(func(s: Dictionary) -> bool: return not s.aimed)
+	var off := misses.filter(func(s: Dictionary) -> bool:
+		var d: float = s.point.distance_to(s.centre)
+		return d < 0.4 or d > 0.8)
+	_expect(misses.size() >= 20 and off.is_empty(), "true aim: %d of %d shots not aiming true were aimed outside 0.4 to 0.8 m of his body centre (e.g. %s)"
+			% [off.size(), misses.size(), off.slice(0, 3).map(func(s: Dictionary) -> String: return "%.2f m" % s.point.distance_to(s.centre))])
+	for guard in guards:
+		guard.free()
+	_clear_shots()
+	player.health.max_health = pirate_health
+	player.health.reset()
+	player.set_physics_process(pirate_physics)
+
+
+## Miss points against him behind cover: in the ring, a Guard 4 m north of
+## him with a crate between aims at the crate's edge on the side he last
+## peeked from (stood to one side, then the memory of it, then the other
+## side), 0.4 to 0.8 m from his body centre; from the south, where nothing
+## is between, beside his head away from his movement.
+func _check_miss_at_cover() -> void:
+	# Held where the check puts him, whatever an earlier check left running.
+	var pirate_physics := player.is_physics_processing()
+	player.set_physics_process(false)
+	var crate := ShipBuilder3D.tile_to_world(RING_CRATES[0])
+	var guard := _rig_guard(load("res://resources/weapons/pistol.tres"), ring_layout, RING_CRATES[0] + Vector2i(0, -3), crate)
+	var fire := CrewFire.of(player)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 7
+	var behind := crate + Vector3(0.0, 0.0, 1.0)
+	var wrong: Array[String] = []
+	# {where he stands: which side of the crate (+x or -x) the miss must take}
+	for case in [[0.3, 1.0], [0.0, 1.0], [-0.3, -1.0]]:
+		player.global_position = behind + Vector3(case[0], 0.0, 0.0)
+		for n in 20:
+			var kind := []
+			var at := fire.miss_point(guard, rng, kind)
+			var d := at.distance_to(CrewFire.body_centre(player))
+			if kind != ["cover"] or d < 0.4 or d > 0.8 or signf(at.x - crate.x) != case[1]:
+				wrong.append("him %+.1f m: %s %.2f m off, %+.2f m of the crate" % [case[0], kind, d, at.x - crate.x])
+	_expect(wrong.is_empty(), "miss points at cover: %d wrong, e.g. %s" % [wrong.size(), wrong.slice(0, 3)])
+	# The open side: moving +x at 4 m/s, the miss passes on his -x side.
+	guard.global_position = behind + Vector3(0.0, 0.0, 4.0)
+	player.global_position = behind
+	player.velocity = Vector3(4.0, 0.0, 0.0)
+	var open_wrong: Array[String] = []
+	for n in 20:
+		var kind := []
+		var at := fire.miss_point(guard, rng, kind)
+		var d := at.distance_to(CrewFire.body_centre(player))
+		if kind != ["open"] or d < 0.4 or d > 0.8 or at.x >= player.global_position.x or at.y < CrewFire.body_centre(player).y + 0.4:
+			open_wrong.append("%s %.2f m off at %s" % [kind, d, at - player.global_position])
+	_expect(open_wrong.is_empty(), "miss points in the open: %d wrong, e.g. %s" % [open_wrong.size(), open_wrong.slice(0, 3)])
+	player.velocity = Vector3.ZERO
+	guard.free()
+	player.set_physics_process(pirate_physics)
+
+
+## Lead, against a Pirate walking across at 4 m/s 6 m off: a Marksman Rifle
+## shot aimed at the full intercept, a Pistol shot at 0.3 of it, each within
+## 10%, a Shotgun shot where he is, and a Pistol shot at him mid Slide at
+## half its lead (0.15); every pellet inside the Guard's spread
+## of its aim, and the spread a real cone (up and down as well as sideways).
+func _check_lead() -> void:
+	# Held where the check puts him, whatever an earlier check left running.
+	var pirate_physics := player.is_physics_processing()
+	player.set_physics_process(false)
+	var pirate_health: int = player.health.max_health
+	player.health.max_health = 100000
+	player.health.reset()
+	player.state = player.State.WALK
+	var vertical := 0.0
+	# [gun, fraction of the intercept, mid Slide]
+	for case in [[GunRoll.MARKSMAN_RIFLE, 1.0, false], [GunRoll.PISTOL, 0.3, false], [GunRoll.SHOTGUN, 0.0, false],
+			[GunRoll.PISTOL, 0.15, true]]:
+		player.state = player.State.SLIDE if case[2] else player.State.WALK
+		var gun := GunRoll.weapon(case[0])
+		var guard := _armed(gun)
+		guard.face_direction(Vector3.FORWARD)
+		var lane_z := CREW_AT.z - 6.0
+		player.global_position = Vector3(2.0, 0.0, lane_z)
+		var speed := 4.0
+		for i in 2:
+			await physics_frame
+		var shots: Array = []
+		var watch := _record_shots([guard], shots)
+		guard.hear_position(player.global_position)
+		guard.set_physics_process(true)
+		var t := 0.0
+		while t < 15.0 and shots.filter(func(s: Dictionary) -> bool: return not s.walk).size() < 3:
+			await physics_frame
+			t += STEP
+			var at := player.global_position + Vector3(speed * STEP, 0.0, 0.0)
+			if at.x > 6.5 or at.x < 1.5:
+				speed = -speed
+				at = player.global_position + Vector3(speed * STEP, 0.0, 0.0)
+			player.global_position = at
+			player.velocity = Vector3(speed, 0.0, 0.0)
+		guard.set_physics_process(false)
+		get_first_node_in_group(&"projectiles").child_entered_tree.disconnect(watch)
+		var wrong: Array[String] = []
+		var outside := 0
+		var counted := 0
+		for s: Dictionary in shots:
+			for direction: Vector3 in s.pellets:
+				var aim: Vector3 = (s.point - s.origin).normalized()
+				var angle := rad_to_deg(aim.angle_to(direction))
+				if angle > s.cone + 0.01:
+					outside += 1
+				var right := aim.cross(Vector3.UP).normalized()
+				var up := right.cross(aim).normalized()
+				vertical = maxf(vertical, absf(rad_to_deg(asin(clampf(direction.dot(up), -1.0, 1.0)))) / maxf(s.cone, 0.01))
+			if s.walk or not s.aimed:
+				continue
+			counted += 1
+			# The intercept, found again here by stepping the flight time.
+			var centre: Vector3 = s.centre
+			var flight := 0.0
+			for k in 20:
+				flight = (centre + s.velocity * flight).distance_to(s.origin) / gun.projectile_speed
+			var full: Vector3 = s.velocity * flight
+			var led: Vector3 = s.point - centre
+			if case[1] == 0.0:
+				if led.length() > 0.01:
+					wrong.append("%.2f m off where he is" % led.length())
+			elif absf(led.length() - full.length() * case[1]) > full.length() * case[1] * 0.1 or led.dot(full) <= 0.0:
+				wrong.append("led %.3f m, want %.2f of the intercept's %.3f m" % [led.length(), case[1], full.length()])
+		_expect(counted >= 3 and wrong.is_empty(), "lead: a %s Guard's %d true shots at him %s across at 4 m/s: %s"
+				% [Gunnery.NAMES[case[0]], counted, "sliding" if case[2] else "walking", wrong.slice(0, 3)])
+		_expect(outside == 0, "spread: %d %s pellets left outside the Guard's cone of its aim" % [outside, Gunnery.NAMES[case[0]]])
+		guard.free()
+		_clear_shots()
+	_expect(vertical >= 0.3, "spread: no pellet strayed up or down by more than %.2f of the cone: not a real cone" % vertical)
+	player.state = player.State.WALK
+	player.velocity = Vector3.ZERO
+	player.health.max_health = pirate_health
+	player.health.reset()
+	player.set_physics_process(pirate_physics)
+
+
+## The four crew fight numbers live on the Sandbox (2 aim true, 0.8 s
+## handover, 1 m walk-in, 9 pellets). A crew Shotgun shot from 1 m with all
+## 12 pellets striking (no spread, so every pellet flies true) takes 117
+## Health and leaves a full-health Pirate alive.
+func _check_pellet_cap() -> void:
+	var numbers: Sandbox = ResourceLoader.load(Sandbox.PATH, "", ResourceLoader.CACHE_MODE_IGNORE)
+	_expect(numbers.true_aim_count == 2 and is_equal_approx(numbers.true_aim_handover, 0.8)
+			and is_equal_approx(numbers.walk_in_distance, 1.0) and numbers.shotgun_pellet_cap == 9,
+			"the Sandbox's crew fight numbers are %d, %s s, %s m and %d pellets, want 2, 0.8 s, 1 m and 9"
+			% [numbers.true_aim_count, numbers.true_aim_handover, numbers.walk_in_distance, numbers.shotgun_pellet_cap])
+	var shotgun: WeaponProfile = GunRoll.weapon(GunRoll.SHOTGUN).duplicate()
+	shotgun.spread_base_degrees = 0.0
+	var gunnery: Gunnery = (load(Gunnery.PATHS[GunRoll.SHOTGUN]) as Gunnery).duplicate()
+	gunnery.aim_error_degrees = 0.0
+	var pirate: CharacterBody3D = load("res://scenes/player_3d.tscn").instantiate()
+	pirate.auto_respawn = false
+	pirate.position = CREW_AT + Vector3(0.0, 0.0, 40.0)
+	world.add_child(pirate)
+	pirate.set_physics_process(false)
+	var guard: Crew3D = load("res://scenes/crew_3d.tscn").instantiate()
+	guard.weapon = shotgun
+	guard.gunnery = gunnery
+	guard.target = pirate
+	guard.layout = layout
+	guard.position = CREW_AT
+	world.add_child(guard)
+	guard.set_physics_process(false)
+	guard.routine = null
+	pirate.global_position = CREW_AT + Vector3.FORWARD * 1.0
+	guard.face_direction(Vector3.FORWARD)
+	for i in 2:
+		await physics_frame
+	guard._last_seen = pirate.global_position
+	guard._enter(Crew3D.State.FIGHT)
+	guard._update_perception(STEP)
+	await physics_frame
+	guard._new_burst()
+	guard._fire()
+	var struck := [0]
+	for pellet in guard.last_pellets:
+		pellet.hit.connect(func(body: Node3D, _head: bool) -> void:
+			if body == pirate:
+				struck[0] += 1)
+	while guard.last_pellets.any(func(p) -> bool: return is_instance_valid(p)):
+		await physics_frame
+	var taken: int = pirate.health.max_health - pirate.health.current
+	_expect(pirate.health.max_health == 150 and struck[0] == 12 and taken == 117 and pirate.is_alive(),
+			"pellet cap: a crew Shotgun shot from 1 m (aimed true: %s) struck with %d of 12 pellets and took %d of %d Health (alive: %s), want 12, 117 and alive"
+			% [guard.last_aimed_true, struck[0], taken, pirate.health.max_health, pirate.is_alive()])
+	guard.free()
+	pirate.free()
+
+
+## Standing still and exposed at full health against one Guard at its range
+## (Pistol 6 m, Assault Rifle 7.5 m), the Guard behind a crate at its spot,
+## over 20 seeded runs (seeds 1 to 20, fixed): the median time to die is
+## within 40% of 10 s and 6 s. The twenty run side by side, each in its own
+## Room with its own Pirate, so each fight is its own. Measured, not tuned
+## to: see the ticket.
+func _check_time_to_die() -> void:
+	var cases := [[GunRoll.PISTOL, 6.0, 10.0], [GunRoll.ASSAULT_RIFLE, 7.5, 6.0]]
+	for c in cases.size():
+		var gun := GunRoll.weapon(cases[c][0])
+		var range_m: float = cases[c][1]
+		var want: float = cases[c][2]
+		var pirates: Array[CharacterBody3D] = []
+		var guards: Array[Crew3D] = []
+		var died := {}
+		for i in DIE_RUNS:
+			var x0 := 1000 + c * 400 + i * 12
+			var rig := _rig_room("DieShip%d_%d" % [c, i], Rect2i(x0, 0, 9, 12), [{"type": &"crate", "tile": Vector2i(x0 + 4, 2)}])
+			var at := ShipBuilder3D.tile_to_world(Vector2i(x0 + 4, 1))
+			var pirate: CharacterBody3D = load("res://scenes/player_3d.tscn").instantiate()
+			pirate.auto_respawn = false
+			pirate.position = at + Vector3(0.0, 0.0, range_m)
+			world.add_child(pirate)
+			pirate.set_physics_process(false)
+			pirate.state = pirate.State.WALK
+			pirate.died.connect(func() -> void: died[pirate] = true)
+			pirates.append(pirate)
+			var guard: Crew3D = load("res://scenes/crew_3d.tscn").instantiate()
+			guard.weapon = gun
+			guard.gunnery = Gunnery.for_weapon(gun)
+			guard.target = pirate
+			guard.layout = rig
+			guard.position = at
+			world.add_child(guard)
+			guard.set_physics_process(false)
+			guard.routine = null
+			guard.face_direction(pirate.position - at)
+			# Run i is seeded i + 1, whatever the suite's seed: the same
+			# twenty fights on every run, so the median is a measurement and
+			# not a draw.
+			guard._rng.seed = i + 1
+			guard._gap_jitter = CrewCombat.jitter(guard._rng)
+			guard._new_burst()
+			guards.append(guard)
+		# Bolts that strike the ship within 2 m of where they were fired: the
+		# crate a Guard fires over, which a pellet straying down must miss.
+		var into_cover := [0]
+		var watch := func(node: Node) -> void:
+			var bolt := node as Projectile3D
+			if bolt == null or not bolt.shooter in guards:
+				return
+			var start := bolt.position
+			bolt.hit.connect(func(body: Node3D, _head: bool) -> void:
+				if not body is CharacterBody3D and is_instance_valid(bolt) and bolt.global_position.distance_to(start) < 2.0:
+					into_cover[0] += 1)
+		get_first_node_in_group(&"projectiles").child_entered_tree.connect(watch)
+		for i in 2:
+			await physics_frame
+		for i in DIE_RUNS:
+			guards[i].hear_position(pirates[i].global_position)
+			guards[i].set_physics_process(true)
+		var times: Array[float] = []
+		var t := 0.0
+		var dead := {}
+		while t < DIE_LIMIT and dead.size() < DIE_RUNS:
+			await physics_frame
+			t += STEP
+			for pirate in died:
+				if not dead.has(pirate):
+					dead[pirate] = t
+		get_first_node_in_group(&"projectiles").child_entered_tree.disconnect(watch)
+		_expect(into_cover[0] == 0, "own cover: %d %s bolts struck the crate or floor within 2 m of the muzzle they left" % [into_cover[0], Gunnery.NAMES[cases[c][0]]])
+		for pirate in pirates:
+			times.append(dead.get(pirate, INF))
+		times.sort()
+		var median := (times[DIE_RUNS / 2 - 1] + times[DIE_RUNS / 2]) / 2.0
+		print("  time to die, %s at %.1f m: median %.2f s (want %.0f s within 40%%), runs %s" % [Gunnery.NAMES[cases[c][0]], range_m, median, want,
+				times.map(func(x: float) -> String: return "%.1f" % x)])
+		_expect(absf(median - want) <= want * 0.4, "time to die: against a %s Guard at %.1f m the median of %d runs is %.2f s, want %.0f s within 40%%"
+				% [Gunnery.NAMES[cases[c][0]], range_m, DIE_RUNS, median, want])
+		for guard in guards:
+			guard.free()
+		for pirate in pirates:
+			pirate.free()
+		_clear_shots()
 
 
 ## One Gunnery per weapon, each file with the spec's starting numbers; a

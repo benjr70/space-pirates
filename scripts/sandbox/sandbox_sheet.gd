@@ -55,7 +55,8 @@ static func build(weapons: Array, sandbox_resource: Sandbox, gunneries: Array = 
 		gunnery.add_note("A Guard fires the gun it rolled at ship build: that weapon's damage, projectile, pellets, time between shots and sounds. "
 				+ "Aim error adds to the weapon's base cone. Each Guard draws its own %s-%sx on time between shots at spawn. "
 				% [SheetTable.format(CrewCombat.JITTER.x), SheetTable.format(CrewCombat.JITTER.y)]
-				+ "Read today: aim error, shots per burst and time down; the other fields wait for the cover, fair fire and habit rules.")
+				+ "Spread opens at the opening spread times (base cone plus aim error) on first sight and closes to 1x over the closing time. "
+				+ "Not read yet: hold before shifting (a habit per gun) and reload factor (crew magazines and reloads).")
 		sheet.add_table(gunnery)
 	if not attachments.is_empty():
 		var names_of := PackedStringArray()

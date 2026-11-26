@@ -316,6 +316,11 @@ func is_crouched() -> bool:
 	return state == State.CROUCH or state == State.SLIDE
 
 
+## Mid Slide or Clamber: a Guard leads him by half as much.
+func in_slide_or_clamber() -> bool:
+	return state == State.SLIDE or state == State.CLAMBER
+
+
 func is_alive() -> bool:
 	return health.is_alive()
 

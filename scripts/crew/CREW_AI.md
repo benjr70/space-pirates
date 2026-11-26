@@ -18,7 +18,8 @@ being built toward is `.scratch/crew-combat/spec.md`, after spec #52
 | `../ship/gun_roll.gd` (`GunRoll`) | Which weapon each Guard carries, rolled when `ShipBuilder3D` builds the ship (see Guns below). |
 | `crew_routine.gd` (`CrewRoutine`) | Routines: a crew member's Post and its loop of Jobs, planned from the layout's props and Rooms. Pure planning; the body walks it. |
 | `crew_traces.gd` (`CrewTraces`) | What the Pirate leaves behind that crew find: bodies, the open boarding Hatch, emptied Containers, Doors left open. |
-| `crew_combat.gd` (`CrewCombat`) | Guard teamwork: sharing the Pirate's position, aim that tightens, staggered bursts, flank routes. |
+| `crew_combat.gd` (`CrewCombat`) | Guard teamwork: sharing the Pirate's position, staggered bursts, flank routes. |
+| `crew_fire.gd` (`CrewFire`) | Fair fire: who aims true (at most two at once, handed on by a timer), and where every shot is aimed before its spread: at him, led and walking in, or at a miss point beside him. One per Pirate, shared by every Guard fighting him. |
 | `crew_cover.gd` (`CrewCover`) | One Guard's fight from cover: finding and claiming a spot, the fair walk there, holding it, peeking in its gun's rhythm, leaving it, and fighting with no cover in reach. Every Guard holds one (`Crew3D.cover`); it drives the Guard's FIGHT and COVER states. |
 | `ship_alarm.gd` (`ShipAlarm`) | The ship-wide Alarm: raised once, red lights, every crew member told. Built per ship as `Ship/Alarm`. |
 | `alarm_panel.gd` (`AlarmPanel`) | The wall panels the Alarm is raised from, where they go, and breaking them. Built under `Ship/AlarmPanels`. |
@@ -28,8 +29,11 @@ being built toward is `.scratch/crew-combat/spec.md`, after spec #52
 
 Scene: `scenes/crew_3d.tscn`. Tests: `tests/test_crew.gd` (Awareness, the walk
 to look, being shot, the sting, hearing, Workers fleeing and cornered, crew
-types, On Edge, Guards sharing his position, aim tightening, each weapon's
-Gunnery and a Guard firing each gun, staggered bursts,
+types, On Edge, Guards sharing his position, each weapon's
+Gunnery and a Guard firing each gun, fair fire (the exposure ramp, the
+walk-in, five Guards with at most two aiming true, miss points in the open
+and at cover, lead, the Shotgun's pellet cap, and the median time to die
+against a Pistol and an Assault Rifle), staggered bursts,
 flanking, a cover spot it cannot reach, facing a body in its way, holding
 fire when its muzzle line is blocked, fighting from cover (the ring of four
 Guards, one per gun: hidden within 6 s by a fair walk, firing from low
@@ -146,7 +150,8 @@ Each **Guard** carries one of the Pirate's four weapons (`Crew3D.weapon`),
 the bare live Resource under `resources/weapons/`, so a Sandbox sheet edit
 reaches crew shots too. A **Worker** carries nothing. From its gun a crew
 shot takes its damage, projectile speed and lifetime, every pellet (a
-Shotgun shot throws all 12, each inside the cone on its own), the time
+Shotgun shot throws all 12, each inside the cone on its own, and at most
+the Sandbox's pellet cap of them, 9, do damage: 117 of his 150), the time
 between shots in a burst, its shot sound, its action sound (the Shotgun's
 pump) and its loudness. Crew ignore its magazine, reloads, bloom, Aim Down
 Sights, recoil and Viewmodel: they fire their bursts from cover and go
@@ -167,13 +172,13 @@ down, and never count rounds (the time down stands in for a reload until
 | hold before shifting, s | 4 | 8 | 4 | never moves up (-1) |
 | reload factor | 1.5 | 1.5 | 1.5 | 1.5 |
 
-Read today: the aim error (the cone, see Guard combat), and the rhythm and
-range band of the cover fight: shots per burst, bursts per peek, gap
-between bursts, settle, time down, range band near and far (see Guard
-combat). Opening spread, closing time, lead, hold before shifting and
-reload factor are filled in for the fair fire, habit and reload tickets of
-`.scratch/crew-combat/spec.md`. All are read at the moment of use, so a
-Sandbox sheet edit reaches crew already in the Raid.
+Read today: the aim error, opening spread, closing time and lead (see Fair
+fire), and the rhythm and range band of the cover fight: shots per burst,
+bursts per peek, gap between bursts, settle, time down, range band near and
+far (see Guard combat). Hold before shifting and reload factor are filled
+in for the habit and reload tickets of `.scratch/crew-combat/spec.md`. All
+are read at the moment of use, so a Sandbox sheet edit reaches crew already
+in the Raid.
 
 **The gun roll** (`GunRoll.roll`, called by `ShipBuilder3D.build`): each
 Guard rolls one weapon by weight. Base weights by Ship Class, slid from the
@@ -397,7 +402,8 @@ its rules and numbers kept.
   gap, time down) varies by ±30 %. Up with no shot it waits 1.2 s and ducks.
   On first reaching a spot it is down 0.3 s. Up with him unseen over 2 s,
   half the time it stays down half a time down longer rather than bob.
-  Bursts never start within 0.3 s of another crew member's.
+  Bursts never start within 0.3 s of another crew member's fighting the
+  same Pirate.
 - **Down**, the body is sunk 0.8 m into the floor and its capsule cut to
   55 % (0.94 m), so low cover hides it and its head zone. This is the
   prototype's stand-in until "Guards' poses in a fight".
@@ -430,11 +436,7 @@ its rules and numbers kept.
   told it while on routine, investigating or searching goes to Awareness 1 and
   hunts there; one already hunting takes the fresher position; one fighting
   ignores it.
-- **Aim**: spread is `base × 1.5` on first sight, closing linearly to
-  `base × 0.5` after 3 s of continuous sight, and back to 1.5× the moment the
-  Pirate breaks line of sight. Base is its gun's base cone plus its
-  Gunnery's aim error. (The fair fire ticket replaces this curve with the
-  Gunnery's opening spread and closing time.)
+- **Aim**: see Fair fire below.
 - **Shots**: each Guard draws its own multiplier (0.75–1.35×) at spawn on its
   gun's time between shots.
 - **Pin and flank**: a Guard entering HUNT while another Guard is already
@@ -444,6 +446,72 @@ its rules and numbers kept.
   route that avoids the Pirate's Room, then through the Door and one metre in.
   It turns to fight as soon as it has him within 10.6 m and in sight, and
   drops the flank on arrival or after 20 s.
+
+## Fair fire
+
+Where a Guard's shot goes (`CrewFire`, `Crew3D._fire`). Every Guard fires;
+at most two aim true; the rest aim to miss, close. From
+`.scratch/crew-combat/issues/06-gunnery-that-feels-fair.md` and the research
+note `docs/research/fair-fire-and-cover.md` (branch `research/fair-fire-and-cover`).
+
+- **Exposure ramp.** Spread is its base (its gun's base cone plus its
+  Gunnery's aim error) times a multiple that opens at the Gunnery's opening
+  spread (3x) on first sight and closes linearly to 1x over its closing time
+  (2 s) of unbroken sight, never under 1x (`Crew3D.spread_degrees`). The
+  clock (`_exposed_for`) runs while it can see him; it resets when he breaks
+  sight, but is held (neither runs nor resets) while the Guard is down
+  behind its own cover or stepping out or back (`CrewCover.behind_own_cover`):
+  it ducked, he did not break sight. Behind low cover its eyes still see
+  him, so the clock runs while it is down.
+- **A real cone.** Each pellet strays evenly over the disc of the cone round
+  the aim (`CrewFire.scatter`), up and down as well as sideways, so the
+  spec's hit chances (a cone against a 0.7 m by 1.8 m body) hold. A
+  Shotgun's pellets each draw their own. A draw that would strike the ship
+  within 2.5 m of the muzzle (the crate it fires over) has its up-and-down
+  stray turned the other way, or dropped if that strikes too
+  (`Crew3D._over_own_cover`): it holds its gun over its cover, not into it.
+- **Hit, aim spoiled.** A hit on a Guard throws its exposure back to 0: 3x,
+  closing again.
+- **First burst walks in.** The first burst of a sighting (the first burst
+  started since the clock last reset) starts aimed the Sandbox's walk-in
+  distance (1 m) to one side, drawn left or right, and walks in: the first
+  round the whole distance, falling to 0.4 of it on the last but one, the
+  last on him. A one-round burst (the Shotgun's, the Marksman Rifle's) has
+  nothing to walk, so those guns skip it. Only a Guard aiming true walks in;
+  the others aim at miss points.
+- **True aim** (one `CrewFire` per Pirate, `CrewFire.of`, kept as meta on
+  him). Once a physics frame, at its start, before any Guard has moved or
+  fired in it, it settles who aims true: of the Guards fighting him (FIGHT
+  or COVER), at most the Sandbox's count (2) hold it. A Guard can take it
+  when it has him in sight from its eyes and a clear muzzle line
+  (`Crew3D.can_aim_true`, judged afresh). A holder with no clear line hands
+  over at once to one with; empty places fill at once; so whenever any has a
+  clear line at least one aims true, and a lone Guard always does. A holder
+  that has held it the handover time (the Sandbox's 0.8 s, doubled while he
+  is crouched or behind cover from it, halved with him within 3 m of it)
+  passes it to the waiting Guard with a clear line that held it least
+  recently (never first), the nearer him on a tie. A holder that stops
+  fighting or dies loses it at once. `CrewFire.give_up` takes it from a
+  Guard at once: "Crew magazines and reloads" calls it as a reload starts
+  and adds the reload to `can_aim_true`.
+- **Lead.** A true-aimed shot goes at his body centre (1.0 m up) plus the
+  Gunnery's lead fraction (Pistol 0.3, Assault Rifle 0.5, Shotgun 0,
+  Marksman Rifle 1.0) of the way to the true intercept for its bolt's speed
+  and his flat velocity; half that during a Slide or Clamber
+  (`in_slide_or_clamber` on the Pirate).
+- **Miss points.** A Guard not aiming true aims 0.4 to 0.8 m from his body
+  centre. Behind cover from it (the tile 0.8 m from him toward it is a prop
+  or a wall on the walking grid): at that tile's edge on the side he last
+  peeked from, 0.3 m above his body centre, drawn into the band. The side is
+  the side of the tile he stands off by 0.15 m or more, remembered per tile
+  for when he is square behind it; never seen off it, a coin toss. In the
+  open: beside his head (0.5 m above his body centre), on the side away from
+  his movement (a coin toss when he is still). They are real bolts and hit
+  him if he walks into one.
+- **No distance penalty** beyond the cone.
+
+The Marksman Rifle's sight line, its claim on a true-aim place and the
+Shotgun's rack come with "A habit per gun".
 
 ## Alarm
 
@@ -568,12 +636,14 @@ and `crew.gd` (`SEARCH_AWARENESS`, `INVESTIGATE_SPEED`, `INVESTIGATE_LINGER`,
 `JOB_GIVE_UP`, `CORNERED_RANGE`, `ENGAGE_RANGE`, `HIDE_CHANCE`,
 `GUARD_REACH`, `COWER_CALM`, `PANEL_REACH`,
 `ON_EDGE_PAUSE`, `SWEEP_PAUSE`, `MUZZLE_BALL`,
-`MUZZLE_TARGET_GAP`, `MUZZLE_NEAR`, `FIRING_STEP`, `UNSTICK_AFTER`,
+`MUZZLE_TARGET_GAP`, `MUZZLE_NEAR`, `OWN_COVER`, `FIRING_STEP`, `UNSTICK_AFTER`,
 `UNSTICK_MOVE`, `SIDESTEP`, `GIVE_WAY_NEAR`, `GIVE_WAY_PASSED`,
 `GIVE_WAY_WAIT`, `GIVE_WAY_INSIST`), `crew_paths.gd` (`CLEARANCE`, `SAMPLE`,
 `SNAP`, `BODY_GAP`, `MAKE_WAY_REACH`, `MAKE_WAY_CLEAR`), `crew_perception.gd` (`ON_EDGE_FACTOR`),
-`crew_combat.gd` (`OPEN_SPREAD`, `TIGHT_SPREAD`, `TIGHTEN_TIME`,
-`BURST_STAGGER_FRAMES`, `SHARE_EVERY`, `FLANK_GIVE_UP`, `JITTER`),
+`crew_combat.gd` (`BURST_STAGGER_FRAMES`, `SHARE_EVERY`, `FLANK_GIVE_UP`,
+`JITTER`), `crew_fire.gd` (`WALK_IN_NEAREST`, `MISS_NEAR`, `MISS_FAR`,
+`MISS_MARGIN`, `HEAD_RISE`, `HEAD_MISS_NEAR`, `EDGE_RISE`, `COVER_PROBE`,
+`PEEK_OFF`, `CLOSE`, `MOVING`),
 `crew_cover.gd` (`TAKE_OVER`, `SEARCH_RADIUS`, `FALL_BACK_RADIUS`,
 `WALK_REACH`, `OPEN_RUN`, `NEARER_SLACK`, `TRIED`, the score's `W_*`,
 `FULL_SHARE`, `BAND_FALLOFF`, `SPACING`, `JITTER`, `WAIT_UP`, `BLIND_PEEKS`,
@@ -587,7 +657,9 @@ and `crew.gd` (`SEARCH_AWARENESS`, `INVESTIGATE_SPEED`, `INVESTIGATE_LINGER`,
 `crew_routine.gd` (`WORK_PROPS`, `JOBS_MIN`/`MAX`, `WORK_TIME`,
 `PATROL_PAUSE`, `AWAY_CHANCE`) and `crew_noise.gd` (`SPRINT_STEP`, `WALK_STEP`, `DOOR`). They are starting values to be tuned by
 playtest. Gun numbers are not here: they are each weapon's Profile and its
-Gunnery, edited in the Sandbox sheet (`docs/sandbox.md`); the gun roll's
+Gunnery, edited in the Sandbox sheet (`docs/sandbox.md`), as are the crew
+fight's four numbers on the Sandbox resource (how many aim true, the
+handover time, the walk-in distance, the Shotgun pellet cap); the gun roll's
 weights, multipliers and caps are constants in `scripts/ship/gun_roll.gd`
 (`BASE`, `ROOM`, `MARKSMAN_CAP`, `ALL_SHOTGUN_ROOM`).
 

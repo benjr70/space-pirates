@@ -193,6 +193,13 @@ func is_engaged() -> bool:
 	return mode != Mode.NONE
 
 
+## Down behind its own cover, or stepping out or back: out of his sight
+## because it ducked, not because he broke sight, so its aim is held
+## ([member Crew3D._exposed_for]).
+func behind_own_cover() -> bool:
+	return mode in [Mode.DOWN, Mode.OUT, Mode.BACK]
+
+
 func tick(delta: float) -> void:
 	timer -= delta
 	clock += delta
