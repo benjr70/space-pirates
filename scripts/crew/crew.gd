@@ -126,6 +126,19 @@ const GIVE_WAY_WAIT := 5.0
 const GIVE_WAY_INSIST := 8
 ## How fast the body turns to face where it is looking, radians a second.
 const TURN_RATE := 6.0
+## A Worker's sat poses (crew-combat ticket 25): the wall behind is looked
+## for at this height, metres; the drawn body moves back to SEAT_GAP from
+## it, at most SEAT_BACK_MOST. Bound sat, it sits against the nearest wall
+## or prop within BOUND_WALL_REACH of its centre (looked for in BOUND_LOOKS
+## ways round), its body BOUND_STANDOFF off it (the capsule's radius and a
+## margin), shuffling there over BOUND_SHUFFLE seconds.
+const SEAT_HEIGHT := 0.45
+const SEAT_GAP := 0.22
+const SEAT_BACK_MOST := 0.3
+const BOUND_WALL_REACH := 1.0
+const BOUND_LOOKS := 16
+const BOUND_STANDOFF := 0.37
+const BOUND_SHUFFLE := 0.5
 
 const TEAM := &"crew"
 ## Layer 1 is the ship itself: hull, props and shut doors.
@@ -209,8 +222,7 @@ const RELOAD_HEIGHT := 1.0
 const RIG_HEIGHT := 2.0
 ## Clips that must loop while a state holds them.
 const LOOPING_CLIPS: Array[StringName] = [&"CharacterArmature|Idle", &"CharacterArmature|Idle_Gun",
-		&"CharacterArmature|Idle_Gun_Pointing", &"CharacterArmature|Run", &"CharacterArmature|Walk",
-		&"CharacterArmature|Wave", &"CharacterArmature|Idle_Neutral"]
+		&"CharacterArmature|Idle_Gun_Pointing", &"CharacterArmature|Run", &"CharacterArmature|Walk"]
 
 @export_group("Cover")
 ## How far a Worker looks for somewhere to cower.
@@ -229,9 +241,18 @@ var magazine: CrewMagazine
 ## A Guard's gun, seen in its hands, whose `Muzzle` its shots leave from;
 ## null for a Worker.
 var gun: CrewGun
-## A Guard's body in a fight: down, ducking, running low, stepping out
-## ([CrewPose]); null for a Worker.
+## Its body's pose ([CrewPose]): a Guard's in a fight (down, ducking,
+## running low, stepping out), a Worker's hiding, surrendering and Bound.
 var pose: CrewPose
+## A Worker's poses, rolled once at ship build ([method CrewPose.roll_set]):
+## {pair: pose} for hide, hands, kneel and bound. Empty for a Guard.
+var pose_set := {}
+## Metres a Worker's sat or crouched pose moves back toward the wall behind
+## it (its hiding tile's, or the one it was Bound against).
+var seat_back := 0.0
+## Bound sat: the way to the wall or prop it sits against; zero with none
+## within BOUND_WALL_REACH (it kneels instead).
+var bound_against := Vector3.ZERO
 ## The Guard a fleeing Worker is running to.
 var _flee_to: Crew3D
 ## The Alarm Panel a fleeing Worker is running to, instead of a Guard.
@@ -382,6 +403,9 @@ var _rng := RandomNumberGenerator.new()
 ## replay.
 static var _readied := 0
 var _ready_order := 0
+## A Worker's capsule standing ([method _fit_capsule]).
+var _stand_height := 1.7
+var _stand_y := 0.85
 var _gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)
 var _anim: AnimationPlayer
 
@@ -406,12 +430,20 @@ func _ready() -> void:
 		cover = CrewCover.new(self)
 	else:
 		hiding = CrewHiding.new(self)
+		pose_set = CrewPose.roll_set(layout.gen_seed if layout != null else 0,
+				ShipBuilder3D.world_to_tile(global_position), _rng.seed)
+		var shape := get_node_or_null("CollisionShape3D") as CollisionShape3D
+		if shape != null and shape.shape is CapsuleShape3D:
+			# Its own, so lowering it with a pose lowers no one else's.
+			shape.shape = shape.shape.duplicate()
+			_stand_height = (shape.shape as CapsuleShape3D).height
+			_stand_y = shape.position.y
 	_gap_jitter = CrewCombat.jitter(_rng)
 	_new_burst()
 	_dress()
+	# The pose first: a Guard's gun is placed from the posed chest.
+	pose = CrewPose.fit(self)
 	if not is_worker():
-		# The pose first: the gun is placed from the posed chest.
-		pose = CrewPose.fit(self)
 		gun = CrewGun.arm(self)
 	_anim = _find_animation_player(model)
 	if _anim != null:
@@ -732,9 +764,11 @@ func _break_sight() -> void:
 func hear(at: Vector3, kind: CrewNoise.Kind, source: Node = null) -> bool:
 	if state == State.BOUND:
 		return false
+	if state == State.COWER and hiding != null and kind == CrewNoise.Kind.GUNSHOT and pose != null:
+		# Hiding crouched, it ducks lower at any gunshot it hears ([CrewPose]).
+		pose.flinch()
 	if state == State.COWER and hiding != null and not source is Crew3D:
-		# A sound of him keeps a hiding Worker hidden ([CrewHiding]). (Workers'
-		# poses, crew-combat ticket 25, duck lower at a gunshot here.)
+		# A sound of him keeps a hiding Worker hidden ([CrewHiding]).
 		hiding.noticed()
 		return true
 	if state == State.DEAD or _in_combat():
@@ -968,6 +1002,7 @@ func _enter(next: State) -> void:
 		State.BOUND:
 			_path.clear()
 			velocity = Vector3.ZERO
+			_settle_bound()
 			# Tied up it shows no Awareness bar and notices nothing again.
 			perception.awareness = 0.0
 			_set_surrender(Surrender.BOUND)
@@ -1915,7 +1950,11 @@ func _close_doors_behind() -> void:
 
 func _face() -> void:
 	var look := _aim
-	if state == State.FIGHT or (_in_combat() and _can_see):
+	if state == State.COWER and hiding != null and hiding.phase == CrewHiding.Phase.HIDDEN and hiding.facing != Vector3.ZERO:
+		# On its hiding tile: back to the wall, facing into the Room, its
+		# head turning to watch him ([CrewPose]).
+		look = hiding.facing
+	elif state == State.FIGHT or (_in_combat() and _can_see):
 		look = _last_seen - global_position
 	elif Vector2(velocity.x, velocity.z).length_squared() > 0.004:
 		look = velocity
@@ -2289,13 +2328,11 @@ func _update_animation() -> void:
 	if state == State.DEAD:
 		return
 	var speed := Vector2(velocity.x, velocity.z).length()
+	if is_worker():
+		_fit_capsule()
 	if state in [State.SURRENDER, State.BOUND]:
-		# Stand-ins until Workers' poses (crew-combat ticket 25): the Wave
-		# clip, looped, for hands up and kneeling alike; Idle_Neutral Bound.
-		if state == State.BOUND:
-			_play_any(["CharacterArmature|Idle_Neutral", "CharacterArmature|Idle", "Idle"])
-		else:
-			_play_any(["CharacterArmature|Wave", "CharacterArmature|Idle", "Idle"])
+		# Posed over the standing clip ([CrewPose]).
+		_play_any(["CharacterArmature|Idle", "Idle"])
 	elif cover != null and cover.stepping():
 		# Stepping out from full cover and back: its feet step on their own
 		# ([CrewPose]) under a still upper body.
@@ -2311,6 +2348,73 @@ func _update_animation() -> void:
 		_play_any(["CharacterArmature|Idle_Gun_Pointing", "CharacterArmature|Idle_Gun", "Idle_Gun", "Idle"])
 	else:
 		_play_any(["CharacterArmature|Idle", "Idle"])
+
+
+## A Worker's capsule cut to the top of the pose it is in
+## ([constant CrewPose.WORKER_TOP]), standing at the scene's height.
+func _fit_capsule() -> void:
+	var shape := get_node_or_null("CollisionShape3D") as CollisionShape3D
+	if shape == null or not shape.shape is CapsuleShape3D:
+		return
+	var capsule := shape.shape as CapsuleShape3D
+	var top := CrewPose.worker_top(self)
+	var height := _stand_height if top == INF else maxf(top, capsule.radius * 2.0)
+	if is_equal_approx(capsule.height, height):
+		return
+	capsule.height = height
+	shape.position.y = _stand_y if top == INF else height / 2.0
+
+
+## How far behind [param away] (the way it faces) the nearest wall or prop
+## is, from its centre at SEAT_HEIGHT, up to [param reach]; INF with none.
+func wall_behind(away: Vector3, reach := BOUND_WALL_REACH) -> float:
+	away.y = 0.0
+	if away.length_squared() < 0.001 or not is_inside_tree():
+		return INF
+	var from := global_position + Vector3.UP * SEAT_HEIGHT
+	var hit := get_world_3d().direct_space_state.intersect_ray(
+			PhysicsRayQueryParameters3D.create(from, from - away.normalized() * reach, WORLD_LAYER))
+	return INF if hit.is_empty() else _flat_distance(from, hit.position)
+
+
+## How far a pose sat or crouched with its back to a wall [param behind]
+## metres off moves back to it: to SEAT_GAP from it, at most SEAT_BACK_MOST.
+static func seat_back_for(behind: float) -> float:
+	return 0.0 if behind == INF else clampf(behind - SEAT_GAP, 0.0, SEAT_BACK_MOST)
+
+
+## Just Bound, with its set's sat pose: the nearest wall or prop within
+## BOUND_WALL_REACH, looked for all round at SEAT_HEIGHT, is the one it
+## sits against. It shuffles back to it (its body BOUND_STANDOFF off it,
+## turned to face away), drawn sliding there from where it knelt. With none
+## it kneels ([method CrewPose.worker_pose]).
+func _settle_bound() -> void:
+	bound_against = Vector3.ZERO
+	seat_back = 0.0
+	if pose_set.get("bound", "") != "bound_sat" or not is_inside_tree():
+		return
+	var space := get_world_3d().direct_space_state
+	var from := global_position + Vector3.UP * SEAT_HEIGHT
+	var nearest := INF
+	for k in BOUND_LOOKS:
+		var way := Vector3.FORWARD.rotated(Vector3.UP, TAU * k / BOUND_LOOKS)
+		var hit := space.intersect_ray(PhysicsRayQueryParameters3D.create(from, from + way * BOUND_WALL_REACH, WORLD_LAYER))
+		if not hit.is_empty() and _flat_distance(from, hit.position) < nearest:
+			nearest = _flat_distance(from, hit.position)
+			bound_against = way
+	if bound_against == Vector3.ZERO:
+		return
+	var was := global_transform
+	if nearest > BOUND_STANDOFF:
+		global_position += bound_against * (nearest - BOUND_STANDOFF)
+		nearest = BOUND_STANDOFF
+	face_direction(-bound_against)
+	seat_back = seat_back_for(nearest)
+	# The body is at the wall at once; what is drawn slides there.
+	var rest := model.transform
+	model.transform = global_transform.affine_inverse() * was * rest
+	create_tween().tween_property(model, "transform", rest, BOUND_SHUFFLE) \
+			.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 
 
 # --- death --------------------------------------------------------------------

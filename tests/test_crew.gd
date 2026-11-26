@@ -186,6 +186,8 @@ func _initialize() -> void:
 	await _check_hiding_rig()
 	await _check_flee_aimed()
 	await _check_surrender_rig()
+	_check_pose_roll()
+	await _check_worker_poses()
 	_check_no_worker_shots()
 	_check_no_guard_surrenders()
 	await _silence()
@@ -5164,6 +5166,14 @@ func _check_workers_in_fight() -> void:
 	_expect(not workers.is_empty(), "%s: no Workers aboard" % tag)
 	if workers.is_empty():
 		return
+	# Each built Worker wears the set rolled from the ship's seed and its
+	# spawn tile (crew-combat ticket 25, `_check_pose_roll`).
+	var unrolled: Array[String] = []
+	for worker in workers:
+		var spawn := ShipBuilder3D.world_to_tile(worker.global_position)
+		if worker.pose_set != CrewPose.roll_set(ship_layout.gen_seed, spawn) or worker.pose == null:
+			unrolled.append("%s: %s" % [spawn, worker.pose_set])
+	_expect(unrolled.is_empty(), "%s: Workers whose pose set is not the one rolled from the ship's seed and spawn tile: %s" % [tag, unrolled])
 	var room: int = per_room.keys()[0]
 	for r: int in per_room:
 		if per_room[r] > per_room[room] or (per_room[r] == per_room[room]
@@ -5178,6 +5188,9 @@ func _check_workers_in_fight() -> void:
 	var on_claimed: Array[String] = []
 	var untucked: Array[String] = []
 	var claims := 0
+	var hidden_since := {}
+	var facing_off: Array[String] = []
+	var faced := 0
 	var t := 0.0
 	for frame in roundi(SHIP_FIGHT / STEP):
 		await physics_frame
@@ -5193,6 +5206,19 @@ func _check_workers_in_fight() -> void:
 			var held := worker.hiding.tile
 			if held != Vector2i.MAX and claimed.has(held) and on_claimed.size() < 3:
 				on_claimed.append("%s, %s (t=%.1f s)" % [held, CrewHiding.PHASE_NAMES[worker.hiding.phase], t])
+			if worker.state == Crew3D.State.COWER and worker.hiding.phase == CrewHiding.Phase.HIDDEN:
+				hidden_since[worker] = hidden_since.get(worker, t)
+			else:
+				hidden_since.erase(worker)
+			# On its tile a while, back to the wall: facing straight out from it.
+			# (A tile between two solid sides facing each other has none behind.)
+			if frame == roundi(HIDE_WITHIN / STEP) - 1 and t - hidden_since.get(worker, INF) >= FACING_AFTER \
+					and _has_back(ship_layout, worker.global_position):
+				var off := _facing_off(worker)
+				if off < INF:
+					faced += 1
+					if off > FACING_WITHIN:
+						facing_off.append("%s %.0f deg" % [ShipBuilder3D.world_to_tile(worker.global_position), off])
 			if frame == roundi(HIDE_WITHIN / STEP) - 1 and not _near_tucked(ship_layout, worker.global_position):
 				untucked.append("a Worker of Room %d in state %d, %s, at %s" % [worker.home_room, worker.state,
 						CrewHiding.PHASE_NAMES[worker.hiding.phase], ShipBuilder3D.world_to_tile(worker.global_position)])
@@ -5203,6 +5229,9 @@ func _check_workers_in_fight() -> void:
 	_expect(claims > 0, "%s: no Guard ever claimed cover: there was no fight" % tag)
 	_expect(untucked.is_empty(), "%s: at %.0f s, Workers not within %.1f m of a corner: %s" % [tag, HIDE_WITHIN, TUCKED_NEAR, untucked])
 	_expect(on_claimed.is_empty(), "%s: a Worker's hiding tile was a Guard's cover: %s" % [tag, on_claimed])
+	print("  %s: at %.0f s, %d hidden Workers with a wall or prop behind them, facing off straight out from it: %s" % [tag, HIDE_WITHIN, faced, facing_off])
+	_expect(facing_off.is_empty(), "%s: hidden Workers facing over %.0f degrees off straight away from the wall behind them: %s"
+			% [tag, FACING_WITHIN, facing_off])
 	for shot in get_first_node_in_group(&"projectiles").get_children():
 		shot.free()
 
@@ -5553,9 +5582,13 @@ func _level_pirate() -> void:
 	player.head.rotation.x = 0.0
 
 
-## The middle of a Worker's body, where his crosshair rests on it.
+## The middle of a Worker's body, where his crosshair rests on it: 1 m up
+## standing, under the top of its capsule as its pose has cut it (crouched,
+## sat or kneeling, crew-combat ticket 25), as the smoke bot aims.
 func _chest(worker: Crew3D) -> Vector3:
-	return worker.global_position + Vector3.UP * 1.0
+	var shape: CollisionShape3D = worker.get_node("CollisionShape3D")
+	var top: float = shape.position.y + (shape.shape as CapsuleShape3D).height / 2.0
+	return worker.global_position + Vector3.UP * minf(1.0, top - 0.3)
 
 
 ## A point on open floor [param distance] from [param worker], in its sight
@@ -5992,3 +6025,259 @@ func _check_bind_or_door() -> void:
 	worker.free()
 	_level_pirate()
 	player.global_position = Vector3(-500, 0, -500)
+
+
+# --- Workers' poses (crew-combat ticket 25) -------------------------------------
+
+## Workers whose pose sets are rolled, across generated medium and large
+## ships from seed 1 up; each pose of a pair is rolled by this share of
+## them.
+const POSE_WORKERS := 400
+const POSE_SHARE := Vector2(0.4, 0.6)
+## A hiding Worker faces within this of straight away from the wall or prop
+## behind it (looked for within FACING_REACH, at the seat's height), once
+## on its tile this long.
+const FACING_WITHIN := 30.0
+const FACING_REACH := 1.0
+const FACING_AFTER := 1.0
+## At a gunshot a crouched hiding Worker's head is at least DUCK_DROP lower
+## within DUCK_WITHIN, and back within DUCK_BACK_NEAR of where it was
+## within DUCK_BACK.
+const DUCK_DROP := 0.1
+const DUCK_WITHIN := 0.3
+const DUCK_BACK := 1.5
+const DUCK_BACK_NEAR := 0.02
+## In every pose the head zone is within this of the head bone.
+const HEAD_ZONE_NEAR := 0.15
+## Seconds for a pose to blend in before it is measured.
+const POSE_SETTLE := 0.7
+
+
+## The tile a Worker posted [param n]th in [param room] spawns on, as
+## [ShipBuilder3D.build] places it.
+static func _spawn_tile(room: RoomData, n: int) -> Vector2i:
+	if n < room.crew_spawns.size():
+		return room.crew_spawns[n]
+	return ShipBuilder3D.world_to_tile(ShipBuilder3D.crew_spawn_position(room, n))
+
+
+## Every Worker's pose set on [param ship_layout], in posting order, rolled
+## as a Worker spawned there rolls it.
+static func _rolled_sets(ship_layout: ShipLayout) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for room in ship_layout.rooms:
+		for n in room.crew_count:
+			if CrewTypes.for_role(room.role, n) == CrewTypes.Type.WORKER:
+				out.append(CrewPose.roll_set(ship_layout.gen_seed, _spawn_tile(room, n)))
+	return out
+
+
+## Over 400 Workers of generated ships (medium and large in turn,
+## seeds from 1), each pose of each pair rolled by 40 to 60% of them; the
+## same ship generated again gives every Worker the same set. (Each built
+## Worker's set is the one rolled here: `_check_workers_in_fight`.)
+func _check_pose_roll() -> void:
+	var counts := {}
+	var workers := 0
+	var ships := 0
+	var differ: Array[String] = []
+	var classes: Array[StringName] = [&"medium", &"large"]
+	while workers < POSE_WORKERS:
+		var ship_class := classes[ships % classes.size()]
+		var ship_seed := ships + 1
+		var sets := _rolled_sets(ShipGenerator.generate(ship_class, ship_seed))
+		if ships < 6 and sets != _rolled_sets(ShipGenerator.generate(ship_class, ship_seed)):
+			differ.append("%s seed %d" % [ship_class, ship_seed])
+		for set in sets:
+			for pair: String in set:
+				counts[set[pair]] = counts.get(set[pair], 0) + 1
+		workers += sets.size()
+		ships += 1
+	var off: Array[String] = []
+	var shares: Array[String] = []
+	for pair: String in CrewPose.PAIRS:
+		for pose: String in CrewPose.PAIRS[pair]:
+			var share := float(counts.get(pose, 0)) / workers
+			shares.append("%s %.0f%%" % [pose, share * 100.0])
+			if share < POSE_SHARE.x or share > POSE_SHARE.y:
+				off.append("%s %d of %d" % [pose, counts.get(pose, 0), workers])
+	print("  pose roll: %d Workers on %d ships: %s" % [workers, ships, ", ".join(shares)])
+	_expect(off.is_empty(), "pose roll: over %d Workers, poses rolled outside %.0f to %.0f%% of their pair: %s"
+			% [workers, POSE_SHARE.x * 100.0, POSE_SHARE.y * 100.0, off])
+	_expect(differ.is_empty(), "pose roll: the same ship generated again rolled different pose sets: %s" % [differ])
+
+
+## The way straight out from the walls and props round [param worker]: the
+## flat ways to each one within FACING_REACH (16 rays at the seat's height),
+## summed and turned round. Zero with none, or with them all round it.
+func _away_from_walls(worker: Crew3D) -> Vector3:
+	var space := worker.get_world_3d().direct_space_state
+	var from := worker.global_position + Vector3.UP * Crew3D.SEAT_HEIGHT
+	var sum := Vector3.ZERO
+	for k in 16:
+		var way := Vector3.FORWARD.rotated(Vector3.UP, TAU * k / 16.0)
+		if not space.intersect_ray(PhysicsRayQueryParameters3D.create(from, from + way * FACING_REACH, Crew3D.WORLD_LAYER)).is_empty():
+			sum += way
+	return Vector3.ZERO if sum.length() < 0.5 else -sum.normalized()
+
+
+## A wall or prop on a side of the tile under [param at] with open floor
+## on the side across from it: something to put its back to.
+func _has_back(ship_layout: ShipLayout, at: Vector3) -> bool:
+	var astar := CrewPaths.grid(ship_layout)
+	var t := ShipBuilder3D.world_to_tile(at)
+	var solid := func(side: Vector2i) -> bool:
+		return not astar.is_in_boundsv(t + side) or astar.is_point_solid(t + side)
+	for side: Vector2i in [Vector2i.UP, Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT]:
+		if solid.call(side) and not solid.call(-side):
+			return true
+	return false
+
+
+## Degrees between [param worker]'s facing and straight away from the walls
+## and props round it (behind it, if it faces right); INF with none near.
+func _facing_off(worker: Crew3D) -> float:
+	var away := _away_from_walls(worker)
+	if away == Vector3.ZERO:
+		return INF
+	return rad_to_deg(worker.facing().angle_to(away))
+
+
+## The head bone, the head zone and the capsule's top of [param worker] as
+## last posed, kept up to date in `skeleton_updated` (after every modifier):
+## {"bone", "zone"} world points and "top" metres.
+func _watch_head(worker: Crew3D) -> Dictionary:
+	var seen := {"bone": Vector3.INF, "zone": Vector3.INF, "top": INF}
+	var sk := worker.pose.get_skeleton()
+	var shape: CollisionShape3D = worker.get_node("CollisionShape3D")
+	sk.skeleton_updated.connect(func() -> void:
+		if not is_instance_valid(worker):
+			return
+		seen.bone = (sk.global_transform * sk.get_bone_global_pose(sk.find_bone(&"Head"))).origin
+		seen.zone = worker.head_zone.global_position
+		seen.top = shape.global_position.y + (shape.shape as CapsuleShape3D).height / 2.0)
+	return seen
+
+
+## [param worker] in pose [param name], settled: the head zone within
+## HEAD_ZONE_NEAR of its head bone, the capsule's top no higher than the
+## middle of its head (the head zone's centre). Returns the measured line.
+func _pose_fits(worker: Crew3D, head: Dictionary, name: String) -> String:
+	var shown := worker.pose.shown
+	var near: float = (head.zone as Vector3).distance_to(head.bone)
+	var top: float = head.top
+	var line := "%s: head zone %.3f m off the bone, centre %.3f m, capsule top %.3f m" % [name, near, (head.zone as Vector3).y, top]
+	_expect(shown == name, "worker poses: want %s, it shows %s (state %d, %s)" % [name, shown, worker.state, Crew3D.SURRENDER_NAMES[worker.surrender]])
+	_expect(near <= HEAD_ZONE_NEAR, "worker poses: %s, the head zone is %.3f m off the head bone, want within %.2f" % [name, near, HEAD_ZONE_NEAR])
+	_expect(top <= (head.zone as Vector3).y, "worker poses: %s, the capsule's top %.3f m is over the middle of its head at %.3f m" % [name, top, (head.zone as Vector3).y])
+	return line
+
+
+func _wait(seconds: float) -> void:
+	for i in roundi(seconds / STEP):
+		await physics_frame
+
+
+## A Worker on the hiding rig through every pose, both of each pair: hidden
+## crouched (facing away from the wall behind it), ducking at a gunshot and
+## back, sat; surrendered to him 3 m off, hands by its head and straight up;
+## kneeling upright and on its heels; Bound sat against the corner's wall
+## and kneeling. In each, its head zone on its head bone and its capsule
+## under its head. Then a Worker Bound with no wall within 1 m kneels.
+func _check_worker_poses() -> void:
+	_fresh_world()
+	_build_hide_rig()
+	for i in 2:
+		await physics_frame
+	var worker := await _hidden_worker(Vector2i(HIDE_X0 + 8, 8), _hide_at(10, 2), "worker poses")
+	if worker == null:
+		return
+	worker.pose_set = {"hide": "hide", "hands": "hands_up", "kneel": "kneel", "bound": "bound_sat"}
+	var head := _watch_head(worker)
+	await _wait(POSE_SETTLE + FACING_AFTER)
+	var lines: Array[String] = []
+	var off := _facing_off(worker)
+	lines.append("hidden facing %.1f deg off straight out from the wall" % off)
+	_expect(off <= FACING_WITHIN, "worker poses: hidden, it faces %.1f degrees off straight away from the wall behind it, want within %.0f" % [off, FACING_WITHIN])
+	lines.append(_pose_fits(worker, head, "hide"))
+
+	# A gunshot in its Room: it ducks, then comes back up.
+	var before: float = (head.bone as Vector3).y
+	CrewNoise.make(self, _hide_at(6, 6), CrewNoise.Kind.GUNSHOT, 30.0, player)
+	var t := 0.0
+	var lowest := before
+	var down_at := INF
+	var back_at := INF
+	var ducked := ""
+	while t < DUCK_BACK + 0.5:
+		await physics_frame
+		t += STEP
+		var y: float = (head.bone as Vector3).y
+		if t <= DUCK_WITHIN:
+			lowest = minf(lowest, y)
+		if down_at == INF and before - y >= DUCK_DROP:
+			down_at = t
+		if down_at < INF and back_at == INF and absf(y - before) <= DUCK_BACK_NEAR:
+			back_at = t
+		if ducked == "" and t >= 0.35 and worker.pose.shown == "hide_flinch":
+			ducked = _pose_fits(worker, head, "hide_flinch")
+	lines.append(ducked)
+	print("  worker poses: a gunshot: head %.3f m, lowest %.3f m within %.1f s (%.3f m lower at %.2f s), back within %.2f m at %.2f s"
+			% [before, lowest, DUCK_WITHIN, before - lowest, down_at, DUCK_BACK_NEAR, back_at])
+	_expect(before - lowest >= DUCK_DROP, "worker poses: at a gunshot its head went %.3f m lower within %.1f s, want at least %.1f"
+			% [before - lowest, DUCK_WITHIN, DUCK_DROP])
+	_expect(back_at <= DUCK_BACK, "worker poses: after the gunshot its head was back within %.2f m at %.2f s, want within %.1f s"
+			% [DUCK_BACK_NEAR, back_at, DUCK_BACK])
+	_expect(ducked != "", "worker poses: it never showed hide_flinch after the gunshot")
+
+	worker.pose_set.hide = "hide_sat"
+	await _wait(POSE_SETTLE)
+	lines.append(_pose_fits(worker, head, "hide_sat"))
+
+	# Surrendered to him 3 m off: hands up, then kneeling.
+	var near := _in_sight_of(worker, 3.0)
+	_expect(near != Vector3.INF, "worker poses: no open floor 3 m off in its sight")
+	if near != Vector3.INF:
+		player.global_position = near
+		t = 0.0
+		while t < 1.0 and worker.state != Crew3D.State.SURRENDER:
+			await physics_frame
+			t += STEP
+		await _wait(0.6)
+		lines.append(_pose_fits(worker, head, "hands_up"))
+		worker.pose_set.hands = "hands_high"
+		await _wait(0.6)
+		lines.append(_pose_fits(worker, head, "hands_high"))
+		while t < 5.0 and worker.surrender != Crew3D.Surrender.KNEELING:
+			await physics_frame
+			t += STEP
+		await _wait(POSE_SETTLE)
+		lines.append(_pose_fits(worker, head, "kneel"))
+		worker.pose_set.kneel = "kneel_low"
+		await _wait(POSE_SETTLE)
+		lines.append(_pose_fits(worker, head, "kneel_low"))
+		# Bound: sat against the nearest wall of its corner.
+		worker.bind()
+		await _wait(POSE_SETTLE)
+		var wall := worker.wall_behind(worker.facing(), 2.0)
+		lines.append("Bound sat %.3f m from the wall behind it" % wall)
+		_expect(worker.bound_against != Vector3.ZERO and absf(wall - Crew3D.BOUND_STANDOFF) <= 0.02,
+				"worker poses: Bound sat in a corner, its body is %.3f m from the wall behind it, want %.2f" % [wall, Crew3D.BOUND_STANDOFF])
+		lines.append(_pose_fits(worker, head, "bound_sat"))
+		worker.pose_set.bound = "bound_kneel"
+		await _wait(POSE_SETTLE)
+		lines.append(_pose_fits(worker, head, "bound_kneel"))
+	for line in lines:
+		print("  worker poses: " + line)
+	worker.free()
+
+	# Bound with its sat pose, no wall or prop within 1 m: it kneels.
+	var open := _hide_worker(Vector2i(HIDE_X0 + 8, 3))
+	open.pose_set = {"hide": "hide", "hands": "hands_up", "kneel": "kneel", "bound": "bound_sat"}
+	open._enter(Crew3D.State.SURRENDER)
+	open.bind()
+	_expect(open.is_bound() and open.bound_against == Vector3.ZERO and CrewPose.worker_pose(open) == "bound_kneel",
+			"worker poses: Bound in the open with its sat pose, it shows %s (wall %s)" % [CrewPose.worker_pose(open), open.bound_against])
+	open.free()
+	player.global_position = Vector3(-500, 0, -500)
+	_level_pirate()

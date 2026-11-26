@@ -27,7 +27,7 @@ being built toward is `.scratch/crew-combat/spec.md`, after spec #52
 | `crew_habit.gd` (`CrewHabit`) | A habit per gun: which of the four guns a Guard carries (`gun_of`, by its weapon's file) and the habit numbers (the Shotgun's 4 m and 8 m, its ambush reach and rack timing; the Marksman Rifle's perch radius, line length and weight, 5 m, sight lock and hip fire). |
 | `crew_sight_line.gd` (`CrewSightLine`) | The Marksman Rifle's sight line: a thin red unshaded line from the rifle's muzzle to where it aims, made on first use under the Guard. |
 | `crew_gun.gd` (`CrewGun`) | A Guard's gun in its hands: its Weapon Profile's model, 1.15x, under the body's Model node from spawn; carried, down behind cover, reloading or aimed; the arms solved onto it, the wrists squared and the fingers closed round its grip and fore-end, and the left hand's way through a reload; where its `Muzzle` stands when aimed, for the shot and the clear-shot test. A skeleton modifier on the rig's skeleton (`Crew3D.gun`); null for a Worker. |
-| `crew_pose.gd` (`CrewPose`) | A Guard's body in a fight: down behind cover squatting or on one knee, ducking a near miss, running low to low cover, and stepping out from full cover on feet that step. A skeleton modifier run before the gun's (`Crew3D.pose`); null for a Worker. Its stance is chosen by `CrewCover` (`stance`), which also sets the capsule. |
+| `crew_pose.gd` (`CrewPose`) | A crew member's body. A Guard's in a fight: down behind cover squatting or on one knee, ducking a near miss, running low to low cover, and stepping out from full cover on feet that step; its stance is chosen by `CrewCover` (`stance`), which also sets the capsule. A Worker's hiding, surrendering and Bound, from the pose set it rolled at ship build (`roll_set`, `Crew3D.pose_set`), with its arms solved onto its head, chest or hips; `Crew3D._fit_capsule` cuts its capsule to the pose (see Workers' poses). A skeleton modifier run before a Guard's gun's (`Crew3D.pose`). |
 | `crew_rig_modifier.gd` (`CrewRigModifier`) | What the two crew skeleton modifiers share: bones read and written in the rig's own space, and the two-bone solve for an arm or a leg. |
 | `ship_alarm.gd` (`ShipAlarm`) | The ship-wide Alarm: raised once, red lights, every crew member told. Built per ship as `Ship/Alarm`. |
 | `alarm_panel.gd` (`AlarmPanel`) | The wall panels the Alarm is raised from, where they go, and breaking them. Built under `Ship/AlarmPanels`. |
@@ -92,7 +92,13 @@ second passing it by, one surrendered and left coming out after 20 s to
 raise the Alarm, one aimed at from 8 m surrendering 0.5 s after his
 crosshair settles and not with it 20 degrees off, the interact key working a
 Door he faces over a surrendered Worker beside it, and no Guard ever
-surrendering in the suite), plus the crew fight and
+surrendering in the suite; and Workers' poses: each pose of each pair
+rolled by 40 to 60% of over 400 Workers of generated ships, the same ship
+rolling the same, every built Worker wearing the set rolled from its ship's
+seed and spawn tile, hidden Workers facing straight out from the wall
+behind them, a crouched one ducking at a gunshot and back, and in all nine
+poses the head zone on the head bone and the capsule under the head, Bound
+sat against a corner's wall and kneeling in the open), plus the crew fight and
 each Guard's rolled gun in `tests/test_ship_3d.gd`, the gun roll's caps and
 shares in `tests/test_generator.gd`, and whole Raids in
 `tests/test_raid_smoke.gd`.
@@ -983,9 +989,18 @@ Alarm or a Guard), COWER (hiding) and REPORT (come out, walking to report).
   every 0.5 m. Of the fair runs it prefers one that does not cross the line
   between him and a Guard fighting him; it takes one that does only when no
   other of the 8 avoids it. A run that has not arrived in 30 s gives that
-  tile up for the next.
-- **Hidden**: on its tile (within 0.5 m) it stands still, back to the wall,
-  facing into the Room, and turns to watch him while he is in sight. Found,
+  tile up for the next. A run that has not moved 0.3 m in 2 s (`STALL`,
+  `STALL_MOVE`: two Workers in a one-wide dead end, each standing on the
+  way to the other's tile) hides on the tile it stands on if that is a
+  corner or wedge no Guard holds and no Worker hides on
+  (`CrewHiding._hide_here`); a Worker still running to that tile moves on
+  to its next best (a tile is taken from a runner only by a Worker hidden
+  on it or a Guard).
+- **Hidden**: on its tile (within 0.5 m) it keeps still, back to the wall,
+  facing into the Room (`CrewHiding.facing`; on a tile between two solid
+  sides facing each other, along the open way most toward the Room's
+  middle), in its hiding pose (see Workers' poses), its head turning to
+  watch him while he is in sight. Found,
   it stays put; a fight in its Room does not move it (stray shots can kill
   it). A Guard claiming its tile (`CrewCover._claim` calls
   `CrewHiding.guard_claimed`) sends it on to its next best at once.
@@ -1004,12 +1019,9 @@ Alarm or a Guard), COWER (hiding) and REPORT (come out, walking to report).
 - **Cornered** (`Crew3D._cornered`: him in sight within 3 m) no longer
   changes what a Worker does; the smoke run's bot reads it. Surrender
   (below) has its own 4 m.
-- **The look**: today's stance. A hiding Worker stands in the Idle clip
-  (the stand-in until Workers' poses, ticket 25); it runs in the Run clip.
-  For ticket 25: `CrewHiding.phase` (freezing, running, hidden, hiding where
-  it stands) and its `phase_changed` signal, `wounded`, and REPORT; a sound
-  of him reaching a hiding Worker arrives in `Crew3D.hear` (where it would
-  duck at a gunshot).
+- **The look**: hidden (on its tile, or hiding where it stands) it takes
+  its hiding pose; freezing it stands in the Idle clip and running it runs
+  in the Run clip. See Workers' poses.
 
 ## Surrender and Bound
 
@@ -1049,10 +1061,10 @@ decided in `issues/09`). States SURRENDER and BOUND, Workers only.
 - **Hit**: a shot or Melee that does not kill leaves a surrendered or Bound
   Worker as it was (wounded, so it never comes out should it hide again).
   A Bound Worker killed leaves a body that is a fresh trace.
-- **Stand-ins** until Workers' poses (ticket 25): surrendered, hands up and
-  kneeling alike, it plays the rig's Wave clip, looped; Bound, Idle_Neutral.
-  For ticket 25: `Crew3D.surrender` (`Surrender.HANDS_UP`, `KNEELING`,
-  `BOUND`, `NONE`) and its `surrender_changed` signal; `surrendered_for`.
+- **The look**: `Crew3D.surrender` (`Surrender.HANDS_UP`, `KNEELING`,
+  `BOUND`, `NONE`, with its `surrender_changed` signal) picks the pose:
+  hands up, then kneeling, then Bound (see Workers' poses), each over the
+  Idle clip.
 - **The interact key** (`Player3D.bind_target`): within 2 m of a surrendered
   Worker the key is the Worker's unless a Door in his reach or a Container
   in reach is nearer the middle of his view (the smallest angle from his
@@ -1063,6 +1075,59 @@ decided in `issues/09`). States SURRENDER and BOUND, Workers only.
   Viewmodel's sprint-low pose, no sights, `fire()` refused); letting go, a
   hit, a swing, a Clamber, the Worker getting up or leaving reach cancels it,
   and the next hold starts from nothing (a fresh press).
+
+## Workers' poses
+
+Crew-combat ticket 25 (`.scratch/crew-combat/issues/25-workers-poses.md`,
+decided in `issues/10`; numbers from `prototype/crew-look`). `CrewPose`
+poses a Worker as it poses a Guard, in code over the Idle clip: hips
+lowered and moved, spine leaned, head turned, legs solved onto the feet,
+and, a Worker having no gun, its arms solved here onto places off its
+head, chest or hips (`_arms`).
+
+- **Its set**: each Worker rolls once, in `_ready`, from its own generator
+  seeded `hash([ship's seed, "worker poses", spawn tile])`
+  (`CrewPose.roll_set`; off its `_rng.seed` on a layout with no ship seed),
+  so a Retry of the same ship rolls the same and no other draw moves. Even
+  odds on each pair (`CrewPose.PAIRS`): hiding crouched with its arms over
+  its head (`HIDE`) or sat down (`HIDE_SAT`); hands by its head
+  (`HANDS_UP`) or straight up (`HANDS_HIGH`); kneeling upright (`KNEEL`) or
+  on its heels (`KNEEL_LOW`); Bound sat against the wall (`BOUND_SAT`) or
+  kneeling with its hands behind its back (`BOUND_KNEEL`). The rolls are
+  independent, so three Workers in a Room mostly differ. Kept on
+  `Crew3D.pose_set`.
+- **Which pose** (`CrewPose.worker_pose`): hidden (COWER, on its tile or
+  hiding where it stands), its hiding pose; freezing and running, the clip
+  as it is; SURRENDER, its hands pose, then its kneeling pose once
+  `surrender` is KNEELING, so the surrender runs hiding, hands up,
+  kneeling; BOUND, its Bound pose. Each blends in over `WORKER_BLEND`
+  (0.45 s).
+- **Ducking**: hiding crouched, every gunshot it hears (`Crew3D.hear`, his
+  or a crew member's) ducks it lower (`HIDE_FLINCH`, in over `FLINCH_IN`
+  0.12 s, held `FLINCH` 0.5 s, back over 0.45 s): its head about 0.18 m
+  lower within 0.1 s, back by about 0.85 s. Sat, it does not duck.
+- **Back to the wall**: on its hiding tile it faces into the Room
+  (`_face`), and its crouched or sat pose moves back toward the wall or
+  prop behind it (`Crew3D.seat_back`: to `SEAT_GAP` 0.22 m from it, at most
+  `SEAT_BACK_MOST` 0.3 m, measured at `SEAT_HEIGHT` 0.45 m when it arrives).
+  Its head turns toward him while it sees him, at most `WATCH_MOST` 60
+  degrees.
+- **Bound sat** (`Crew3D._settle_bound`): on being Bound with the sat pose,
+  it looks all round (16 ways at 0.45 m) for the nearest wall or prop within
+  1 m (`BOUND_WALL_REACH`) of its centre; its body moves to
+  `BOUND_STANDOFF` (0.37 m, the capsule's radius and a margin) from it and
+  turns to face away, at once, while what is drawn slides there over 0.5 s
+  (`BOUND_SHUFFLE`). With none within 1 m it takes the kneeling Bound pose
+  (`bound_against` stays zero). It never moves again.
+- **The body follows the pose** (`CrewPose.WORKER_TOP`, set by
+  `Crew3D._fit_capsule` every physics step): the capsule's top is cut
+  under the middle of the head as drawn in each pose (hiding 1.0 m, ducked
+  0.8, sat 0.75, kneeling 1.2 and on its heels 0.93, Bound sat 0.8 and
+  kneeling 0.9; standing with its hands up the scene's 1.7). The head zone
+  rides the head bone in every pose. The capsule is the Worker's own copy.
+- **Cost**: standing as its clip has it nothing is posed; hips, spine and
+  head are posed even when the ship's reveal hides it (its head zone stands
+  where its pose puts it), legs and arms only when it can be seen.
 
 ## Alarm
 
@@ -1215,7 +1280,12 @@ and `crew.gd` (`SEARCH_AWARENESS`, `INVESTIGATE_SPEED`, `INVESTIGATE_LINGER`,
 `HIP_SETTLE`), `crew_sight_line.gd` (`WIDTH`, `COLOUR`),
 `crew_pose.gd` (`SQUAT`, `KNEE`, `SQUAT_DEEP`, `KNEE_DEEP`, `RUN_LOW`, `STEP`,
 `BODY_TOP`, `DROP_TIME`, `RISE_TIME`, `FLINCH_IN`, `FLINCH`, `RELOAD_LOOK`,
-`STEP_TRIGGER`, `STEP_TURN`, `STEP_TIME`, `STEP_LIFT`, `STEP_SPEED`),
+`STEP_TRIGGER`, `STEP_TURN`, `STEP_TIME`, `STEP_LIFT`, `STEP_SPEED`; a
+Worker's `HIDE`, `HIDE_FLINCH`, `HIDE_SAT`, `HANDS_UP`, `HANDS_HIGH`,
+`KNEEL`, `KNEEL_LOW`, `BOUND_SAT`, `BOUND_KNEEL`, `WORKER_TOP`,
+`WORKER_BLEND`, `WATCH_MOST`, `WATCH_RATE`), `crew.gd`'s `SEAT_HEIGHT`,
+`SEAT_GAP`, `SEAT_BACK_MOST`, `BOUND_WALL_REACH`, `BOUND_LOOKS`,
+`BOUND_STANDOFF`, `BOUND_SHUFFLE`,
 `crew_gun.gd` (the holds, `HOLDS`, `WELLS`, `BELT`, `WELL_CLEAR`,
 `RELOAD_WAY`, `SHELL_WAY`),
 `crew_hiding.gd` (`FREEZE`, `COME_OUT`, the score's `W_*`, `FAR_FULL`,

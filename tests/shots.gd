@@ -30,7 +30,11 @@ extends SceneTree
 ##              squatting and on one knee, ducking a near miss, popped up,
 ##              stepped out beside a wall, reloading (each gun, three moments)
 ##              and running low and upright (down_*, duck_*, popup_*,
-##              stepout_*, reload_*, run_*.png).
+##              stepout_*, reload_*, run_*.png); then Workers' poses
+##              (crew-combat ticket 25), both of each pair: hiding crouched,
+##              ducked at a gunshot and sat, hands by the head and straight
+##              up, kneeling upright and on the heels, Bound sat against the
+##              wall and kneeling (worker_*.png).
 ##   hud        the in-Raid HUD with known values: hud.png, hud_busy.png,
 ##              hud_bind.png.
 ##   menu       the main menu's screens (home, classes), the Loadout screen
@@ -524,6 +528,7 @@ func _crew() -> void:
 	for gun in guns:
 		for moment in RELOAD_MOMENTS:
 			labels.append("reload_%s_%s" % [gun, moment])
+	labels.append_array(WORKER_SHOTS)
 	_expect(labels)
 	var world := _test_room()
 	var crew: Array[Crew3D] = []
@@ -602,6 +607,7 @@ func _crew() -> void:
 	for guard in guards:
 		guard.free()
 	await _crew_fight(guns)
+	await _crew_workers()
 
 
 ## The fight shots in order (crew-combat ticket 22); the reload close ups
@@ -751,6 +757,82 @@ func _crew_fight(guns: Array) -> void:
 	cam.look_at_from_position(Vector3(0, 1.1, 5.4), Vector3(0, 0.9, 1.6))
 	print("shots: run_side: the Assault Rifle running low (left), the Marksman Rifle upright (right)")
 	await _snap("run_side")
+	world.free()
+
+
+## Workers' poses (crew-combat ticket 25), left to right, each facing the
+## camera with a wall 0.5 m behind (the Bound sat one 0.37 m, as it settles
+## against one): hiding crouched, ducked at a gunshot, sat; hands by the
+## head, arms straight up; kneeling upright, on its heels; Bound sat, Bound
+## kneeling.
+const WORKER_POSES := ["hide", "hide_flinch", "hide_sat", "hands_up", "hands_high", "kneel", "kneel_low", "bound_sat", "bound_kneel"]
+## The shots: the whole row, each group of poses from the front quarter
+## and from its side (from the middle of the room), and the Bound kneeling
+## one from behind (its hands behind its back).
+const WORKER_GROUPS := {"hide": [0, 2], "hands": [3, 4], "kneel": [5, 6], "bound": [7, 8]}
+const WORKER_SHOTS := ["worker_row", "worker_hide_front", "worker_hide_side", "worker_hands_front", "worker_hands_side",
+		"worker_kneel_front", "worker_kneel_side", "worker_bound_front", "worker_bound_side", "worker_bound_back"]
+const WORKER_SPACING := 0.85
+const WORKER_WALL := -1.5
+
+
+func _crew_workers() -> void:
+	var world := _test_room()
+	_box(world, Vector3(8.0, 2.5, 0.2), Vector3(0.0, 1.25, WORKER_WALL - 0.1), Color(0.5, 0.52, 0.58))
+	var workers: Array[Crew3D] = []
+	for i in WORKER_POSES.size():
+		var pose: String = WORKER_POSES[i]
+		var worker: Crew3D = load("res://scenes/crew_3d.tscn").instantiate()
+		worker.crew_type = CrewTypes.Type.WORKER
+		var off := Crew3D.BOUND_STANDOFF if pose == "bound_sat" else 0.5
+		worker.position = Vector3((i - (WORKER_POSES.size() - 1) * 0.5) * WORKER_SPACING, 0.0, WORKER_WALL + off)
+		world.add_child(worker)
+		worker.set_physics_process(false)
+		worker.face_direction(Vector3.BACK)
+		workers.append(worker)
+	await physics_frame
+	await physics_frame
+	for i in workers.size():
+		var worker := workers[i]
+		worker.pose.forced = WORKER_POSES[i]
+		if CrewPose.POSES[WORKER_POSES[i]].get("back", 0.0) > 0.0:
+			# As the game sets it: back to the wall behind it.
+			worker.seat_back = Crew3D.seat_back_for(worker.wall_behind(Vector3.BACK))
+		worker.state = Crew3D.State.COWER
+		worker._update_animation()
+	await create_timer(0.8).timeout
+	print("shots: worker_*: hide, hide ducked, hide sat, hands up, hands high, kneel, kneel low, bound sat, bound kneel, left to right")
+	var cam := Camera3D.new()
+	world.add_child(cam)
+	cam.make_current()
+	cam.fov = 60.0
+	cam.look_at_from_position(Vector3(0, 1.4, 3.4), Vector3(0, 0.75, WORKER_WALL + 0.5))
+	await _snap("worker_row")
+	cam.fov = 45.0
+	for group: String in WORKER_GROUPS:
+		var span: Array = WORKER_GROUPS[group]
+		var a := workers[span[0]].global_position
+		var b := workers[span[1]].global_position
+		var mid := a.lerp(b, 0.5)
+		for w in workers.size():
+			workers[w].visible = w >= span[0] and w <= span[1]
+		# From the side nearer the middle of the room.
+		var side := -1.0 if mid.x > 0.0 else 1.0
+		# Standing with its hands up it is taller: further back, higher.
+		var tall := 1.6 if group == "hands" else 1.0
+		cam.look_at_from_position(mid + Vector3(0.9 * side, 1.25 * tall, 2.6 * tall), mid + Vector3(0, 0.7 * tall, 0))
+		await _snap("worker_%s_front" % group)
+		cam.look_at_from_position(mid + Vector3(2.6 * side * tall, 1.0 * tall, 0.9), mid + Vector3(0, 0.6 * tall, -0.1))
+		await _snap("worker_%s_side" % group)
+	# The Bound kneeling one from behind, the wall moved off: its hands.
+	var kneeler := workers[8]
+	for w in workers.size():
+		workers[w].visible = w == 8
+	kneeler.face_direction(Vector3.FORWARD)
+	await create_timer(0.2).timeout
+	cam.look_at_from_position(kneeler.global_position + Vector3(0.7, 1.3, 2.0), kneeler.global_position + Vector3(0, 0.6, 0))
+	await _snap("worker_bound_back")
+	world.free()
 
 
 ## Each of [param guards] down behind its crate in [param stance], facing

@@ -22,9 +22,9 @@ extends RefCounted
 ##
 ## Surrender (crew-combat ticket 24, `Crew3D._gives_up`, run before each
 ## tick) reads [method is_hidden] and [member phase], and [method find] and
-## [method fair_run] for a way out past him; Workers' poses
-## (ticket 25) read [member phase] and [member wounded], and
-## [signal phase_changed].
+## [method fair_run] for a way out past him; Workers' poses ([CrewPose],
+## ticket 25) read [method is_hidden], and face [member facing] on the
+## tile, back to the wall.
 
 ## Where it is in hiding: frozen on the spot (the 1 s freeze), running to
 ## its hiding place, on it, or hiding where it stands with nowhere to run.
@@ -63,6 +63,10 @@ const ON_TILE := 0.5
 const RUN_GIVE_UP := 30.0
 ## Hiding where it stands, it looks again for a place to run this often.
 const LOOK_AGAIN := 1.0
+## A run that has not moved STALL_MOVE metres in STALL seconds hides on the
+## tile it stands on, if that is a corner ([method _hide_here]).
+const STALL := 2.0
+const STALL_MOVE := 0.3
 const META := &"crew_hiding_tiles"
 
 var crew: Crew3D
@@ -82,6 +86,9 @@ var _freeze_left := 0.0
 var _clock := 0.0
 ## Tiles whose run never arrived, given up for this hiding.
 var _refused := {}
+## Where its run last made progress, and how long ago.
+var _stall_at := Vector3.INF
+var _stall_for := 0.0
 ## Its own draws, seeded from the ship's seed and its spawn tile, so a Retry
 ## of the same ship rolls the same; nothing else draws from it.
 var _rng := RandomNumberGenerator.new()
@@ -149,6 +156,8 @@ func tick(delta: float) -> void:
 			elif _clock > RUN_GIVE_UP:
 				_refused[tile] = true
 				_run()
+			elif _stalled(delta) and _hide_here():
+				pass
 			elif crew._path.is_empty():
 				# Pushed off the end of its run: on to the tile itself.
 				crew._path.assign([spot])
@@ -306,6 +315,8 @@ func _go(found: Dictionary) -> void:
 	tile = found.tile
 	spot = found.at
 	_clock = 0.0
+	_stall_at = crew.global_position
+	_stall_for = 0.0
 	crew._speed_scale = 1.0
 	if _flat(crew.global_position, spot) <= ON_TILE:
 		_arrive()
@@ -314,43 +325,89 @@ func _go(found: Dictionary) -> void:
 	_set_phase(Phase.RUN)
 
 
+## Running, it has not moved STALL_MOVE in STALL seconds (another Worker
+## in its way down a one-wide dead end, each wanting the other's tile).
+func _stalled(delta: float) -> bool:
+	if _flat(crew.global_position, _stall_at) > STALL_MOVE:
+		_stall_at = crew.global_position
+		_stall_for = 0.0
+		return false
+	_stall_for += delta
+	return _stall_for >= STALL
+
+
+## Stalled on its run: it hides on the tile it stands on, if that is a
+## corner or wedge of its Room no Guard holds and no other Worker hides on
+## (one still running to it moves on). True if it did.
+func _hide_here() -> bool:
+	_stall_for = 0.0
+	var here := ShipBuilder3D.world_to_tile(crew.global_position)
+	if here == tile or _claimed_tiles(false).has(here):
+		return false
+	var room := crew.layout.room_at(here)
+	if room < 0:
+		return false
+	for entry: Dictionary in tiles_of(crew, room):
+		if entry.tile == here and entry.sides >= 2:
+			tile = here
+			spot = entry.at
+			_arrive()
+			return true
+	return false
+
+
 ## On its tile: still, back to the wall, facing into the Room.
 func _arrive() -> void:
 	crew._path.clear()
 	facing = _into_room(tile)
 	if facing != Vector3.ZERO:
 		crew._aim = facing
+	# Its pose sits or crouches back against the wall behind it ([CrewPose]).
+	crew.seat_back = Crew3D.seat_back_for(crew.wall_behind(facing))
 	_set_phase(Phase.HIDDEN)
 
 
-## The way from [param t] into the open: away from its solid sides.
+## The way from [param t] into the open: away from its solid sides. On a
+## tile between two solid sides facing each other (a slot, with nothing
+## behind), along the open way that looks most toward the Room's middle.
 func _into_room(t: Vector2i) -> Vector3:
 	var astar := CrewPaths.grid(crew.layout)
 	var out := Vector2.ZERO
+	var open: Array[Vector2i] = []
 	for side: Vector2i in [Vector2i.UP, Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT]:
 		if not astar.is_in_boundsv(t + side) or astar.is_point_solid(t + side):
 			out -= Vector2(side)
+		else:
+			open.append(side)
 	if out.length_squared() < 0.01:
-		return Vector3.ZERO
+		var room := crew.layout.room_at(t)
+		if open.is_empty() or room < 0:
+			return Vector3.ZERO
+		var middle := ShipBuilder3D.room_center_world(crew.layout.rooms[room]) - ShipBuilder3D.tile_to_world(t)
+		var to_middle := Vector2(middle.x, middle.z)
+		open.sort_custom(func(a: Vector2i, b: Vector2i) -> bool: return Vector2(a).dot(to_middle) > Vector2(b).dot(to_middle))
+		out = Vector2(open[0])
 	out = out.normalized()
 	return Vector3(out.x, 0.0, out.y)
 
 
 ## A Guard has claimed its tile, or another Worker hides on it.
 func _taken() -> bool:
-	return tile != Vector2i.MAX and _claimed_tiles().has(tile)
+	return tile != Vector2i.MAX and _claimed_tiles(false).has(tile)
 
 
 func _set_phase(next: Phase) -> void:
 	if next == phase:
 		return
+	if next != Phase.HIDDEN and crew.state != Crew3D.State.BOUND:
+		crew.seat_back = 0.0  # off its tile: no wall behind to sit back to
 	phase = next
 	phase_changed.emit(next)
 
 
-## Tiles Guards hold as cover and other Workers hide on or run to:
-## {tile: true}.
-func _claimed_tiles() -> Dictionary:
+## Tiles Guards hold as cover and other Workers hide on or run to (with
+## [param running] false, only hide on): {tile: true}.
+func _claimed_tiles(running := true) -> Dictionary:
 	var out := {}
 	for node in crew.get_tree().get_nodes_in_group(&"crew"):
 		var other := node as Crew3D
@@ -358,7 +415,8 @@ func _claimed_tiles() -> Dictionary:
 			continue
 		if other.cover != null and other.cover.tile != Vector2i.MAX:
 			out[other.cover.tile] = true
-		elif other.hiding != null and other.hiding.tile != Vector2i.MAX:
+		elif other.hiding != null and other.hiding.tile != Vector2i.MAX \
+				and (running or other.hiding.phase == Phase.HIDDEN):
 			out[other.hiding.tile] = true
 	return out
 
