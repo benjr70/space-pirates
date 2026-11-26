@@ -50,7 +50,13 @@ extends SceneTree
 ##   nobody has been in sight for 8 s; with nobody down yet, stalks the
 ##   nearest Worker (else Guard), crouched until crew are after him, until
 ##   one is; then loots a Container and extracts, fighting anyone in sight on
-##   the way. Down to 3 health in a fight he falls back to the pod mouth
+##   the way. Before looting, with a kill made, he spends up to SPARE_FOR
+##   seconds tying up one Worker (_tie_up_one): he goes after the nearest
+##   hiding or surrendered Worker (else the nearest Worker) shooting no
+##   Worker but one running for a panel, rests his crosshair on a hiding
+##   one in his sight within its aim reach until it surrenders, walks up to the first surrendered one he
+##   sees and ties it up with the interact key (_bind). A Bound Worker is
+##   never shot. Down to 3 health in a fight he falls back to the pod mouth
 ##   (twice a Raid at most).
 ##   Plays for an Extraction with a kill.
 ## - **Caught**: walks up to the nearest Guard and stands in its view
@@ -91,11 +97,17 @@ extends SceneTree
 ##    pod) or drops below the floor while alive;
 ## 3. no crew member is stuck: walking to a Job (on routine, or sweeping
 ##    under the Alarm) without moving 1 m in STUCK_LIMIT simulated seconds;
-## 4. no Guard fighting from cover is stuck: down with the Pirate in its
-##    sight longer than its longest time down plus COVER_SLACK, or trying to
-##    walk without moving FIGHT_STUCK_MOVE in FIGHT_STUCK_TIME; and none puts
-##    COVER_SHOTS shots in a row into the ship within COVER_SHOT_RANGE of
-##    its own muzzle;
+## 4. no Guard fighting from cover is stuck down with the Pirate in its
+##    sight longer than its longest time down plus COVER_SLACK; no crew
+##    member, in any state, tries to walk without moving FIGHT_STUCK_MOVE
+##    (0.3 m) in FIGHT_STUCK_TIME (5 s); and none puts COVER_SHOTS shots in
+##    a row into the ship within COVER_SHOT_RANGE of its own muzzle;
+## 4a. firefights (crew-combat ticket 27, _open_with_cover, _check_invariants,
+##    _on_shot): no Guard fights in the open (not reloading) for more than
+##    OPEN_LIMIT (3 s) while a cover spot it would take (CrewCover.find) is
+##    in its reach; never more than TRUE_AIM_MOST (2) Guards aim true in one
+##    frame (CrewFire.holders, asked at the start of the frame); no Worker
+##    fires; no Bound Worker moves BOUND_MOVE from where it was Bound;
 ## 5. the HUD offers a Door's prompt only while the Pirate is in a Door's
 ##    reach, and its Alarm banner shows exactly while the Alarm is raised;
 ## 6. at a Container in reach and facing it, the HUD offers the search and
@@ -134,7 +146,9 @@ extends SceneTree
 ## - Each of those two endings per Ship Class: lowest 9 of 10 in a sweep,
 ##   3 of 5 (large Loud) in a default run; floor CLASS_FLOOR 40% (2 of 5).
 ## Caught went down in 330 of 330 and stays strict per Raid. Only a Raid
-## that passed counts towards a floor.
+## that passed counts towards a floor. A full sweep also needs some Raid to
+## bind a Worker; the `firefights` line reports the Raids that did and the
+## most Guards seen aiming true at once.
 ##
 ## Banking goes to a throwaway per-process profile, never the player's.
 
@@ -230,6 +244,28 @@ const FIGHT_STUCK_MOVE := 0.3
 ## Raids: 2.
 const COVER_SHOTS := 4
 const COVER_SHOT_RANGE := 2.0
+## Firefights (crew-combat ticket 27). A Guard fighting in the open
+## (CrewCover.Mode.OPEN, not reloading) while a cover spot it would take
+## (CrewCover.find: hidden from him, a peek, a fair walk in reach) has been
+## there for longer than OPEN_LIMIT seconds fails the Raid; the spot is
+## looked for every OPEN_LOOK seconds. Its own look comes every
+## CrewCover.LOOK_OPEN (1.5 s), so a Guard that looks never comes near it.
+const OPEN_LIMIT := 3.0
+const OPEN_LOOK := 0.5
+## Never more Guards aiming true in one frame than this (CrewFire.holders).
+const TRUE_AIM_MOST := 2
+## A Bound Worker moving further than this from where it was first seen
+## Bound fails the Raid: it never moves again.
+const BOUND_MOVE := 0.05
+## Loud ties up a Worker that surrenders to him (_tie_up_one): he walks to within BIND_STAND of it and holds the interact key until it
+## is Bound, giving up after BIND_TRIES tries or BIND_PATIENCE seconds of
+## holding.
+const BIND_STAND := 1.4
+const BIND_TRIES := 3
+const BIND_PATIENCE := 3.0
+## Seconds Loud spends at most trying to tie up a Worker, so one that never
+## surrenders does not hold him for the rest of the Raid.
+const SPARE_FOR := 30.0
 ## Seconds he keeps pressing interact at a Container in reach before the
 ## Raid fails, and seconds he may spend closing the last stretch to it.
 const SEARCH_PATIENCE := 10.0
@@ -327,6 +363,21 @@ var cover_held := ""
 var cover_fire := ""
 var wrong_prompt := ""
 var alarm_banner := ""
+var open_fight := ""
+var too_many_true := ""
+var worker_fired := ""
+var bound_moved := ""
+## Per Guard in the open: [cover spot in reach since (-1: none), last look].
+var _open := {}
+## Bound Worker to where it was first seen Bound.
+var _bound_at := {}
+## While Loud tries to tie a Worker up he shoots no Worker but a runner.
+var _sparing := false
+var _bind_tries := 0
+## Across the run: the most Guards seen aiming true in one frame, and the
+## Raids that bound a Worker.
+var true_most := 0
+var bound_raids: Array[String] = []
 ## Counts crew tipping into spotted, beside the HUD's own count.
 var spots: SpotCounter
 var _anchors := {}
@@ -458,9 +509,15 @@ func _check_floors() -> void:
 		var e: Dictionary = endings[script]
 		print("endings %s: %d Raids, ghost %d, extracted (Alarm raised) %d, down %d, failed %d; banked Loot %d, extracted with a kill %d" % [
 			script, e.raids, e.ghost, e.extracted, e.down, e.failed, e.loot, e.kill])
+	print("firefights: at most %d Guards aimed true in one frame; %d Raids bound a Worker%s" % [
+		true_most, bound_raids.size(), (": " + "; ".join(bound_raids)) if not bound_raids.is_empty() else ""])
 	if only_class != &"" or only_ship != 0 or only_script != &"":
 		print("sweep floors not checked on a narrowed run")
 		return
+	# Some scripted Raid ties a Worker up, so binding is played end to end.
+	checks += 1
+	if bound_raids.is_empty() and endings.has(&"loud"):
+		failures.append("sweep: no Raid bound a Worker  [%s]" % _replay())
 	var quiet: Dictionary = endings.get(&"quiet", {})
 	var loud: Dictionary = endings.get(&"loud", {})
 	_floor(quiet.get("ghost", 0), quiet.get("raids", 0), QUIET_GHOST_FLOOR, &"quiet",
@@ -566,6 +623,14 @@ func _attempt(ship_class: StringName, ship_seed: int, script: StringName) -> Arr
 	cover_fire = ""
 	wrong_prompt = ""
 	alarm_banner = ""
+	open_fight = ""
+	too_many_true = ""
+	worker_fired = ""
+	bound_moved = ""
+	_open.clear()
+	_bound_at.clear()
+	_sparing = false
+	_bind_tries = 0
 	_anchors.clear()
 	_taps.clear()
 	_engaged.clear()
@@ -639,6 +704,12 @@ func _attempt(ship_class: StringName, ship_seed: int, script: StringName) -> Arr
 	_expect(cover_fire == "", cover_fire)
 	_expect(wrong_prompt == "", wrong_prompt)
 	_expect(alarm_banner == "", alarm_banner)
+	_expect(open_fight == "", open_fight)
+	_expect(too_many_true == "", too_many_true)
+	_expect(worker_fired == "", worker_fired)
+	_expect(bound_moved == "", bound_moved)
+	if main.ledger.bound > 0:
+		bound_raids.append("%s (%d)" % [label, main.ledger.bound])
 	var result := _check_ending(script, start)
 	if result[0] == "none" and not stopped_why:
 		_expect(false, "no end state within the %.0f s budget (%.1f s simulated)" % [BUDGET[script], t])
@@ -744,12 +815,10 @@ func _frame(budget: float) -> bool:
 ## it is not.
 func _stuck_in_fight(member: Crew3D) -> String:
 	var cover: CrewCover = member.cover
+	var what := _crew_name(member)
 	if cover == null or not member.state in [Crew3D.State.FIGHT, Crew3D.State.COVER]:
 		_down_in_sight.erase(member)
-		_fight_walk.erase(member)
-		return ""
-	var what := "a Guard (%s, mode %s, %.1f m from the Pirate)" % [member.weapon.resource_path.get_file() if member.weapon else "unarmed",
-			CrewCover.MODE_NAMES[cover.mode], _flat(member.global_position).distance_to(_flat(player.global_position))]
+		return _stuck_walking(member, what)
 	if cover.mode != CrewCover.Mode.DOWN or not member._can_see:
 		_down_in_sight.erase(member)
 	elif not _down_in_sight.has(member) or _down_in_sight[member][1] != cover.downs or _down_in_sight[member][2] != cover.near_misses:
@@ -763,6 +832,28 @@ func _stuck_in_fight(member: Crew3D) -> String:
 		if t - _down_in_sight[member][0] - habit > cover.longest_down() + COVER_SLACK:
 			return "%s stayed down %.1f s (%.1f s of it waiting on its habit) with him in its sight, longer than %.2f + %.1f s (t=%.1f s)" % [what,
 					t - _down_in_sight[member][0], habit, cover.longest_down(), COVER_SLACK, t]
+	return _stuck_walking(member, what)
+
+
+## "a Guard (gun, cover mode or state, metres from the Pirate)" or "a Worker
+## (state, metres from the Pirate)", for failure lines.
+func _crew_name(member: Crew3D) -> String:
+	var far := _flat(member.global_position).distance_to(_flat(player.global_position))
+	if member.is_worker():
+		return "a Worker (%s, %.1f m from the Pirate)" % [Crew3D.State.keys()[member.state], far]
+	var cover: CrewCover = member.cover
+	var doing: String = Crew3D.State.keys()[member.state]
+	if cover != null and member.state in [Crew3D.State.FIGHT, Crew3D.State.COVER]:
+		doing = "mode " + CrewCover.MODE_NAMES[cover.mode]
+	return "a Guard (%s, %s, %.1f m from the Pirate)" % [member.weapon.resource_path.get_file() if member.weapon else "unarmed",
+			doing, far]
+
+
+## Any crew member trying to walk FIGHT_STUCK_TIME without moving
+## FIGHT_STUCK_MOVE (a second's standing still starts the count again):
+## what it is and where, else empty. Crew-combat ticket 18 checked Guards in
+## a cover fight so; ticket 27 checks every crew member in every state.
+func _stuck_walking(member: Crew3D, what: String) -> String:
 	var flat := _flat(member.global_position)
 	if not _fight_walk.has(member) or flat.distance_to(_fight_walk[member][0]) > FIGHT_STUCK_MOVE:
 		_fight_walk[member] = [flat, 0.0, 0.0]
@@ -794,12 +885,26 @@ func _check_invariants() -> void:
 	if alarm_banner == "" and hud.alarm_showing() != alarm.is_raised:
 		alarm_banner = "the HUD's Alarm banner %s with the Alarm %s (t=%.1f s)" % [
 			"showing" if hud.alarm_showing() else "hidden", "raised" if alarm.is_raised else "not raised", t]
+	# Who aims true this frame, asked first as the crew will ask it.
+	var fire := CrewFire.of(player)
+	if fire != null:
+		fire.update()
+		true_most = maxi(true_most, fire.holders.size())
+		if too_many_true == "" and fire.holders.size() > TRUE_AIM_MOST:
+			too_many_true = "%d Guards aimed true at once, more than %d (t=%.1f s)" % [fire.holders.size(), TRUE_AIM_MOST, t]
 	for member in crew:
 		if not is_instance_valid(member) or not member.is_alive():
 			continue
 		var stuck_fighting := _stuck_in_fight(member)
 		if cover_held == "" and stuck_fighting != "":
 			cover_held = stuck_fighting
+		if open_fight == "":
+			open_fight = _open_with_cover(member)
+		if member.is_bound():
+			var at: Vector3 = _bound_at.get_or_add(member, member.global_position)
+			if bound_moved == "" and at.distance_to(member.global_position) > BOUND_MOVE:
+				bound_moved = "a Bound Worker moved %.2f m from where it was Bound, more than %.2f m (t=%.1f s)" % [
+					at.distance_to(member.global_position), BOUND_MOVE, t]
 		var walking: bool = member.state == Crew3D.State.PATROL and member.routine != null \
 				and member.job_phase == Crew3D.JobPhase.WALKING
 		var flat := Vector3(member.global_position.x, 0.0, member.global_position.z)
@@ -814,6 +919,32 @@ func _check_invariants() -> void:
 				STUCK_MOVE, STUCK_LIMIT, flat, against]
 			if stuck_crew == "":
 				stuck_crew = "%s (t=%.1f s)" % [what, t]
+
+
+## A Guard fighting in the open (not reloading there) while a cover spot it
+## would take has been in its reach for longer than OPEN_LIMIT: what it is
+## and where, else empty. The spot is the one [method CrewCover.find] gives
+## it, its own pick (hidden from him crouched, a peek, a fair walk within
+## its reach), looked for every OPEN_LOOK seconds.
+func _open_with_cover(member: Crew3D) -> String:
+	var cover: CrewCover = member.cover
+	if cover == null or cover.mode != CrewCover.Mode.OPEN or cover._open_reload \
+			or not member.state in [Crew3D.State.FIGHT, Crew3D.State.COVER]:
+		_open.erase(member)
+		return ""
+	var seen: Array = _open.get_or_add(member, [-1.0, -INF, Vector2i.MAX])
+	if t - seen[1] >= OPEN_LOOK - 0.0001:
+		seen[1] = t
+		var found := cover.find(0)
+		if found.is_empty():
+			seen[0] = -1.0
+		elif seen[0] < 0.0:
+			seen[0] = t
+			seen[2] = found.tile
+	if seen[0] >= 0.0 and t - seen[0] > OPEN_LIMIT:
+		return "%s fought in the open %.1f s with a cover spot (tile %s) in its reach, longer than %.0f s (t=%.1f s)" % [
+			_crew_name(member), t - seen[0], seen[2], OPEN_LIMIT, t]
+	return ""
 
 
 ## The Pirate's body is in some Door's (or Hatch's) Trigger.
@@ -835,7 +966,12 @@ func _pressed_against(member: Crew3D) -> String:
 		if hit is GridMap:
 			return "a wall (%s)" % hit.name
 		if hit is CharacterBody3D:
-			return "a body (%s)" % ("the Pirate" if hit == player else "crew")
+			if hit == player:
+				return "a body (the Pirate)"
+			var other := hit as Crew3D
+			return "a body (crew: %s %s, %s, %s)" % ["Worker" if other.is_worker() else "Guard", Crew3D.State.keys()[other.state],
+					"walking" if other.is_walking() else ("giving way" if other._yield_to != null else "still"),
+					("job " + Crew3D.JobPhase.keys()[other.job_phase]) if other.routine != null else "no routine"]
 		if hit != null and _is_door(hit):
 			return "a Door"
 		if hit != null:
@@ -856,6 +992,8 @@ func _on_shot(node: Node) -> void:
 	if shot == null or not shot.shooter is Crew3D:
 		return
 	var member: Crew3D = shot.shooter
+	if member.is_worker() and worker_fired == "":
+		worker_fired = "a Worker (%s) fired (t=%.1f s)" % [Crew3D.State.keys()[member.state], t]
 	var fired_on := Engine.get_physics_frames()
 	# Its gun's Muzzle, where the bolt was born (crew-combat ticket 16).
 	var muzzle := shot.global_position
@@ -953,7 +1091,7 @@ func _loud() -> bool:
 	var quarry: Crew3D = null
 	repick = 0.0
 	while main.ledger.kills == 0:
-		if t >= repick or quarry == null or not quarry.is_alive():
+		if t >= repick or quarry == null or not quarry.is_alive() or quarry.is_bound():
 			quarry = _nearest_crew(false, true)
 			repick = t + 1.0
 			if quarry == null:
@@ -969,6 +1107,8 @@ func _loud() -> bool:
 			return false
 		if not await _frame(budget) or not player.is_alive():
 			return false
+	if not await _tie_up_one(budget):
+		return false
 	var target := _pick_container(player.global_position, false)
 	_expect(target[0] != null, "no Container with gold the Pirate can reach after the fight")
 	if target[0] == null:
@@ -978,6 +1118,67 @@ func _loud() -> bool:
 	if not await _walk_to(home, false, budget, "the home door", Fire.ALL):
 		return false
 	return await _extract(budget, Fire.ALL)
+
+
+## Loud, a kill made: ties up one Worker, for at most SPARE_FOR seconds.
+## He goes after the nearest hiding or surrendered Worker by route (else
+## the nearest Worker, which hides or runs once it spots him), shooting no
+## Worker but one running for a panel (and fighting any Guard in sight as
+## usual); rests his crosshair on a hiding one in his sight within its aim
+## reach until it surrenders (Sandbox surrender_aim_time), and walks up to the first surrendered one he sees
+## and ties it up (_bind, at most BIND_TRIES tries). False only when he
+## went down or the budget ran out; finding nobody to tie up is no failure.
+func _tie_up_one(budget: float) -> bool:
+	var until := t + SPARE_FOR
+	var quarry: Crew3D = null
+	var repick := 0.0
+	_sparing = true
+	var going := true
+	while going and main.ledger.bound == 0 and _bind_tries < BIND_TRIES and t < until:
+		if t >= repick or quarry == null or not quarry.is_alive() or quarry.is_bound():
+			quarry = _nearest_worker()
+			repick = t + 1.0
+			if quarry == null:
+				break
+		if not _targets(false).is_empty():
+			going = await _fight(budget, 1.0, Fire.ALL)
+			repick = 0.0
+			route.clear()
+			continue
+		var surrendered := _worker_in_sight(Crew3D.State.SURRENDER, SIGHT)
+		if surrendered != null:
+			going = await _bind(surrendered, budget)
+			repick = 0.0
+			route.clear()
+			continue
+		var hiding := _worker_in_sight(Crew3D.State.COWER, quarry.sandbox.surrender_aim_reach - 0.5)
+		if hiding != null:
+			_stop()
+			_look_at(_chest(hiding))
+			route.clear()
+		elif _follow(quarry) == Walk.STUCK:
+			break  # out of reach: no Worker tied up this Raid
+		going = await _frame(budget) and player.is_alive()
+	_sparing = false
+	_stop()
+	return going and player.is_alive()
+
+
+## The living Worker not Bound nearest by route, one hiding or surrendered
+## before any other, or null.
+func _nearest_worker() -> Crew3D:
+	var best: Crew3D = null
+	var best_length := INF
+	for member in crew:
+		if not member.is_alive() or not member.is_worker() or member.is_bound():
+			continue
+		var length := _route_length(_route(player.global_position, member.global_position))
+		if not member.state in [Crew3D.State.COWER, Crew3D.State.SURRENDER]:
+			length += 100000.0
+		if length < best_length:
+			best = member
+			best_length = length
+	return best
 
 
 ## Up to the nearest Guard and stand in its view, never firing. Stood
@@ -1430,7 +1631,9 @@ func _targets(threats_only: bool) -> Array[Crew3D]:
 	for member in crew:
 		if not is_instance_valid(member) or not member.is_alive() or _given_up.get(member, -1.0) > t:
 			continue
-		if threats_only and not _onto_him(member):
+		if member.is_bound() or (threats_only and not _onto_him(member)):
+			continue
+		if _sparing and member.is_worker() and member.state != Crew3D.State.FLEE:
 			continue
 		var chest := _chest(member)
 		if eye.distance_to(chest) > SIGHT:
@@ -1478,7 +1681,7 @@ func _barrel_blocked() -> Crew3D:
 ## has surrendered to him (SURRENDER, crew-combat ticket 24; a hiding Worker
 ## surrenders when he comes within 4 m) is the same: harmless, left be,
 ## shot only at his elbow, its kill worth 0 XP. A Bound one is never shot
-## (the bot never ties one up).
+## (Loud ties one up, _bind; _targets leaves Bound Workers out).
 func _onto_him(member: Crew3D) -> bool:
 	if member.state in [Crew3D.State.COWER, Crew3D.State.SURRENDER]:
 		return member._cornered()
@@ -1503,7 +1706,7 @@ func _nearest_crew(guard: bool, worker_first := false) -> Crew3D:
 	var best: Crew3D = null
 	var best_length := INF
 	for member in crew:
-		if not member.is_alive() or (guard and member.is_worker()):
+		if not member.is_alive() or member.is_bound() or (guard and member.is_worker()):
 			continue
 		var length := _route_length(_route(player.global_position, member.global_position))
 		if worker_first and not member.is_worker():
@@ -1512,6 +1715,60 @@ func _nearest_crew(guard: bool, worker_first := false) -> Crew3D:
 			best = member
 			best_length = length
 	return best
+
+
+## The nearest living Worker in [param state] within [param reach] metres
+## with a clear line from his eyes to its chest, or null.
+func _worker_in_sight(state: Crew3D.State, reach: float) -> Crew3D:
+	var eye: Vector3 = player.camera.global_position
+	var space := player.get_world_3d().direct_space_state
+	var best: Crew3D = null
+	for member in crew:
+		if not is_instance_valid(member) or not member.is_alive() or not member.is_worker() or member.state != state:
+			continue
+		var chest := _chest(member)
+		if eye.distance_to(chest) > reach or (best != null and eye.distance_to(chest) > eye.distance_to(_chest(best))):
+			continue
+		if space.intersect_ray(PhysicsRayQueryParameters3D.create(eye, chest, 1)).is_empty():
+			best = member
+	return best
+
+
+## Ties up [param member], a surrendered Worker, as a player does: walks to
+## within BIND_STAND of it, faces it, presses the interact key afresh and
+## holds it until it is Bound (the Sandbox's bind time) or BIND_PATIENCE
+## passes. A Worker he cannot reach, or one that stops being surrendered,
+## ends the try. False only when he went down or the budget ran out.
+func _bind(member: Crew3D, budget: float) -> bool:
+	_bind_tries += 1
+	_taps.erase(&"interact")
+	Input.action_release(&"interact")
+	if not _plan(member.global_position):
+		return true
+	var short_ends := SHORT_ENDS
+	while member.is_surrendered() and _flat(member.global_position).distance_to(_flat(player.global_position)) > BIND_STAND:
+		var state := _walk(false, member.global_position - player.global_position)
+		if state == Walk.ARRIVED:
+			short_ends -= 1
+			if short_ends < 0 or not _plan(member.global_position):
+				return true
+		elif state == Walk.STUCK:
+			return true
+		if not await _frame(budget) or not player.is_alive():
+			return false
+	_stop()
+	_look_at(member.global_position + Vector3.UP * 0.6)
+	if not await _frame(budget) or not player.is_alive():
+		return false
+	Input.action_press(&"interact")
+	var until := t + BIND_PATIENCE
+	while member.is_surrendered() and t < until:
+		_look_at(member.global_position + Vector3.UP * 0.6)
+		if not await _frame(budget) or not player.is_alive():
+			Input.action_release(&"interact")
+			return false
+	Input.action_release(&"interact")
+	return true
 
 
 ## A Guard shooting at him (or about to), with him in its sight.

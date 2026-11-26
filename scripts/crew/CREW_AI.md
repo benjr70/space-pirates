@@ -489,7 +489,18 @@ each leg a prop would block round it:
     and stands 1.5 s (`BLOCKED_PAUSE`) before it walks anywhere again
     (crew-combat ticket 22: a searching Guard walked into a Shotgun in
     ambush in a one-wide way and stood there pushing for the rest of the
-    fight). If both are
+    fight). Since crew-combat ticket 27 (`_give_up_walk`) the same goes for
+    any crew member standing still (not walking, not giving way) that
+    cannot make way, a Worker working at a prop at the end of a one-wide
+    lane with nowhere to step aside, say, and for a way round that was
+    taken and still left it stuck (three tries, `GIVE_WAY_LOOK_FURTHER`)
+    behind one that holds its spot or stands still: the walker out of a
+    fight gives that walk up. Hunting him behind a partner fighting him, it
+    joins the cover fight where it stands; walking to a Job on routine
+    behind one standing still, it moves on to its next Job; otherwise it
+    stands 1.5 s. The smoke run's "no crew member trying to walk 5 s
+    without moving 0.3 m" caught a Worker pressing 10 s into a working one
+    and a hunting Guard pressing into a partner fighting in the open. If both are
     walking, **only one of the pair acts**: the one that can (has a way
     round, or an open tile within 5 steps whose centre is 1 m or more off
     the other's way, reached without passing through a body:

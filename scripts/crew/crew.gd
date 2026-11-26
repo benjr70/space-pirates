@@ -1705,17 +1705,18 @@ func _crew_in_way(reach := GIVE_WAY_NEAR) -> Crew3D:
 func _get_past(other: Crew3D) -> void:
 	var detour := CrewPaths.route_around(layout, global_position, _path, _bodies_near())
 	if not other.is_walking():
-		if not detour.is_empty():
+		# The one in the way will not move of itself: it holds its spot in
+		# a fight (down in cover, a Shotgun in ambush, fighting in the
+		# open), or stands still (working at a prop, hiding in a doorway).
+		var held := other.state in [State.FIGHT, State.COVER] or (other._yield_to == null and other._path.is_empty())
+		var out_of_fight := not state in [State.FIGHT, State.COVER]
+		# A way round already taken, and still stuck against it.
+		var tried := _stuck_tries >= GIVE_WAY_LOOK_FURTHER
+		if not detour.is_empty() and not (tried and held and out_of_fight):
 			_path = detour
 			_repath_timer = UNSTICK_AFTER
-		elif not other.make_way_for(self) and other.state in [State.FIGHT, State.COVER] \
-				and not state in [State.FIGHT, State.COVER]:
-			# No way round, and the one in the way holds its spot in a fight
-			# (down in cover, a Shotgun in ambush) and will not move: out of
-			# the fight itself, it gives this walk up and stands a moment
-			# before it walks anywhere again.
-			_path.clear()
-			_hold_timer = maxf(_hold_timer, BLOCKED_PAUSE)
+		elif held and out_of_fight and (not detour.is_empty() or not other.make_way_for(self)):
+			_give_up_walk(other)
 		return
 	if other._yield_to == self:
 		return  # it is stepping aside for this one
@@ -1737,6 +1738,30 @@ func _get_past(other: Crew3D) -> void:
 	spot.append_array(_path)
 	_path = spot
 	_repath_timer = GIVE_WAY_WAIT
+
+
+## Blocked by [param other], which will not move, with no way round (or
+## one that did not get it past) and no making way: out of the fight
+## itself, it gives this walk up. Hunting him behind a partner fighting
+## him, it joins the fight from where it stands; walking to a Job on
+## routine behind one standing still, it moves on to its next Job;
+## otherwise it stands BLOCKED_PAUSE before it walks anywhere again.
+## (Crew-combat ticket 22 gave up only behind a Guard holding its spot in
+## a fight with no way round; ticket 27's smoke invariant, no crew member
+## trying to walk 5 s without moving 0.3 m, caught a Worker pressing 10 s
+## into a working one at the end of a lane and a hunting Guard pressing
+## into a partner fighting in the open in a one-wide way.)
+func _give_up_walk(other: Crew3D) -> void:
+	var fighting := other.state in [State.FIGHT, State.COVER]
+	if fighting and state == State.HUNT and cover != null and not flanking:
+		_enter(State.COVER)
+		return
+	if not fighting and state == State.PATROL and routine != null and job_phase == JobPhase.WALKING:
+		routine.advance()
+		_start_job()
+		return
+	_path.clear()
+	_hold_timer = maxf(_hold_timer, BLOCKED_PAUSE)
 
 
 ## Asked by [param walker], which it stands in the way of with no way
