@@ -9,6 +9,14 @@ extends SceneTree
 
 ## Scratch copies of the resources, so no check here writes the real ones.
 const SCRATCH := "user://sandbox_test/"
+## Every Gunnery field, a row each in the sheet's Gunnery table.
+const GUNNERY_KEYS: Array[StringName] = [&"aim_error_degrees", &"opening_spread", &"closing_time", &"lead",
+		&"shots_per_burst_low", &"shots_per_burst_high", &"bursts_per_peek", &"gap_between_bursts_low",
+		&"gap_between_bursts_high", &"time_down_low", &"time_down_high", &"settle", &"range_near", &"range_far",
+		&"hold_before_shifting", &"reload_factor"]
+## The Crew fight table's rows, in order, at their starting numbers.
+const CREW_FIGHT := {&"true_aim_count": 2, &"true_aim_handover": 0.8, &"walk_in_distance": 1.0, &"shotgun_pellet_cap": 9,
+		&"suppression_time": 4.0, &"too_close": 3.0, &"flank_reaction": 0.4, &"open_floor": 2.5}
 
 var failures: Array[String] = []
 var checks := 0
@@ -55,7 +63,11 @@ func _check_doc_fresh() -> void:
 			"| Shots Per Burst High | 3 | 5 | 1 | 1 |", "| Time Down Low | 1.0 | 1.5 | 1.2 | 2.5 |",
 			"| Range Near | 4.0 | 5.0 | 2.0 | 8.0 |", "| Range Far | 8.0 | 10.0 | 5.0 | 14.0 |",
 			"| Reload Factor | 1.5 | 1.5 | 1.5 | 1.5 |", "A Guard fires the gun it rolled",
-			"| Aim Time | 0.15 | 0.22 | 0.22 | 0.32 |", "| Swap Time | 0.3 | 0.4 | 0.45 | 0.5 |"]:
+			"| Aim Time | 0.15 | 0.22 | 0.22 | 0.32 |", "| Swap Time | 0.3 | 0.4 | 0.45 | 0.5 |",
+			"## Crew fight\n\n| | Value |\n|---|---|\n| **Crew fight** | |\n| True Aim Count | 2 |\n| True Aim Handover | 0.8 |\n"
+			+ "| Walk In Distance | 1.0 |\n| Shotgun Pellet Cap | 9 |\n| Suppression Time | 4.0 |\n| Too Close | 3.0 |\n"
+			+ "| Flank Reaction | 0.4 |\n| Open Floor | 2.5 |\n",
+			"## Surrender and Bound\n\n| | Value |\n|---|---|\n| **Surrender and Bound** | |\n| Surrender Reach | 4.0 |"]:
 		_expect(doc.contains(heading), "docs/sandbox.md lacks \"%s\"" % heading)
 	# Aim time and swap time are each weapon's own, editable in the sheet.
 	var weapons := SandboxSheet.from_disk().table(SandboxSheet.WEAPONS)
@@ -200,10 +212,11 @@ func _check_edit_save_revert(copies: Dictionary) -> void:
 			"the sheet has no Gunnery table of the four weapons")
 	if gunnery == null:
 		return
-	for key in [&"aim_error_degrees", &"opening_spread", &"closing_time", &"shots_per_burst_low", &"shots_per_burst_high",
-			&"bursts_per_peek", &"gap_between_bursts_low", &"gap_between_bursts_high", &"time_down_low", &"time_down_high",
-			&"settle", &"lead", &"range_near", &"range_far", &"hold_before_shifting", &"reload_factor"]:
+	for key in GUNNERY_KEYS:
 		_expect(gunnery.is_editable(key), "Gunnery's %s is not editable in the sheet" % key)
+	var gunnery_rows := gunnery.rows.map(func(r: Dictionary) -> StringName: return r.key)
+	_expect(gunnery_rows.size() == GUNNERY_KEYS.size(), "the Gunnery table's rows are %s, want every Gunnery field: %s" % [gunnery_rows, GUNNERY_KEYS])
+	_check_crew_fight_table(sheet)
 	_expect(weapons.columns == PackedStringArray(["Pistol", "Assault Rifle", "Shotgun", "Marksman Rifle"]), "weapon columns are %s" % weapons.columns)
 	_expect(sheet.changed_count() == 0, "a fresh sheet has %d changed cells" % sheet.changed_count())
 
@@ -259,7 +272,50 @@ func _check_edit_save_revert(copies: Dictionary) -> void:
 	_expect(SandboxSheet.from_disk(copies.weapons, copies.sandbox, copies.gunnery, copies.attachments).stale_report(copies.doc) == "",
 			"Save left the Markdown view stale")
 	_expect(FileAccess.get_file_as_string(copies.doc).contains("| Damage | 40 | 25 |"), "the saved view lacks the Pistol at 40")
+	_check_crew_fight_save(sheet, copies)
 	_check_factor_save_revert(sheet, copies)
+
+
+## The Crew fight table: one column, the eight crew fight numbers as rows at
+## their starting numbers, each editable, and none of them in Health and
+## Melee; Surrender and Bound has its own table too.
+func _check_crew_fight_table(sheet: SandboxSheet) -> void:
+	var fight := sheet.table(SandboxSheet.CREW_FIGHT)
+	_expect(fight != null and fight.columns == PackedStringArray(["Value"]), "the sheet has no one-column Crew fight table")
+	if fight == null:
+		return
+	var keys := fight.rows.map(func(r: Dictionary) -> StringName: return r.key)
+	_expect(keys == CREW_FIGHT.keys(), "the Crew fight rows are %s, want %s" % [keys, CREW_FIGHT.keys()])
+	for key: StringName in CREW_FIGHT:
+		_expect(fight.is_editable(key) and SheetTable.same(fight.value(key, 0), CREW_FIGHT[key]),
+				"Crew fight's %s reads %s (editable %s), want %s, editable" % [key, fight.value(key, 0), fight.is_editable(key), CREW_FIGHT[key]])
+	var health := sheet.table(SandboxSheet.HEALTH)
+	var health_keys := health.rows.map(func(r: Dictionary) -> StringName: return r.key)
+	_expect(health_keys == [&"pirate_health", &"crew_health", &"melee_damage"], "the Health and Melee rows are %s" % [health_keys])
+	var surrender := sheet.table(SandboxSheet.SURRENDER)
+	_expect(surrender != null and surrender.rows.size() == 6 and surrender.is_editable(&"bind_time"),
+			"the sheet has no Surrender and Bound table of six numbers")
+
+
+## Every Crew fight value edited, saved and reloaded from disk keeps it.
+func _check_crew_fight_save(sheet: SandboxSheet, copies: Dictionary) -> void:
+	var fight := sheet.table(SandboxSheet.CREW_FIGHT)
+	var edited := {&"true_aim_count": 1, &"true_aim_handover": 1.25, &"walk_in_distance": 1.5, &"shotgun_pellet_cap": 7,
+			&"suppression_time": 5.5, &"too_close": 3.5, &"flank_reaction": 0.6, &"open_floor": 2.0}
+	for key: StringName in edited:
+		_expect(fight.set_value(key, 0, edited[key]), "Crew fight's %s would not take %s" % [key, edited[key]])
+	_expect(fight.changed_count() == 8, "eight Crew fight edits mark %d cells" % fight.changed_count())
+	_expect(sheet.save() == OK, "Save failed on the Crew fight table")
+	var saved: Sandbox = ResourceLoader.load(copies.sandbox, "", ResourceLoader.CACHE_MODE_IGNORE)
+	for key: StringName in edited:
+		_expect(SheetTable.same(saved.get(key), edited[key]), "Save wrote Crew fight's %s as %s, want %s" % [key, saved.get(key), edited[key]])
+	_expect(saved.crew_health == 120, "saving the Crew fight table lost crew Health (%d)" % saved.crew_health)
+	var reloaded := SandboxSheet.from_disk(copies.weapons, copies.sandbox, copies.gunnery, copies.attachments)
+	var fight_on_disk := reloaded.table(SandboxSheet.CREW_FIGHT)
+	for key: StringName in edited:
+		_expect(SheetTable.same(fight_on_disk.value(key, 0), edited[key]), "the sheet over the reloaded files reads Crew fight's %s as %s, want %s"
+				% [key, fight_on_disk.value(key, 0), edited[key]])
+	_expect(reloaded.stale_report(copies.doc) == "", "saving the Crew fight table left the Markdown view stale")
 
 
 ## A factor is dialled like any number: the live Attachment changes, the
@@ -396,6 +452,7 @@ func _check_in_raid() -> void:
 					"a Pistol Guard's cone is %.1f after aim error 3 on a 1 degree Pistol" % body.base_cone_degrees())
 	_expect(view.disk_shown(SandboxSheet.GUNNERY, &"aim_error_degrees", 0) == "7.5", "the Gunnery cell does not show the disk value 7.5")
 	_key(KEY_F1)
+	_check_rifle_aim_error(view, crew, pistol)
 	# Pirate Health applies live too.
 	_key(KEY_F1)
 	(view.cell(SandboxSheet.HEALTH, &"pirate_health", 0) as SpinBox).value = 175
@@ -410,6 +467,40 @@ func _check_in_raid() -> void:
 	paused = false
 	main.free()
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+
+
+## The Assault Rifle's aim error set to 0 in the sheet: the next Assault
+## Rifle Guard shot strays by the gun's own spread only (its closed cone, and
+## the shot fires), and a Pistol Guard's cone is unchanged. Two Guards of the
+## Raid are armed for it.
+func _check_rifle_aim_error(view: Node, crew: Array, pistol: Resource) -> void:
+	var guards := crew.filter(func(body: Node) -> bool: return not body.is_worker() and body.is_alive())
+	_expect(guards.size() >= 2, "the Raid has %d Guards, want two to arm" % guards.size())
+	if guards.size() < 2:
+		return
+	var rifle: Resource = load("res://resources/weapons/assault_rifle.tres")
+	var rifleman: Node = guards[0]
+	var pistolman: Node = guards[1]
+	rifleman.weapon = rifle
+	rifleman.gunnery = load(Gunnery.PATHS[1])
+	pistolman.weapon = pistol
+	pistolman.gunnery = load(Gunnery.PATHS[0])
+	var pistol_cone: float = pistolman.base_cone_degrees()
+	_key(KEY_F1)
+	(view.cell(SandboxSheet.GUNNERY, &"aim_error_degrees", 1) as SpinBox).value = 0.0
+	_key(KEY_F1)
+	# Aim closed (long in sight), so the opening spread plays no part.
+	rifleman._exposed_for = 100.0
+	_expect(is_equal_approx(rifleman.spread_degrees(), rifle.spread_base_degrees),
+			"an Assault Rifle Guard's shot strays %.2f degrees after aim error 0, want the gun's own %.2f"
+			% [rifleman.spread_degrees(), rifle.spread_base_degrees])
+	var shot: Node = rifleman._fire()
+	_expect(shot != null, "the Assault Rifle Guard did not fire after the edit")
+	_expect(is_equal_approx(pistolman.base_cone_degrees(), pistol_cone) and pistol_cone > pistol.spread_base_degrees,
+			"a Pistol Guard's cone moved to %.2f with the Assault Rifle's aim error, want %.2f" % [pistolman.base_cone_degrees(), pistol_cone])
+	_key(KEY_F1)
+	(view.cell(SandboxSheet.GUNNERY, &"aim_error_degrees", 1) as SpinBox).value = 6.0
+	_key(KEY_F1)
 
 
 ## A Raid from the menu, carrying Built Weapons: the weapon columns stay

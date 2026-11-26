@@ -190,6 +190,8 @@ func _initialize() -> void:
 	await _check_worker_poses()
 	_check_no_worker_shots()
 	_check_no_guard_surrenders()
+	# Last, so the extra fight moves no earlier check's random draws.
+	await _check_true_aim(1)
 	await _silence()
 	_report()
 	quit(1 if failures.size() > 0 else 0)
@@ -1101,11 +1103,18 @@ func _whole_bursts(shots: Array) -> Array:
 ## Five Guards in sight of him in the open for 20 s: no physics frame has
 ## more than two aiming true, every frame in which any has a clear muzzle
 ## line has at least one, true aim passes round, and every shot from a
-## Guard not aiming true is aimed 0.4 to 0.8 m from his body centre.
-func _check_true_aim() -> void:
+## Guard not aiming true is aimed 0.4 to 0.8 m from his body centre. With
+## [param count] other than 2, the Sandbox's how-many-aim-true is set to it
+## (as the Sandbox sheet would, live) and at most that many may aim true.
+func _check_true_aim(count := 2) -> void:
 	# Held where the check puts him, whatever an earlier check left running.
 	var pirate_physics := player.is_physics_processing()
 	player.set_physics_process(false)
+	var numbers: Sandbox = load(Sandbox.PATH)
+	if count != numbers.true_aim_count:
+		# Through the Sandbox sheet's Crew fight table, on the live Sandbox.
+		var fight := SandboxSheet.build([], numbers).table(SandboxSheet.CREW_FIGHT)
+		_expect(fight.set_value(&"true_aim_count", 0, count), "the Sandbox sheet would not set how many aim true to %d" % count)
 	var pirate_health: int = player.health.max_health
 	player.health.max_health = 100000
 	player.health.reset()
@@ -1153,7 +1162,8 @@ func _check_true_aim() -> void:
 	get_first_node_in_group(&"projectiles").child_entered_tree.disconnect(watch)
 	for guard in guards:
 		guard.set_physics_process(false)
-	_expect(most <= 2, "true aim: %d Guards aimed true in one frame, want at most 2" % most)
+	numbers.true_aim_count = 2
+	_expect(most <= count, "true aim: %d Guards aimed true in one frame with %d to aim true, want at most %d" % [most, count, count])
 	_expect(with_line > 600 and bare == 0, "true aim: %d of %d frames with a clear muzzle line had no Guard aiming true, want none"
 			% [bare, with_line])
 	_expect(held_by.size() >= 3, "true aim: only %d of 5 Guards ever aimed true in %.0f s, want it passed round" % [held_by.size(), TRUE_AIM_SECONDS])
@@ -2937,8 +2947,9 @@ func _walk_unfair(guard: Crew3D, trail: Array, him: Vector3) -> String:
 		nearest = minf(nearest, _flat(sample, him))
 		if not guard._blocked(sample + Vector3.UP * Crew3D.TORSO_HEIGHT, eye):
 			seen += WALK_SAMPLE
-	if seen > CrewCover.OPEN_RUN + WALK_SAMPLE:
-		return "%.1f m of a %d-sample walk in his view (want at most %.1f + %.1f)" % [seen, samples.size(), CrewCover.OPEN_RUN, WALK_SAMPLE]
+	var open_floor: float = guard.sandbox.open_floor
+	if seen > open_floor + WALK_SAMPLE:
+		return "%.1f m of a %d-sample walk in his view (want at most %.1f + %.1f)" % [seen, samples.size(), open_floor, WALK_SAMPLE]
 	if nearest < least - WALK_SAMPLE:
 		return "came within %.1f m of him, the nearer end %.1f m (want no nearer than it less 1 m, within %.1f)" % [nearest, least + 1.0, WALK_SAMPLE]
 	return ""

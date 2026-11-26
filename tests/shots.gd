@@ -43,7 +43,8 @@ extends SceneTree
 ##              extracted).
 ##   scene      path=<res://...> cam=x,y,z look=x,y,z [fov=<deg>] [name=<png>]
 ##   sheet      the Sandbox sheet (F1) open in a Raid carrying a fitted Loadout:
-##              sheet.png (strip and Weapons), sheet_attachments.png and
+##              sheet.png (strip and Weapons), sheet_crew_fight.png (Crew
+##              fight and Surrender and Bound), sheet_attachments.png and
 ##              sheet_attachments_end.png (the Attachments table, top and
 ##              bottom, the Suppressor's loudness dialled to 0.5).
 ##
@@ -961,7 +962,7 @@ func _loadout_shots(menu: Node) -> void:
 ## and a Drum, then the Pistol: Built Weapon values beside the bare ones.
 ## Nothing is saved; the dialled factor is reverted before the end.
 func _sheet() -> void:
-	_expect(["sheet", "sheet_attachments", "sheet_attachments_end"])
+	_expect(["sheet", "sheet_crew_fight", "sheet_attachments", "sheet_attachments_end"])
 	var rifle: WeaponProfile = load("res://resources/weapons/assault_rifle.tres")
 	var loadout := Loadout.new()
 	loadout.set_first(rifle)
@@ -980,6 +981,8 @@ func _sheet() -> void:
 	var scroll: ScrollContainer = view.find_child("Scroll", true, false)
 	await process_frame
 	var tables := scroll.get_child(0)
+	scroll.scroll_vertical = int(tables.get_child(view.sheet.tables.find(view.sheet.table(SandboxSheet.CREW_FIGHT))).position.y)
+	await _snap("sheet_crew_fight")
 	scroll.scroll_vertical = int(tables.get_child(tables.get_child_count() - 1).position.y)
 	await _snap("sheet_attachments")
 	scroll.scroll_vertical = int(scroll.get_v_scroll_bar().max_value)

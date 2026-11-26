@@ -89,19 +89,6 @@ Every Sandbox number, generated from `resources/weapons/`, `resources/sandbox.tr
 | Crew Health | 100 |
 | **Melee** | |
 | Melee Damage | 75 |
-| **Crew fight** | |
-| True Aim Count | 2 |
-| True Aim Handover | 0.8 |
-| Walk In Distance | 1.0 |
-| Shotgun Pellet Cap | 9 |
-| Suppression Time | 4.0 |
-| **Surrender and Bound** | |
-| Surrender Reach | 4.0 |
-| Surrender Aim Time | 0.5 |
-| Surrender Aim Reach | 10.0 |
-| Kneel After | 1.5 |
-| Bind Time | 2.0 |
-| Bind Reach | 2.0 |
 
 Melee from behind (inside the 120.0 degree cone behind the target's facing) kills outright, whatever the damage.
 
@@ -130,7 +117,35 @@ Melee from behind (inside the 120.0 degree cone behind the target's facing) kill
 | **Reload** | | | | |
 | Reload Factor | 1.5 | 1.5 | 1.5 | 1.5 |
 
-A Guard fires the gun it rolled at ship build: that weapon's damage, projectile, pellets, time between shots and sounds. Aim error adds to the weapon's base cone. Each Guard draws its own 0.75-1.35x on time between shots at spawn. Spread opens at the opening spread times (base cone plus aim error) on first sight and closes to 1x over the closing time. Range band is where it likes to fight from (a term in its cover score); hold before shifting is how long it holds a spot out of its band before moving one nearer or further, negative never (the Marksman Rifle). Not read yet: reload factor (crew magazines and reloads).
+A Guard fires the gun it rolled at ship build: that weapon's damage, projectile, pellets, time between shots and sounds. Aim error adds to the weapon's base cone. Each Guard draws its own 0.75-1.35x on time between shots at spawn. Spread opens at the opening spread times (base cone plus aim error) on first sight and closes to 1x over the closing time. Range band is where it likes to fight from (a term in its cover score); hold before shifting is how long it holds a spot out of its band before moving one nearer or further, negative never (the Marksman Rifle). Reload factor multiplies the weapon's reload times in a Guard's hands.
+
+## Crew fight
+
+| | Value |
+|---|---|
+| **Crew fight** | |
+| True Aim Count | 2 |
+| True Aim Handover | 0.8 |
+| Walk In Distance | 1.0 |
+| Shotgun Pellet Cap | 9 |
+| Suppression Time | 4.0 |
+| Too Close | 3.0 |
+| Flank Reaction | 0.4 |
+| Open Floor | 2.5 |
+
+How many aim true at once (at least one always does while any has a shot) and the seconds each holds it before handing on; the walk-in is metres to one side the first burst of a sighting starts; the pellet cap is how many pellets of one crew Shotgun shot do damage. Suppression time is seconds Pistol and Assault Rifle Guards fire at the edges of the prop he broke sight behind. Too close (metres, in his sight) sends a Guard to a spot further off; flank reaction is the seconds he must see it where it hides before it moves; open floor is the metres in his view a Guard's walk to a spot may cross. Read live: an edit reaches Guards already in the Raid.
+
+## Surrender and Bound
+
+| | Value |
+|---|---|
+| **Surrender and Bound** | |
+| Surrender Reach | 4.0 |
+| Surrender Aim Time | 0.5 |
+| Surrender Aim Reach | 10.0 |
+| Kneel After | 1.5 |
+| Bind Time | 2.0 |
+| Bind Reach | 2.0 |
 
 ## Attachments
 

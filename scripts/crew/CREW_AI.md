@@ -650,7 +650,8 @@ its rules and numbers kept.
   standing still or stuck trying to walk (it would stall against the body).
 - **A fair walk** (its planned route sampled every 0.5 m) never comes nearer
   his last-seen spot than both its ends do, less 1 m, and crosses no more
-  than 2.5 m of floor whose torso height he can see.
+  than 2.5 m (the Sandbox's `open_floor`) of floor whose torso height he
+  can see.
 - **Getting there**: it runs, and stands on the spot (a last step if its
   walk ended short; a spot it is already within its arrive radius of is
   walked onto too, so its lines, judged from the tile's centre, hold). A
@@ -671,9 +672,11 @@ its rules and numbers kept.
   cover hides its head zone too; on one knee the top of its head shows. See
   A Guard's body in a fight.
 - **Leaving a spot** (checked while down):
-  - **Flanked**: he can see it crouched for 0.4 s: it picks again (that
+  - **Flanked**: he can see it crouched for 0.4 s (the Sandbox's
+    `flank_reaction`): it picks again (that
     holds for a Guard hiding with no shot too).
-  - **Too close**: he is in sight within 3 m: it picks a spot at least 1 m
+  - **Too close**: he is in sight within 3 m (the Sandbox's `too_close`): it
+    picks a spot at least 1 m
     further from him. Not the Shotgun, which stays; the Marksman Rifle's
     own rule at 5 m takes its place.
   - **No shot**: two peeks running with nothing to shoot: it picks again
@@ -1277,9 +1280,9 @@ and `crew.gd` (`SEARCH_AWARENESS`, `INVESTIGATE_SPEED`, `INVESTIGATE_LINGER`,
 `MISS_MARGIN`, `HEAD_RISE`, `HEAD_MISS_NEAR`, `EDGE_RISE`, `COVER_PROBE`,
 `PEEK_OFF`, `CLOSE`, `MOVING`),
 `crew_cover.gd` (`TAKE_OVER`, `SEARCH_RADIUS`, `FALL_BACK_RADIUS`,
-`WALK_REACH`, `OPEN_RUN`, `NEARER_SLACK`, `TRIED`, the score's `W_*`,
+`WALK_REACH`, `NEARER_SLACK`, `TRIED`, the score's `W_*`,
 `FULL_SHARE`, `BAND_FALLOFF`, `SPACING`, `JITTER`, `WAIT_UP`, `BLIND_PEEKS`,
-`FLANKED_AFTER`, `TOO_CLOSE`, `BETTER`,
+`BETTER`,
 `UNSEEN_ADVANCE`, `UNSEEN_SEARCH`, `NEAR_MISS`, `NEAR_MISS_HOLD`,
 `LOOK_HIDING`, `LOOK_OPEN`, `COVER_FIRE`, `COVER_WAIT`, `FLANK_SPOT_REACH`,
 `ARRIVE_DOWN`, `MOVE_GIVE_UP`,
@@ -1310,9 +1313,11 @@ Worker's `HIDE`, `HIDE_FLINCH`, `HIDE_SAT`, `HANDS_UP`, `HANDS_HIGH`,
 `PATROL_PAUSE`, `AWAY_CHANCE`) and `crew_noise.gd` (`SPRINT_STEP`, `WALK_STEP`, `DOOR`). They are starting values to be tuned by
 playtest. Gun numbers are not here: they are each weapon's Profile and its
 Gunnery, edited in the Sandbox sheet (`docs/sandbox.md`), as are the crew
-fight's five numbers on the Sandbox resource (how many aim true, the
-handover time, the walk-in distance, the Shotgun pellet cap, the
-suppression time), and Surrender and Bound's six (surrender reach 4 m, aim
+fight's eight numbers on the Sandbox resource, its Crew fight table (how
+many aim true, the handover time, the walk-in distance, the Shotgun pellet
+cap, the suppression time, the too-close distance 3 m, the flank reaction
+0.4 s, the open floor a Guard will cross in his view 2.5 m), read live so
+an edit reaches Guards already in the Raid, and Surrender and Bound's six (surrender reach 4 m, aim
 time 0.5 s, aim reach 10 m, kneel after 1.5 s, bind time 2 s, bind reach
 2 m); the XP for binding and for killing a surrendered or Bound Worker are
 constants in `scripts/raid_ledger.gd` (`BIND_XP`, `SURRENDERED_KILL_XP`)

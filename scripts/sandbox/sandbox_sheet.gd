@@ -2,7 +2,8 @@ class_name SandboxSheet
 extends RefCounted
 ## Every Sandbox number as tables: the four Weapon Profiles side by side
 ## with their derived rows, the [Sandbox] resource's Health and Melee, each
-## weapon's [Gunnery], and every [Attachment]'s factors. One
+## weapon's [Gunnery], the Sandbox's Crew fight and Surrender and Bound, and
+## every [Attachment]'s factors. One
 ## generator for both views of it: the in-Raid sheet ([SandboxSheetView])
 ## edits these tables live and Saves them, and `docs/sandbox.md` is
 ## [method to_markdown] of them, written on Save and by
@@ -15,6 +16,14 @@ extends RefCounted
 const DOC_PATH := "res://docs/sandbox.md"
 const WEAPONS := "Weapons"
 const HEALTH := "Health and Melee"
+const CREW_FIGHT := "Crew fight"
+const SURRENDER := "Surrender and Bound"
+## The [Sandbox] export groups each of its tables shows.
+const SANDBOX_GROUPS := {
+	HEALTH: ["Health", "Melee"],
+	CREW_FIGHT: ["Crew fight"],
+	SURRENDER: ["Surrender and Bound"],
+}
 const GUNNERY := "Gunnery"
 const ATTACHMENTS := "Attachments"
 const ATTACHMENT_DIR := "res://resources/attachments/"
@@ -46,7 +55,8 @@ static func build(weapons: Array, sandbox_resource: Sandbox, gunneries: Array = 
 	var weapon_table := SheetTable.from_resources(WEAPONS, names, weapons)
 	_add_weapon_derived(weapon_table, sandbox_resource)
 	sheet.add_table(weapon_table)
-	var health := SheetTable.from_resources(HEALTH, PackedStringArray(["Value"]), [sandbox_resource])
+	var health := SheetTable.from_resources(HEALTH, PackedStringArray(["Value"]), [sandbox_resource],
+			PackedStringArray(SANDBOX_GROUPS[HEALTH]))
 	health.add_note("Melee from behind (inside the %s degree cone behind the target's facing) kills outright, whatever the damage."
 			% SheetTable.format(_player_default(&"melee_back_cone_degrees")))
 	sheet.add_table(health)
@@ -57,8 +67,18 @@ static func build(weapons: Array, sandbox_resource: Sandbox, gunneries: Array = 
 				% [SheetTable.format(CrewCombat.JITTER.x), SheetTable.format(CrewCombat.JITTER.y)]
 				+ "Spread opens at the opening spread times (base cone plus aim error) on first sight and closes to 1x over the closing time. "
 				+ "Range band is where it likes to fight from (a term in its cover score); hold before shifting is how long it holds a spot out of its band before moving one nearer or further, negative never (the Marksman Rifle). "
-				+ "Not read yet: reload factor (crew magazines and reloads).")
+				+ "Reload factor multiplies the weapon's reload times in a Guard's hands.")
 		sheet.add_table(gunnery)
+	var fight := SheetTable.from_resources(CREW_FIGHT, PackedStringArray(["Value"]), [sandbox_resource],
+			PackedStringArray(SANDBOX_GROUPS[CREW_FIGHT]))
+	fight.add_note("How many aim true at once (at least one always does while any has a shot) and the seconds each holds it before handing on; "
+			+ "the walk-in is metres to one side the first burst of a sighting starts; the pellet cap is how many pellets of one crew Shotgun shot do damage. "
+			+ "Suppression time is seconds Pistol and Assault Rifle Guards fire at the edges of the prop he broke sight behind. "
+			+ "Too close (metres, in his sight) sends a Guard to a spot further off; flank reaction is the seconds he must see it where it hides before it moves; "
+			+ "open floor is the metres in his view a Guard's walk to a spot may cross. Read live: an edit reaches Guards already in the Raid.")
+	sheet.add_table(fight)
+	sheet.add_table(SheetTable.from_resources(SURRENDER, PackedStringArray(["Value"]), [sandbox_resource],
+			PackedStringArray(SANDBOX_GROUPS[SURRENDER])))
 	if not attachments.is_empty():
 		var names_of := PackedStringArray()
 		for attachment: Resource in attachments:
@@ -93,7 +113,7 @@ static func from_disk(weapon_paths: PackedStringArray = all_weapon_paths(),
 	for table in sheet.tables:
 		if table.title == WEAPONS:
 			table.paths = weapon_paths
-		elif table.title == HEALTH:
+		elif table.title in SANDBOX_GROUPS:
 			table.paths = PackedStringArray([sandbox_path])
 		elif table.title == GUNNERY:
 			table.paths = gunnery_paths

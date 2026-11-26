@@ -3,7 +3,9 @@ extends Resource
 ## The Sandbox numbers that belong to no weapon: Pirate Health, crew Health,
 ## Melee damage, the crew fight's numbers and Surrender and Bound. One file, `resources/sandbox.tres`, read by the Pirate
 ## and the crew at spawn in place of anything in their scenes, so the
-## Sandbox sheet can Save them without ever writing into a scene.
+## Sandbox sheet can Save them without ever writing into a scene. Health is
+## taken at spawn; the crew fight's numbers and Surrender and Bound are read
+## live, so a sheet edit reaches Guards already in the Raid.
 
 const PATH := "res://resources/sandbox.tres"
 
@@ -32,6 +34,15 @@ const PATH := "res://resources/sandbox.tres"
 ## Seconds Pistol and Assault Rifle Guards fire at the edges of the prop he
 ## broke sight behind ([CrewTeam]), deliberate misses only, before they hold.
 @export var suppression_time := 4.0
+## In his sight this near (metres), a Guard leaves its spot for one further
+## off ([CrewCover]); the Shotgun stays, the Marksman Rifle backs off its own
+## way.
+@export var too_close := 3.0
+## Seconds he must see a Guard where it hides before it counts as flanked
+## and changes spot.
+@export var flank_reaction := 0.4
+## Metres of open floor in his view a Guard's walk to a spot may cross.
+@export var open_floor := 2.5
 
 @export_group("Surrender and Bound")
 ## A Worker that sees him this near (metres) surrenders, when it is hiding

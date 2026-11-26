@@ -37,9 +37,8 @@ const WALK_REACH := 1.5
 ## A walk passing this close to a crew member standing still is out of
 ## reach: it would stall against the body.
 const BODY_CLEAR := 0.6
-## The open floor a walk may cross in his view, metres, and how much nearer
-## him than both its ends it may come.
-const OPEN_RUN := 2.5
+## How much nearer him than both its ends a walk may come, metres. The open
+## floor it may cross in his view is the Sandbox's `open_floor`.
 const NEARER_SLACK := 1.0
 ## Points along a walk tested for his view, metres apart.
 const WALK_SAMPLE := 0.5
@@ -62,10 +61,9 @@ const JITTER := 0.3
 const WAIT_UP := 1.2
 ## Peeks in a row with nothing to shoot before it picks again.
 const BLIND_PEEKS := 2
-## Seconds he must see it crouched before it counts as flanked.
-const FLANKED_AFTER := 0.4
-## In sight this close, it picks a spot further off.
-const TOO_CLOSE := 3.0
+# Seconds he must see it crouched before it counts as flanked, and in
+# sight how close he must be before it picks a spot further off, are the
+# Sandbox's `flank_reaction` and `too_close`.
 ## A spot out of its range band, held its Gunnery's hold before shifting,
 ## is left for one nearer or further only if that one scores this much
 ## better.
@@ -555,8 +553,8 @@ func _score(at: Vector3, far: float, is_low: bool, radius: float, others: Array[
 ## Whether the walk from where it stands to [param to] is no longer than
 ## [param reach] and, when [param fair] (the fall-back walk need not be),
 ## fair: it never comes nearer the Pirate's last-seen spot than both its
-## ends do, less NEARER_SLACK, and crosses no more than OPEN_RUN metres of
-## floor in his view (a sample every WALK_SAMPLE metres whose torso his
+## ends do, less NEARER_SLACK, and crosses no more than the Sandbox's `open_floor` metres
+## of floor in his view (a sample every WALK_SAMPLE metres whose torso his
 ## eyes can see).
 func fair_walk(to: Vector3, reach := INF, fair := true) -> bool:
 	var last := crew._last_seen
@@ -598,7 +596,7 @@ func fair_walk(to: Vector3, reach := INF, fair := true) -> bool:
 				return false
 			if not crew._blocked(sample + Vector3.UP * Crew3D.TORSO_HEIGHT, eye):
 				seen += leg / steps
-				if seen > OPEN_RUN:
+				if seen > crew.sandbox.open_floor:
 					return false
 		cursor = point
 	return true
@@ -875,7 +873,7 @@ func _watch_for(delta: float) -> bool:
 		exposed += delta
 	else:
 		exposed = 0.0
-	if exposed > FLANKED_AFTER:
+	if exposed > crew.sandbox.flank_reaction:
 		if not _may_leave():
 			# With a shot it peeks as usual meanwhile.
 			return false
@@ -887,7 +885,7 @@ func _watch_for(delta: float) -> bool:
 		# of "too close".
 		if _marksman_close():
 			return true
-	elif crew._can_see and far < TOO_CLOSE and gun != CrewHabit.Gun.SHOTGUN:
+	elif crew._can_see and far < crew.sandbox.too_close and gun != CrewHabit.Gun.SHOTGUN:
 		# Too close; the Shotgun stays.
 		if not _may_leave():
 			return false
