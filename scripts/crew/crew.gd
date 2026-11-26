@@ -114,11 +114,16 @@ const WORLD_LAYER := 1
 const EYE_HEIGHT := 1.5
 ## Cover only counts if it hides someone crouched this high.
 const COVER_HEIGHT := 0.9
-## Shots leave here, this far ahead of the body, and are aimed at the
-## target's torso. Where the gun sits on the body, not a gun number.
+## Roughly where a gun is held, metres off the floor and ahead of the
+## body: where its action sounds ring, and the muzzle of a crew member with
+## no gun model. A Guard's shots leave its gun's own `Muzzle` marker
+## ([method aim_muzzle]). Shots are aimed at the target's torso.
 const MUZZLE_HEIGHT := 1.3
 const MUZZLE_FORWARD := 0.625
 const TORSO_HEIGHT := 1.0
+## A Guard keeps its gun up in the aimed hold this long after a shot, even
+## out of FIGHT (firing on his cover, a break-off shot).
+const AIM_HOLD := 0.5
 ## The muzzle line is tested as a ball this wide (a bolt's 0.09 m overlap
 ## sphere and a hair), stopping this short of the target's centre (his
 ## capsule's 0.35 m radius and a margin).
@@ -130,6 +135,8 @@ const MUZZLE_NEAR := 1.5
 ## the muzzle ([method _over_own_cover]).
 const OWN_COVER := 2.5
 static var _bolt_ball := _ball(MUZZLE_BALL)
+## Its body's room to stand: the capsule's 0.35 m radius, a hair less.
+static var _body_ball := _ball(0.33)
 ## A spot a Guard fighting in the open moves to for a clear shot is at
 ## least this far from where it stands, a real step rather than a shuffle.
 const FIRING_STEP := 1.0
@@ -197,6 +204,9 @@ var crew_type: CrewTypes.Type = CrewTypes.Type.GUARD
 var cover: CrewCover
 ## A Guard's magazine and its reloads; null for a Worker.
 var magazine: CrewMagazine
+## A Guard's gun, seen in its hands, whose `Muzzle` its shots leave from;
+## null for a Worker.
+var gun: CrewGun
 ## The Guard a fleeing Worker is running to.
 var _flee_to: Crew3D
 ## The Alarm Panel a fleeing Worker is running to, instead of a Guard.
@@ -349,6 +359,8 @@ func _ready() -> void:
 	_gap_jitter = CrewCombat.jitter(_rng)
 	_new_burst()
 	_dress()
+	if not is_worker():
+		gun = CrewGun.arm(self)
 	_anim = _find_animation_player(model)
 	if _anim != null:
 		for clip in LOOPING_CLIPS:
@@ -471,6 +483,24 @@ func _new_burst() -> void:
 ## place until the reload ends.
 func is_reloading() -> bool:
 	return magazine != null and magazine.reloading
+
+
+## Holding its gun in the aimed hold ([CrewGun]): fighting (today's FIGHT),
+## or within AIM_HOLD of a shot.
+func aiming() -> bool:
+	return state == State.FIGHT or shot_age() < AIM_HOLD
+
+
+## Where its shots leave from when it stands at [param at] and aims at
+## [param toward]: its gun's `Muzzle` marker in the aimed hold
+## ([method CrewGun.muzzle_from]). A crew member with no gun model: muzzle
+## height, a little ahead of its axis. The clear-shot test sweeps from here.
+func aim_muzzle(at: Vector3, toward: Vector3) -> Vector3:
+	if gun != null:
+		return gun.muzzle_from(at, toward)
+	var flat := Vector3(toward.x - at.x, 0.0, toward.z - at.z)
+	var ahead := flat.normalized() if flat.length_squared() > 0.000001 else _aim
+	return at + Vector3.UP * MUZZLE_HEIGHT + ahead * MUZZLE_FORWARD
 
 
 ## Takes Health from the Sandbox, full: at spawn, and when the Sandbox sheet
@@ -760,6 +790,18 @@ func _solid(point: Vector3) -> bool:
 	params.position = point + Vector3.UP * 0.5
 	params.collision_mask = WORLD_LAYER
 	return not get_world_3d().direct_space_state.intersect_point(params, 1).is_empty()
+
+
+## True when its body cannot stand at [param point]: the hull or a prop is
+## within its capsule's radius there, so it would stop short of the point
+## and fire from somewhere else. (A prop the walking grid does not know of
+## stops it the same way.)
+func _no_room(point: Vector3) -> bool:
+	var params := PhysicsShapeQueryParameters3D.new()
+	params.shape = _body_ball
+	params.transform = Transform3D(Basis.IDENTITY, point + Vector3.UP * 0.6)
+	params.collision_mask = WORLD_LAYER
+	return not get_world_3d().direct_space_state.intersect_shape(params, 1).is_empty()
 
 
 static func _ball(radius: float) -> SphereShape3D:
@@ -1669,10 +1711,19 @@ func _fire() -> Projectile3D:
 	shot_frame = Engine.get_physics_frames()
 	_shot_timer = weapon.fire_interval * _gap_jitter
 
-	var from := global_position + Vector3.UP * MUZZLE_HEIGHT
+	# From its gun's Muzzle in the aimed hold: aimed from where the muzzle
+	# will be, then the gun turned onto that point and the shot sent from
+	# its marker.
+	var toward := target.global_position + Vector3.UP * TORSO_HEIGHT \
+			if target != null and is_instance_valid(target) else global_position + _aim
+	var from := aim_muzzle(global_position, toward)
 	var aim_at := _aim_point(from, maxi(in_burst, 0))
+	if gun != null:
+		gun.aim_at(aim_at)
+		from = gun.muzzle_point()
+		last_aim_origin = from
 	var along := (aim_at - from).normalized() if aim_at.distance_squared_to(from) > 0.0001 else _aim
-	var origin := from + along * MUZZLE_FORWARD
+	var origin := from
 	var cone := spread_degrees()
 	var volley := Projectile3D.Volley.new()
 	volley.cap = sandbox.shotgun_pellet_cap if sandbox != null and weapon.pellet_count > 1 else -1
@@ -1684,7 +1735,7 @@ func _fire() -> Projectile3D:
 		shot.speed = weapon.projectile_speed
 		shot.lifetime = weapon.projectile_lifetime
 		shot.volley = volley
-		shot.launch(from + direction * MUZZLE_FORWARD, direction, self, TEAM)
+		shot.launch(from, direction, self, TEAM)
 		_shot_parent().add_child(shot)
 		last_pellets.append(shot)
 	if not weapon.shot_sounds.is_empty():
@@ -1832,7 +1883,8 @@ func _find_cover_point() -> Vector3:
 
 
 ## True when the ship stands between the muzzle and the Pirate's torso,
-## though its eyes may see over: bolts from here would hit the cover.
+## though its eyes may see over: bolts from here would hit the cover. The
+## muzzle is its gun's in the aimed hold ([method aim_muzzle]).
 func _muzzle_blocked() -> bool:
 	if target == null or not is_instance_valid(target):
 		return false
@@ -1841,12 +1893,16 @@ func _muzzle_blocked() -> bool:
 
 ## The same from a crew member standing at [param at], aiming at [param torso]:
 ## a ball as wide as a bolt (whose overlap strikes whatever it brushes),
-## swept from the body's axis at muzzle height, so a barrel poking into a
-## prop counts, to just short of the target's body; and along both edges of
-## its spread for the first MUZZLE_NEAR metres, so cover at its shoulder
-## does not eat half of every burst.
+## swept along the barrel from the body's axis at the muzzle's height to the
+## muzzle, so a barrel poking into a prop counts; then from the muzzle,
+## where its shots leave, to just short of the target's body; and along
+## both edges of its spread for the first MUZZLE_NEAR metres, so cover at
+## its shoulder does not eat half of every burst.
 func _muzzle_blocked_from(at: Vector3, torso: Vector3) -> bool:
-	var from := at + Vector3.UP * MUZZLE_HEIGHT
+	var from := aim_muzzle(at, torso)
+	var axis := Vector3(at.x, from.y, at.z)
+	if _ball_blocked(axis, from - axis):
+		return true
 	var reach := from.distance_to(torso) - MUZZLE_TARGET_GAP
 	if reach <= 0.0:
 		return false
@@ -1887,6 +1943,8 @@ func _find_firing_position() -> Vector3:
 			continue
 		if _flat_distance(point, global_position) < FIRING_STEP:
 			continue  # where it stands already has no shot: a real step
+		if _no_room(point):
+			continue  # it would stop short, and judge its shot from elsewhere
 		if _muzzle_blocked_from(point, aim_at):
 			continue
 		var score := -_flat_distance(global_position, point)
@@ -1999,6 +2057,8 @@ func _on_died(_from: Node) -> void:
 	$CollisionShape3D.set_deferred("disabled", true)
 	if head_zone != null:
 		head_zone.disable()
+	if gun != null:
+		gun.drop()
 	if not _play_any(["CharacterArmature|Death", "Death", "Die"]):
 		# No death clip: tip the model over so a corpse still reads as one.
 		create_tween().tween_property(model, "rotation:x", -PI / 2.0, 0.4)

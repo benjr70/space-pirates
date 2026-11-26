@@ -111,6 +111,7 @@ func _initialize() -> void:
 	await _check_share()
 	_check_exposure_ramp()
 	_check_gunnery()
+	await _check_guns_in_hands()
 	await _check_walk_in()
 	await _check_true_aim()
 	_check_miss_at_cover()
@@ -163,6 +164,7 @@ func _initialize() -> void:
 	await _check_pirate_has_no_head()
 	await _check_routines()
 	_check_types()
+	_check_guns_carried()
 	await _check_cover_fight_on_ship()
 	await _silence()
 	_report()
@@ -745,6 +747,33 @@ func _check_types() -> void:
 			_expect(member.is_worker() and not member.routine.patroller, "a crew member posted in the %s is not a working Worker" % role)
 			seen[role] = true
 	_expect(seen.size() == 4, "the medium ship had crew in only %s of armory, bridge, engine, cargo" % [seen.keys()])
+
+
+## Every living Guard on the generated medium ship shows a gun model, the
+## scene its Weapon Profile names as its `model`, from the moment it spawns
+## (crew-combat ticket 16): shown whenever the body is (the ship's reveal
+## hides whole bodies out of the Pirate's sight); no Worker carries one.
+func _check_guns_carried() -> void:
+	var wrong: Array[String] = []
+	var guards := 0
+	for member in routine_crew:
+		if not is_instance_valid(member) or not member.is_alive():
+			continue
+		var models := member.find_children("*", "", true, false).filter(func(n: Node) -> bool:
+			return n.scene_file_path.begins_with("res://scenes/weapons/"))
+		if member.is_worker():
+			if member.gun != null or not models.is_empty():
+				wrong.append("a Worker carries %s" % [models])
+			continue
+		guards += 1
+		var shown: Node3D = member.gun.gun if member.gun != null else null
+		if shown == null or member.weapon == null or shown.scene_file_path != member.weapon.model.resource_path \
+				or not _shown_with(shown, member) or shown.find_children("*", "MeshInstance3D", true, false).is_empty() \
+				or models.size() != 1:
+			wrong.append("a %s Guard shows %s" % [member.weapon.resource_path.get_file() if member.weapon else "unarmed",
+					shown.scene_file_path if shown != null else "no gun"])
+	_expect(guards >= 2 and wrong.is_empty(), "guns carried: of %d living Guards and the Workers on the medium ship, %s"
+			% [guards, wrong.slice(0, 4)])
 
 
 ## Losing the Pirate leaves a crew member On Edge: it spots him faster.
@@ -1508,6 +1537,171 @@ func _check_gunnery() -> void:
 		bolt.free()
 
 
+## True when [param node] and everything between it and [param body] is
+## visible: it shows whenever the body does.
+static func _shown_with(node: Node3D, body: Node3D) -> bool:
+	var at: Node = node
+	while at != null and at != body:
+		if at is Node3D and not (at as Node3D).visible:
+			return false
+		at = at.get_parent()
+	return at == body
+
+
+## Where the gun-in-hand rigs stand: four open Rooms, one per gun.
+const GUN_X0 := 6000
+## How near each wrist must be to its place on the gun, aiming; and a
+## Guard's bolt to its gun's Muzzle marker, metres.
+const WRIST_TOLERANCE := 0.04
+const MUZZLE_TOLERANCE := 0.05
+## Seconds the four Guards fight in the gun-in-hand check: a Marksman Rifle
+## fires about every 3 s.
+const GUN_FIGHT := 12.0
+
+## A Guard with each of the four guns (crew-combat ticket 16): aiming, each
+## wrist within 4 cm of its place on the gun (the right on the grip, the
+## left on the fore-end, or round the right hand on the Pistol), each grip
+## and fore-end inside the gun model's own bounds; then fighting a Pirate in an open
+## Room for 12 s, every bolt starting within 5 cm of its gun's Muzzle marker, which
+## is the point the clear-shot test sweeps from for that aim; and dead, the
+## gun hidden.
+func _check_guns_in_hands() -> void:
+	var guards: Array[Crew3D] = []
+	var pirates: Array[CharacterBody3D] = []
+	for i in 4:
+		var x0 := GUN_X0 + i * 20
+		var rig := _rig_room("GunShip%d" % i, Rect2i(x0, 0, 8, 12), [])
+		var at := ShipBuilder3D.tile_to_world(Vector2i(x0 + 4, 2))
+		var pirate: CharacterBody3D = load("res://scenes/player_3d.tscn").instantiate()
+		pirate.auto_respawn = false
+		pirate.position = at + Vector3(0.0, 0.0, 6.0)
+		world.add_child(pirate)
+		pirate.set_physics_process(false)
+		pirate.state = pirate.State.WALK
+		pirate.health.max_health = 100000
+		pirate.health.reset()
+		pirates.append(pirate)
+		var gun: WeaponProfile = GunRoll.weapon(i)
+		var guard: Crew3D = load("res://scenes/crew_3d.tscn").instantiate()
+		guard.weapon = gun
+		guard.gunnery = Gunnery.for_weapon(gun)
+		guard.target = pirate
+		guard.layout = rig
+		guard.position = at
+		world.add_child(guard)
+		guard.set_physics_process(false)
+		guard.routine = null
+		guard.face_direction(pirate.position - at)
+		guards.append(guard)
+	# From the moment it spawns: in the tree, no frame run yet.
+	var at_spawn := 0
+	for guard in guards:
+		if guard.gun != null and guard.gun.gun.is_visible_in_tree() and guard.gun.gun.scene_file_path == guard.weapon.model.resource_path:
+			at_spawn += 1
+	_expect(at_spawn == 4, "guns in hand: %d of 4 Guards just spawned show their Weapon Profile's model" % at_spawn)
+
+	# Aiming: today's FIGHT, held still while the hold blends in.
+	var wrists := {}
+	var watchers := {}
+	for guard in guards:
+		guard.state = Crew3D.State.FIGHT
+		guard._update_animation()
+		var skeleton := guard.gun.get_skeleton()
+		var measure := func() -> void:
+			var got := []
+			for side: String in ["R", "L"]:
+				var wrist := (skeleton.global_transform * skeleton.get_bone_global_pose(skeleton.find_bone("Wrist." + side))).origin
+				got.append(wrist.distance_to(guard.gun.hand_place_global("grip" if side == "R" else "fore").origin))
+			wrists[guard] = got
+		watchers[guard] = measure
+		skeleton.skeleton_updated.connect(measure)
+	for i in 30:
+		await physics_frame
+	var far: Array[String] = []
+	var off_gun: Array[String] = []
+	for i in 4:
+		var guard := guards[i]
+		guard.gun.get_skeleton().skeleton_updated.disconnect(watchers[guard])
+		var got: Array = wrists.get(guard, [INF, INF])
+		if not guard.gun.aim >= 1.0 or got[0] > WRIST_TOLERANCE or got[1] > WRIST_TOLERANCE:
+			far.append("%s: right %.3f m, left %.3f m (hold %.2f)" % [Gunnery.NAMES[i], got[0], got[1], guard.gun.aim])
+		# Each hold is on the gun, inside its model's bounds: the grip, and
+		# the fore-end of a long gun (the Pistol's left hand closes round
+		# the right).
+		var bounds := _bounds_in(guard.gun.gun)
+		for which: String in ["grip"] if i == GunRoll.PISTOL else ["grip", "fore"]:
+			var hold: Vector3 = CrewGun.HOLDS[guard.gun.kind][which][0]
+			if not bounds.grow(0.005).has_point(hold):
+				off_gun.append("%s %s at %s outside %s" % [Gunnery.NAMES[i], which, hold, bounds])
+	print("  guns in hand, aiming: wrists off their places (right, left) %s" % [guards.map(func(g: Crew3D) -> String:
+			var got: Array = wrists.get(g, [INF, INF])
+			return "%s %.3f %.3f m" % [Gunnery.NAMES[guards.find(g)], got[0], got[1]])])
+	_expect(far.is_empty(), "guns in hand: aiming, wrists off their places on the gun by %s, want within %.2f m" % [far, WRIST_TOLERANCE])
+	_expect(off_gun.is_empty(), "guns in hand: a hold is not on its gun: %s" % [off_gun])
+
+	# Fighting: every bolt from its gun's Muzzle marker.
+	var starts := {}
+	var worst := [0.0, 0.0]
+	var wrong: Array[String] = []
+	var watch := func(node: Node) -> void:
+		var bolt := node as Projectile3D
+		if bolt == null or not bolt.shooter in guards:
+			return
+		var shooter: Crew3D = bolt.shooter
+		var muzzle := shooter.gun.muzzle
+		var marker := muzzle.global_position
+		var tested := shooter.aim_muzzle(shooter.global_position, shooter.last_aim_point)
+		var name: String = Gunnery.NAMES[guards.find(shooter)]
+		starts[name] = starts.get(name, 0) + 1
+		worst[0] = maxf(worst[0], bolt.global_position.distance_to(marker))
+		worst[1] = maxf(worst[1], tested.distance_to(marker))
+		if bolt.global_position.distance_to(marker) > MUZZLE_TOLERANCE or tested.distance_to(marker) > MUZZLE_TOLERANCE \
+				or not shooter.gun.gun.is_ancestor_of(muzzle) or muzzle.name != &"Muzzle":
+			wrong.append("%s: bolt %.3f m and clear-shot point %.3f m off its Muzzle" % [name,
+					bolt.global_position.distance_to(marker), tested.distance_to(marker)])
+	var parent := get_first_node_in_group(&"projectiles")
+	parent.child_entered_tree.connect(watch)
+	for i in 4:
+		guards[i].hear_position(pirates[i].global_position)
+		guards[i].set_physics_process(true)
+	for i in roundi(GUN_FIGHT / STEP):
+		await physics_frame
+	parent.child_entered_tree.disconnect(watch)
+	for guard in guards:
+		guard.set_physics_process(false)
+	print("  guns in hand, fighting: bolts %s, furthest %.4f m from its Muzzle, clear-shot point %.4f m" % [starts, worst[0], worst[1]])
+	_expect(starts.size() == 4 and starts.values().all(func(n: int) -> bool: return n >= 2) and wrong.is_empty(),
+			"guns in hand: bolts per gun %s in %.0f s (want 2 or more each), %d off: %s" % [starts, GUN_FIGHT, wrong.size(), wrong.slice(0, 3)])
+
+	# Dead: the gun goes with it.
+	var dead := guards[1]
+	dead.take_damage(100000, pirates[1])
+	await physics_frame
+	_expect(not dead.is_alive() and not dead.gun.gun.is_visible_in_tree() and not dead.gun.active,
+			"guns in hand: a dead Guard's gun still shows")
+	for guard in guards:
+		guard.free()
+	for pirate in pirates:
+		pirate.free()
+	_clear_shots()
+
+
+## The bounds of every mesh in [param model], in its own space.
+static func _bounds_in(model: Node3D) -> AABB:
+	var bounds := AABB()
+	var first := true
+	for mesh: MeshInstance3D in model.find_children("*", "MeshInstance3D", true, false):
+		var to_model := mesh.transform
+		var up: Node = mesh.get_parent()
+		while up != model:
+			to_model = (up as Node3D).transform * to_model
+			up = up.get_parent()
+		var box := to_model * mesh.get_aabb()
+		bounds = box if first else bounds.merge(box)
+		first = false
+	return bounds
+
+
 ## A Guard carrying [param gun] and its Gunnery, as [ShipBuilder3D] arms
 ## one, stood at CREW_AT.
 func _armed(gun: WeaponProfile) -> Crew3D:
@@ -1602,7 +1796,10 @@ func _stray_crate(at: Vector3) -> Node3D:
 ## A Guard running for a cover spot it cannot reach (boxed in by crates the
 ## walking grid knows nothing of) gives up on that spot within
 ## CrewCover.MOVE_GIVE_UP plus a tick and does not set off for it again for
-## the next 3 s, rather than walking at it forever.
+## the next 3 s, rather than walking at it forever. The crates are stacked
+## two high, so it cannot fight from inside the box: from its gun's muzzle
+## (crew-combat ticket 16), 1.5 m up, a single crate in front is low cover
+## it would shoot over and stay behind.
 func _check_cover_blocked() -> void:
 	player.health.max_health = 100000
 	player.health.reset()
@@ -1616,6 +1813,7 @@ func _check_cover_blocked() -> void:
 	var crates: Array[Node3D] = []
 	for side in [Vector3.LEFT, Vector3.RIGHT, Vector3.BACK]:
 		crates.append(_stray_crate(guard.global_position + side))
+		crates.append(_stray_crate(guard.global_position + side + Vector3.UP * 1.1))
 	for i in 2:
 		await physics_frame
 	guard.hear_position(centre)

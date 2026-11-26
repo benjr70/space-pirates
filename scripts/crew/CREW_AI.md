@@ -24,7 +24,8 @@ being built toward is `.scratch/crew-combat/spec.md`, after spec #52
 | `crew_cover.gd` (`CrewCover`) | One Guard's fight from cover: finding and claiming a spot, the fair walk there, holding it, peeking in its gun's rhythm, leaving it, and fighting with no cover in reach; its gun's habit: the Shotgun's ambush and rack, the Marksman Rifle's perch, sight line and hip fire; and its part in the team: covering fire, one mover at a time, the flank's last leg, firing on his cover, the last Guard. Every Guard holds one (`Crew3D.cover`); it drives the Guard's FIGHT and COVER states. |
 | `crew_magazine.gd` (`CrewMagazine`) | A Guard's magazine: rounds counted against its weapon's magazine size, and its reloads (empty, topping up, the Shotgun's shell by shell and its break-off), with their times and sounds. Every Guard holds one (`Crew3D.magazine`); `CrewCover` decides where and when a reload starts. |
 | `crew_habit.gd` (`CrewHabit`) | A habit per gun: which of the four guns a Guard carries (`gun_of`, by its weapon's file) and the habit numbers (the Shotgun's 4 m and 8 m, its ambush reach and rack timing; the Marksman Rifle's perch radius, line length and weight, 5 m, sight lock and hip fire). |
-| `crew_sight_line.gd` (`CrewSightLine`) | The Marksman Rifle's sight line: a thin red unshaded line from the rifle to where it aims, made on first use under the Guard. |
+| `crew_sight_line.gd` (`CrewSightLine`) | The Marksman Rifle's sight line: a thin red unshaded line from the rifle's muzzle to where it aims, made on first use under the Guard. |
+| `crew_gun.gd` (`CrewGun`) | A Guard's gun in its hands: its Weapon Profile's model, 1.15x, under the body's Model node from spawn; carried or aimed; the arms solved onto it, the wrists squared and the fingers closed round its grip and fore-end; where its `Muzzle` stands when aimed, for the shot and the clear-shot test. A `SkeletonModifier3D` on the rig's skeleton (`Crew3D.gun`); null for a Worker. |
 | `ship_alarm.gd` (`ShipAlarm`) | The ship-wide Alarm: raised once, red lights, every crew member told. Built per ship as `Ship/Alarm`. |
 | `alarm_panel.gd` (`AlarmPanel`) | The wall panels the Alarm is raised from, where they go, and breaking them. Built under `Ship/AlarmPanels`. |
 | `crew_noise.gd` (`CrewNoise`) | Hearing: noise events (footsteps, gunshots, doors), how far each reaches, and which Rooms it carries into. |
@@ -34,7 +35,11 @@ being built toward is `.scratch/crew-combat/spec.md`, after spec #52
 Scene: `scenes/crew_3d.tscn`. Tests: `tests/test_crew.gd` (Awareness, the walk
 to look, being shot, the sting, hearing, Workers fleeing and cornered, crew
 types, On Edge, Guards sharing his position, each weapon's
-Gunnery and a Guard firing each gun, fair fire (the exposure ramp, the
+Gunnery and a Guard firing each gun, a Guard's gun in its hands (every
+living Guard on a generated ship showing its Weapon Profile's model and no
+Worker one; aiming each gun with both wrists within 4 cm of their places on
+it; every bolt from its gun's Muzzle marker, the clear-shot test's point; a
+dead Guard's gun hidden), fair fire (the exposure ramp, the
 walk-in, five Guards with at most two aiming true, miss points in the open
 and at cover, lead, the Shotgun's pellet cap, and the median time to die
 against a Pistol and an Assault Rifle), magazines and reloads (each gun's
@@ -159,15 +164,21 @@ PATROL / INVESTIGATE ──spotted──▶ FLEE ──reached its Guard──�
 - **A clear shot**: a Guard fires whenever it has him in sight and a clear
   muzzle line, at any distance, except the Shotgun beyond 8 m (the old
   engage range is gone). It fires only while its muzzle line is clear as
-  well as its eye line. The muzzle line is a ball 0.1 m across (a bolt's
-  overlap sphere is 0.09 m) swept from the body's axis at muzzle height
-  (1.3 m) to 0.4 m short of the Pirate's torso, plus the two edges of its
-  current spread for the first 1.5 m, so a crate he crouches behind, or a
-  prop at its own shoulder that the barrel pokes past, stops it firing. Up
-  in cover with no clear shot it waits 1.2 s and ducks; in the open it
-  walks to the nearest tile at least 1 m away, within its sight of him
-  (14.4 m; a Shotgun's 8 m), whose muzzle line is clear, in its Room (both
-  Rooms if it stands in a doorway).
+  well as its eye line. The muzzle is its gun's `Muzzle` marker in the
+  aimed hold, turned to face him (`Crew3D.aim_muzzle`; see A Guard's gun):
+  about 1.5 m up and 0.5 m (Pistol) to 0.9 m (long guns) ahead of its axis.
+  The muzzle line is a ball 0.1 m across (a bolt's overlap sphere is
+  0.09 m) swept along the barrel, from the body's axis at the muzzle's
+  height to the muzzle, then from the muzzle to 0.4 m short of the
+  Pirate's torso, plus the two edges of its current spread for the first
+  1.5 m, so a crate he crouches behind, or a prop at its own shoulder that
+  the barrel pokes past, stops it firing. Up in cover with no clear shot it
+  waits 1.2 s and ducks; in the open it walks to the nearest tile at least
+  1 m away, with room for its body (nothing within its capsule's radius
+  there, `Crew3D._no_room`, so it does not stop short of the tile and judge
+  its shot from elsewhere), within its sight of him (14.4 m; a Shotgun's
+  8 m), whose muzzle line is clear, in its Room (both Rooms if it stands in
+  a doorway).
 - **DEAD**: collision off, death clip or tip-over; its cover spot is freed.
 
 ### Guns: one of four weapons and its Gunnery
@@ -232,6 +243,51 @@ their own seeded off the layout's seed (`hash([gen_seed, "gun roll"])`), so
 the same layout always gives the same guns (a Retry too) whatever else the
 build draws. The gun is not stored in the layout. The hand-authored ship
 (no Ship Class) rolls with the small ship's weights. Workers roll nothing.
+
+### A Guard's gun
+
+From `.scratch/crew-combat/issues/16-guards-carry-their-guns.md`
+(`CrewGun`, `Crew3D.gun`). A Guard shows its Weapon Profile's `model`
+scene (the Pirate's own gun model), 1.15x, from the moment it spawns; a
+Worker shows none. It is a skeleton modifier over whatever clip the body
+plays, as the look prototype (`prototype/crew-look`) made it: nothing is
+baked into clips, so every crew clip and the cover stand-in crouch carry
+it.
+
+- **Carried** (patrol, routine, walking and running, down behind cover
+  until ticket 22's poses): the Pistol hangs at the right thigh in the
+  right hand, the left arm free to its clip; a long gun is held low across
+  the body, muzzle down and to the left, both hands on it. Placed from the
+  chest bone as the clip moves it, so it rides Idle, Walk and Run.
+- **Aimed** (`Crew3D.aiming`: today's FIGHT, or within 0.5 s of a shot,
+  `AIM_HOLD`, so firing on his cover or a break-off shot raise it too): the
+  Pistol in two hands at the chest, the left closed round the right; a long
+  gun shouldered, right hand on the grip, left under the fore-end, fingers
+  up its right side, the spine turned 30 degrees side-on with the head kept
+  ahead. Placed from the chest's place in `Idle_Gun_Pointing`, held still,
+  and turned about the body's axis to point where the Guard aims (where it
+  looks, or its last shot's aim point), so its `Muzzle` is exactly where
+  `CrewGun.muzzle_from` puts it for a Guard standing there aiming at that
+  point. The Shotgun sits 8 cm further back along its barrel, so the left
+  hand reaches the pump.
+- **Blend**: 0.2 s between the two. A shot snaps it to aimed at once.
+- **Hands**: each arm's two bones solved so the wrist lands on its place on
+  the gun, the clavicle swung forward up to 30 degrees when the hand is out
+  of reach (the rig's arms are short beside a 1.15x long gun); the wrist
+  turned square to the gun, and the four fingers (knuckle 52, middle 64, tip
+  40 degrees) and the thumb closed toward the palm. A place is where the
+  hand grips (`CrewGun.HOLDS`, in the gun model's own space: the middle of
+  the grip or fore-end, the way it runs across the hand and the way the
+  palm faces it), less the hole a closed hand makes from its wrist
+  (`FIST`, measured on the rig). Aiming, every wrist lands within 2 cm of
+  its place (the Shotgun's left is the furthest, 1.8 cm).
+- **Shots**: `Crew3D._fire` aims from where the muzzle will be, turns the
+  gun onto the aim point and sends every pellet from its `Muzzle` marker
+  (the shot sound rings there too). The Marksman Rifle's sight line starts
+  at the same marker. The clear-shot test sweeps from that point (see A
+  clear shot).
+- **Dead**: the gun is hidden and its modifier stops, so nothing is left to
+  pick up.
 
 ### Magazines and reloads
 

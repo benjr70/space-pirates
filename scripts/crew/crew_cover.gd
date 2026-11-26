@@ -1609,7 +1609,8 @@ func _line_up(delta: float) -> int:
 		_line_at = Vector3.INF
 		_locked = Vector3.INF
 	line_left -= delta
-	var from := crew.global_position + Vector3.UP * Crew3D.MUZZLE_HEIGHT
+	var torso: Vector3 = crew.target.global_position + Vector3.UP * Crew3D.TORSO_HEIGHT
+	var from := crew.aim_muzzle(crew.global_position, torso)
 	if line_left > CrewHabit.SIGHT_LOCK or _line_at == Vector3.INF:
 		_line_at = CrewFire.lead_point(crew, from)
 	elif _locked == Vector3.INF:
@@ -1617,7 +1618,8 @@ func _line_up(delta: float) -> int:
 	var at := _locked if _locked != Vector3.INF else _line_at
 	var along := (at - from).normalized()
 	crew._aim = along
-	_sight_line().show_between(from + along * Crew3D.MUZZLE_FORWARD, at)
+	# From the rifle's own muzzle, wherever its gun has got to.
+	_sight_line().show_between(crew.gun.muzzle_point() if crew.gun != null else from, at)
 	if line_left > 0.0:
 		return LINE_SHOWING
 	crew._path.clear()

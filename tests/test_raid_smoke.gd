@@ -852,13 +852,14 @@ func _on_shot(node: Node) -> void:
 		return
 	var member: Crew3D = shot.shooter
 	var fired_on := Engine.get_physics_frames()
+	# Its gun's Muzzle, where the bolt was born (crew-combat ticket 16).
+	var muzzle := shot.global_position
 	shot.hit.connect(func(body: Node3D, _head: bool) -> void:
 		if body is CharacterBody3D:
 			_wasted[member] = 0
 			return
 		if not is_instance_valid(member):
 			return
-		var muzzle := member.global_position + Vector3.UP * Crew3D.MUZZLE_HEIGHT
 		if muzzle.distance_to(shot.global_position) > COVER_SHOT_RANGE:
 			return
 		if _wasted_shot.get(member, -1) == fired_on:
@@ -1518,7 +1519,6 @@ func _guard_fighting() -> Crew3D:
 func _spot_near(member: Crew3D, seen: bool, ring := SPOT_NEAR) -> Vector3:
 	var space := player.get_world_3d().direct_space_state
 	var chest := _chest(member)
-	var muzzle := member.global_position + Vector3(0, Crew3D.MUZZLE_HEIGHT, 0)
 	var centre := _cell(member.global_position)
 	var best := Vector3.INF
 	var best_distance := INF
@@ -1535,6 +1535,8 @@ func _spot_near(member: Crew3D, seen: bool, ring := SPOT_NEAR) -> Vector3:
 				continue
 			var clear := space.intersect_ray(PhysicsRayQueryParameters3D.create(point + Vector3(0, 1.6, 0), chest, 1)).is_empty()
 			if clear and seen:
+				# From its gun's Muzzle as it would aim at him there.
+				var muzzle := member.aim_muzzle(member.global_position, point + Vector3.UP * Crew3D.TORSO_HEIGHT)
 				for height in [0.7, 1.3]:
 					clear = clear and space.intersect_ray(PhysicsRayQueryParameters3D.create(point + Vector3(0, height, 0),
 							muzzle, 1)).is_empty()

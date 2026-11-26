@@ -22,7 +22,10 @@ extends SceneTree
 ##              measures the reticle's centre and a 1 m target's span at 50 m.
 ##   ship       class=<small|medium|large> seed=<n>: one shot per Room from a
 ##              corner at eye height, room_<i>_<role>.png, plus overview.png.
-##   crew       one of each crew type side by side, front.png and side.png.
+##   crew       one of each crew type side by side, front.png and side.png;
+##              a Guard with each gun carried, walking and aimed
+##              (guns_*.png), each gun's hands close up (hands_<gun>_<patrol|aim>.png)
+##              and the Marksman Rifle's sight line (sight_line.png).
 ##   hud        the in-Raid HUD with known values: hud.png, hud_busy.png.
 ##   menu       the main menu's screens (home, classes), the Loadout screen
 ##              (loadout: bare; loadout_slot: a fitted Assault Rifle with its
@@ -505,7 +508,13 @@ func _room_camera(room: RoomData) -> Array:
 # --- crew ------------------------------------------------------------------
 
 func _crew() -> void:
-	_expect(["front", "side", "sight_line"])
+	var guns := ["pistol", "assault_rifle", "shotgun", "marksman_rifle"]
+	var labels := ["front", "side", "guns_patrol_front", "guns_patrol_side", "guns_walk_side", "guns_aim_front", "guns_aim_side"]
+	for gun in guns:
+		labels.append("hands_%s_patrol" % gun)
+		labels.append("hands_%s_aim" % gun)
+	labels.append("sight_line")
+	_expect(labels)
 	var world := _test_room()
 	var crew: Array[Crew3D] = []
 	var types := [CrewTypes.Type.GUARD, CrewTypes.Type.WORKER]
@@ -528,15 +537,73 @@ func _crew() -> void:
 	for body in crew:
 		body.face_direction(Vector3.LEFT)
 	await _snap("side")
-	# The Marksman Rifle's sight line (crew-combat ticket 20) from the
-	# Guard's muzzle to a point across the room, as a Guard shows it.
-	crew[0].face_direction(Vector3.RIGHT)
+	for body in crew:
+		body.free()
+
+	# A Guard with each gun (crew-combat ticket 16), left to right: Pistol,
+	# Assault Rifle, Shotgun, Marksman Rifle; carrying on patrol, walking,
+	# and aimed; then each one's hands close up.
+	var guards: Array[Crew3D] = []
+	for i in guns.size():
+		var guard: Crew3D = load("res://scenes/crew_3d.tscn").instantiate()
+		guard.weapon = load("res://resources/weapons/%s.tres" % guns[i])
+		guard.position = Vector3(-2.4 + i * 1.6, 0.0, -1.0)
+		world.add_child(guard)
+		guard.set_physics_process(false)
+		guards.append(guard)
+	print("shots: guns_* and hands_*: Pistol, Assault Rifle, Shotgun, Marksman Rifle, left to right")
+	cam.fov = 60.0
+	# Front: facing the camera. Side: facing left along the row, seen from
+	# their left (the closeups show the right).
+	cam.look_at_from_position(Vector3(0, 1.3, 3.6), Vector3(0, 1.0, -1.0))
+	await _hold_guards(guards, false, Vector3.BACK)
+	await _snap("guns_patrol_front")
+	await _hold_guards(guards, false, Vector3.LEFT)
+	await _snap("guns_patrol_side")
+	await _hold_guards(guards, false, Vector3.LEFT, 1.4)
+	await _snap("guns_walk_side")
+	await _hold_guards(guards, true, Vector3.BACK)
+	await _snap("guns_aim_front")
+	await _hold_guards(guards, true, Vector3.LEFT)
+	await _snap("guns_aim_side")
+	cam.fov = 40.0
+	for i in guns.size():
+		var guard := guards[i]
+		for aimed in [false, true]:
+			await _hold_guards(guards, aimed, Vector3.BACK)
+			var hands := guard.gun.hand_place_global("grip").origin.lerp(guard.gun.hand_place_global("fore").origin, 0.5)
+			# From its right front, a little above the hands.
+			cam.look_at_from_position(hands + Vector3(-0.75, 0.25, 0.85), hands)
+			await _snap("hands_%s_%s" % [guns[i], "aim" if aimed else "patrol"])
+
+	# The Marksman Rifle's sight line (crew-combat ticket 20) from its
+	# rifle's muzzle to a point across the room, as a Guard shows it.
+	var marksman := guards[3]
+	await _hold_guards(guards, true, Vector3.RIGHT)
 	var line := CrewSightLine.new()
 	world.add_child(line)
-	var muzzle := crew[0].global_position + Vector3.UP * Crew3D.MUZZLE_HEIGHT + Vector3.RIGHT * Crew3D.MUZZLE_FORWARD
+	var muzzle := marksman.gun.muzzle_point()
 	line.show_between(muzzle, muzzle + Vector3(6.0, -0.3, 1.5))
-	print("shots: the Guard's sight line runs from its muzzle off to the right")
+	cam.fov = 50.0
+	cam.look_at_from_position(marksman.global_position + Vector3(-1.0, 1.5, 3.4), marksman.global_position + Vector3(1.0, 1.2, 0))
+	print("shots: the Marksman Rifle Guard's sight line runs from its muzzle off to the right")
 	await _snap("sight_line")
+
+
+## Every Guard in [param guards] faced along [param facing], its gun carried
+## (on patrol, walking at [param walking] m/s when above zero) or aimed
+## there, the hold reached at once.
+func _hold_guards(guards: Array[Crew3D], aimed: bool, facing: Vector3, walking := 0.0) -> void:
+	for guard in guards:
+		guard.face_direction(facing)
+		guard.state = Crew3D.State.FIGHT if aimed else Crew3D.State.PATROL
+		guard.velocity = facing * walking
+		guard._update_animation()
+		guard.gun.aim = 1.0 if aimed else 0.0
+	for i in 3:
+		await process_frame
+	for guard in guards:
+		guard.gun.aim = 1.0 if aimed else 0.0
 
 
 # --- hud and menu ----------------------------------------------------------
