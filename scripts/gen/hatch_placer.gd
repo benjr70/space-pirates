@@ -11,6 +11,11 @@ const HATCH_BAND := {&"small": Vector2i(2, 2), &"medium": Vector2i(2, 3), &"larg
 const FLOW_FLOOR := 2
 ## Random draws per relaxation level before the next one is tried.
 const TRIES := 40
+## Tiles of open space straight out of every Hatch gap: the lane a
+## [BoardingPod]'s tube fills (its DEPTH plus its back WALL, rounded up),
+## so a Raid can board by any Hatch without the pod running into the
+## ship's own Hull where the gap sits in a notch between two Masses.
+const POD_LANE := 4
 
 
 class Result:
@@ -57,7 +62,7 @@ static func place(layout: ShipLayout, ship_class: StringName, rng: RandomNumberG
 	for i in layout.rooms.size():
 		if ShipGraph.is_fixed_role(layout.rooms[i].role):
 			continue
-		var found := _candidates(layout, i, hull, out_set)
+		var found := _candidates(layout, i, hull, out_set, floors, wall_set)
 		if not found.is_empty():
 			rooms.append(i)
 			spots[i] = found
@@ -122,9 +127,23 @@ static func _try_pick(layout: ShipLayout, rng: RandomNumberGenerator, rooms: Arr
 	return picked
 
 
+## Whether the POD_LANE tiles straight out of [param hatch], [param out]
+## being the step from the gap away from its Room, are clear of every
+## floor and wall tile of the ship.
+static func lane_clear(hatch: HatchData, out: Vector2i, floors: Dictionary, wall_set: Dictionary) -> bool:
+	for t in hatch.tiles():
+		for depth in range(1, POD_LANE + 1):
+			var lane := t + out * depth
+			if floors.has(lane) or wall_set.has(lane):
+				return false
+	return true
+
+
 ## Every two-wide run of Hull wall beside [param room]'s floor with outside
-## beyond it, as ready HatchData.
-static func _candidates(layout: ShipLayout, room: int, hull: Dictionary, out_set: Dictionary) -> Array:
+## beyond it and a clear lane for a pod ([method lane_clear]), as ready
+## HatchData.
+static func _candidates(layout: ShipLayout, room: int, hull: Dictionary, out_set: Dictionary,
+		floors: Dictionary, wall_set: Dictionary) -> Array:
 	var data := layout.rooms[room]
 	var found: Array = []
 	var seen := {}
@@ -152,7 +171,8 @@ static func _candidates(layout: ShipLayout, room: int, hull: Dictionary, out_set
 				hatch.tile = start
 				hatch.horizontal = horizontal
 				hatch.width = 2
-				found.append(hatch)
+				if lane_clear(hatch, step, floors, wall_set):
+					found.append(hatch)
 	return found
 
 

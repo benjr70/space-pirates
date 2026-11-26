@@ -16,6 +16,13 @@ const SEEDS_PER_CLASS := 100
 ## live. A seed that rerolls generates again from scratch, so a rerolled
 ## ship may take the budget once per attempt.
 const TIME_BUDGET_MS := 200.0
+## A small ship whose Hull has a notch between two Masses beside a Room
+## that can take a Hatch: before Hatches needed a clear pod lane, both of
+## its Hatches sat in such notches and the Boarding Pod ran into the
+## ship's own wall (.scratch/raid-smoke-bugs/issues/10-pod-docked-in-a-hull-notch.md).
+const NOTCHED_SEED := 212624805
+## Hatch placements drawn on it, each from its own RNG seed.
+const NOTCHED_DRAWS := 60
 
 var failures: Array[String] = []
 var checks := 0
@@ -46,6 +53,10 @@ func _initialize() -> void:
 	_check_harness_bites()
 	for f in _ship_failures:
 		failures.append("harness self-test on medium seed %d: %s" % [FIRST_SEED, f])
+	_ship_failures.clear()
+	_check_pod_lanes()
+	for f in _ship_failures:
+		failures.append("pod lanes on small seed %d: %s" % [NOTCHED_SEED, f])
 	for ship_class in ShipGenerator.CLASSES:
 		_ship_failures.clear()
 		var dumped_report := ShipGenerator.generate_report(ship_class, FIRST_SEED)
@@ -277,6 +288,36 @@ func _check_harness_bites() -> void:
 	broken = ShipGenerator.generate_report(&"medium", FIRST_SEED)
 	broken.layout.ship_name = "The " + broken.layout.ship_name
 	_expect(_violates(broken, "article"), "a stored 'The' went unnoticed")
+
+
+## NOTCHED_SEED's own roll (attempt 0, before any reroll could hide a bad
+## Hatch) breaks no invariant and its Hatches have HatchPlacer.POD_LANE
+## tiles of open space straight out of them, and so does every Hatch the
+## placer draws on that partition over NOTCHED_DRAWS draws: a notch in the
+## Hull is never offered as a Hatch.
+func _check_pod_lanes() -> void:
+	var report := ShipGenerator._attempt(&"small", NOTCHED_SEED, 0)
+	var layout := report.layout
+	_expect(report.violations.is_empty(), "the seed's own roll is invalid: %s" % "; ".join(report.violations))
+	var floors := ShipGraph.floor_without_hatches(layout)
+	var wall_set := ShipGraph.walls(layout, floors)
+	for h in layout.hatches:
+		_expect(HatchPlacer.lane_clear(h, -h.inward(layout.rooms[h.room]), floors, wall_set),
+				"the emitted Hatch at %s has no clear pod lane" % h.tile)
+	var blocked := 0
+	var at := {}
+	var placed := 0
+	for draw in NOTCHED_DRAWS:
+		var rng := RandomNumberGenerator.new()
+		rng.seed = draw + 1
+		var result := HatchPlacer.place(layout, &"small", rng)
+		for h in result.hatches:
+			placed += 1
+			if not HatchPlacer.lane_clear(h, -h.inward(layout.rooms[h.room]), floors, wall_set):
+				blocked += 1
+				at[h.tile] = true
+	_expect(placed > 0, "no Hatch placed in %d draws" % NOTCHED_DRAWS)
+	_expect(blocked == 0, "%d of %d Hatches drawn have no clear pod lane, at %s" % [blocked, placed, at.keys()])
 
 
 ## The debug dump a failing seed prints stays legible: the plan draws every

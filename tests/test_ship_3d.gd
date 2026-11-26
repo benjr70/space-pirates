@@ -850,6 +850,10 @@ func _check_boarding(layout: ShipLayout) -> void:
 			_expect(leaf.prompt_text() != (leaves[main.entry_hatch] as Door3D).prompt_text(),
 					"a sealed hatch prompts like the boarding one")
 	_expect(BoardingPod.fits(layout, hatch, false), "the boarding pod runs into the ship's own hull")
+	# The generator keeps HatchPlacer.POD_LANE tiles clear out of every Hatch:
+	# enough for the tube and its back wall.
+	_expect(HatchPlacer.POD_LANE >= ceili(BoardingPod.DEPTH + BoardingPod.WALL),
+			"a %d-tile pod lane is shorter than the %.1f m pod" % [HatchPlacer.POD_LANE, BoardingPod.DEPTH + BoardingPod.WALL])
 
 
 ## The stripe texture holds both its colours, and the material that carries
