@@ -548,6 +548,20 @@ each leg a prop would block round it:
     and only onto open tiles) and walks on, with its periodic re-path held
     off for 1 s.
 
+  Whatever holds it, a crew member out of the fight (not FIGHT or COVER)
+  that has tried to walk 3.5 s without moving 0.3 m (`PINNED_GIVE_UP`,
+  checked each stuck second, so on the fourth) gives that walk up as
+  above, in every state (raid-smoke-bugs 12: a Worker on routine whose way
+  round a Worker swapping places with it led into a row of props, the
+  first leg untested, and back again each second; a Worker running to hide
+  pressed against the Pirate himself). A walk given up is stood out
+  whatever the state would walk to meanwhile (`_blocked_left`): a fleeing
+  Worker re-paths to its Guard every 0.5 s and had pressed straight back
+  into the Guard fighting in its way. A Worker running to hide that gives
+  its run up hides where it stands for the pause (`CrewHiding.hold_here`,
+  as with no way out), so with him in sight within 4 m it surrenders,
+  then looks again for a place to run.
+
   A Job it still cannot reach is given up at 30 s as before.
 - **Why it cannot deadlock**: two crew mirroring each other forever needs
   both to act, or neither. Of a walking pair blocked by each other, the
@@ -1047,9 +1061,11 @@ Alarm or a Guard), COWER (hiding) and REPORT (come out, walking to report).
   way) it gives its own tile up for the next best then, not at 30 s
   (raid-smoke-bugs 12: a runner pressed 30 s against a crew member working
   on its tile, or at a wall corner its route could not get it past). A run
-  given up behind a crew member that will not move (`_give_up_walk`)
-  stands its 1.5 s out, and a run pushed off its end (or so given up) goes
-  on to the tile by a route, never in a straight line.
+  given up (`_give_up_walk`: behind a crew member that will not move, or
+  pinned 3.5 s by anything, the Pirate included) hides where it stands for
+  its 1.5 s (`CrewHiding.hold_here`; with him in sight within 4 m it
+  surrenders) and then looks again for a place, and a run pushed off its
+  end goes on to the tile by a route, never in a straight line.
 - **Hidden**: on its tile (within 0.5 m) it keeps still, back to the wall,
   facing into the Room (`CrewHiding.facing`; on a tile between two solid
   sides facing each other, along the open way most toward the Room's

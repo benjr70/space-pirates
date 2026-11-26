@@ -368,6 +368,21 @@ func _hide_here() -> bool:
 	return false
 
 
+## Its run given up ([method Crew3D._give_up_walk]): it hides where it
+## stands, as with no way out, and looks again for a place to run after
+## [param pause] seconds. Hiding so, with him in sight within reach, it
+## surrenders (a run pressed against the Pirate himself never ended).
+func hold_here(pause: float) -> void:
+	if phase != Phase.RUN:
+		return
+	tile = Vector2i.MAX
+	spot = Vector3.INF
+	no_way_out = true
+	crew._path.clear()
+	_clock = LOOK_AGAIN - pause
+	_set_phase(Phase.IN_PLACE)
+
+
 ## On its tile: still, back to the wall, facing into the Room.
 func _arrive() -> void:
 	crew._path.clear()

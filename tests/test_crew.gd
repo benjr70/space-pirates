@@ -2344,6 +2344,39 @@ func _check_walks_unstuck() -> void:
 			[Vector3(4.36, 0.0, 10.88)] as Array[Vector3])
 	_expect(swap.is_empty() or _flat(swap[0], Vector3(3.79, 0.0, 10.47)) > CrewPaths.GETS_ON,
 			"unstuck: going where another stands, its way round is %s, which gets it nowhere" % [swap])
+	# (11) Pinned PINNED_GIVE_UP by whatever (a way round that leads nowhere,
+	# the Pirate himself), out of the fight it gives the walk up, in any state.
+	var pinned := _crew(CrewTypes.Type.WORKER)
+	pinned.state = Crew3D.State.FLEE
+	pinned._path.assign([CREW_AT + Vector3.FORWARD * 6.0])
+	pinned._stuck_at = pinned.global_position
+	pinned._stuck_tries = 3
+	pinned._pinned_for = Crew3D.PINNED_GIVE_UP
+	pinned._stuck_clock = Crew3D.UNSTICK_AFTER
+	pinned._watch_progress(0.0)
+	_expect(pinned._path.is_empty() and pinned._blocked_left >= Crew3D.BLOCKED_PAUSE,
+			"unstuck: fleeing, pinned %.1f s with nobody in its way, it walks on %s; want it to give the walk up" % [Crew3D.PINNED_GIVE_UP, pinned._path])
+	pinned.free()
+	# (12) A walk given up is stood out in every state: a fleeing Worker,
+	# which re-paths to its Guard every 0.5 s, does not walk again for
+	# BLOCKED_PAUSE.
+	var runner := _crew(CrewTypes.Type.WORKER)
+	var help := _crew()
+	help.global_position = CREW_AT + Vector3.FORWARD * 8.0
+	runner.state = Crew3D.State.FLEE
+	runner._flee_to = help
+	runner._flee_panel = null
+	runner._repath_timer = 0.0
+	runner._give_up_walk(help)
+	var walked_at := -1.0
+	for i in roundi((Crew3D.BLOCKED_PAUSE + 1.0) / STEP):
+		runner._physics_process(STEP)
+		if runner.is_walking() and walked_at < 0.0:
+			walked_at = i * STEP
+	_expect(walked_at >= Crew3D.BLOCKED_PAUSE - 2.0 * STEP,
+			"unstuck: fleeing, its walk given up, it walked again after %.2f s; want it to stand %.1f s" % [walked_at, Crew3D.BLOCKED_PAUSE])
+	runner.free()
+	help.free()
 
 
 ## Two Workers whose loops share one work Job (a console's single spot):
@@ -5559,6 +5592,16 @@ func _check_hide_stalled() -> void:
 		at = point
 	_expect(worker.hiding.phase == CrewHiding.Phase.RUN and stood and not through,
 			"hide stalled: its run given up, it stands its pause %s and then runs on %s" % [stood, worker._path])
+	# Its run given up (pinned against the Pirate himself): it hides where it
+	# stands for its pause, and with him in sight within reach surrenders.
+	worker._repath_to(worker.hiding.spot)
+	worker._give_up_walk(null)
+	var in_place := worker.hiding.phase == CrewHiding.Phase.IN_PLACE and worker._path.is_empty()
+	player.global_position = worker.global_position + Vector3.RIGHT * 0.7
+	worker._can_see = true
+	var gave_up := worker._gives_up(STEP)
+	_expect(in_place and gave_up and worker.state == Crew3D.State.SURRENDER,
+			"hide stalled: its run given up with him 0.7 m off, it hides where it stands %s and surrenders %s (state %d)" % [in_place, gave_up, worker.state])
 	worker.free()
 
 

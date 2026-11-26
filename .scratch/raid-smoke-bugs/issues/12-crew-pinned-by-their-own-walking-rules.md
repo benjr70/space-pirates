@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: resolved
 Blocked by: none
 
 # Crew pinned 5 s or more by their own walking rules
@@ -37,7 +37,7 @@ On `40c7c63`, seed 641152174: Workers on routine and Workers running to hide pin
 - [x] (agent) Each stuck cause reproduced, explained and fixed at the cause, the invariant not loosened and no check weakened.
 - [x] (agent) A regression check per fix in `crew`, failing without it.
 - [x] (agent) `only=raid_smoke seed=641152174` passes; `only=crew` passes.
-- [ ] (agent) `only=raid_smoke` passes on a fresh seed: seed 845239490 failed once (cause 10), was fixed and passes on replay; a third fresh seed, 238880540, fails (see What remains).
+- [x] (agent) `only=raid_smoke` passes on a fresh seed: seed 845239490 failed once (cause 10), was fixed and passes on replay; a third fresh seed, 238880540, failed twice and passes after the second round (causes 11-13); and the wide sweep `seed=166163022 seeds=20` passes (see Second round).
 - [x] (agent) `_check_time_to_die` medians unchanged.
 
 ## Evidence
@@ -55,6 +55,25 @@ A third fresh seed, `tests/run_all.sh only=raid_smoke seed=238880540`, fails 2 o
 - (56, 128): the re-route of cause 3 is refused because its first leg fails the thin test from where the Worker stands: its centre is 0.30 m off the engine console's tile (prop boxes sit inside their tiles) and `SCRAPE` is 0.3 m, so the square touches the console's tile.
 - (54, 58): a Worker in a one-tile pocket at its Job's spot, another at the mouth going to that spot. With its own tile shut round the body, `route_around` starts from the nearest open tile, two rows up past a row of props, and its untested first leg runs through them; both "go round", neither gives way.
 Fixing both (`SCRAPE` 0.25 m; `route_around` testing its first leg at `SCRAPE` on the bare grid) made each Raid pass narrowed, and a check for the pocket failed without it, but the full runs then failed on seed 641152174 again (the three Guards at the gap, cause 5), on 845239490 and on a fresh seed, so both changes were taken out. What is left is the long tail of crowd cases, each needing its own trace. A full sweep shows about one or two stuck Raids per 45. Next: replay seed 238880540 with the trace, and find out why the first-leg test un-fixed cause 5 before putting it back.
+
+## Second round (2026-11-26)
+
+The wide sweep `tests/run_all.sh only=raid_smoke seed=166163022 seeds=20` failed 4 of 5087 checks on `cfbef27`, all the stuck invariant, all a Worker pressed against a body that stood still; with the two left on seed 238880540 above, six. Each was replayed narrowed with a throwaway trace in `Crew3D._watch_progress` (every stuck second: state, position, path, whether the next leg is clear, the one in its way, its state, path and pinned time) and in `_give_up_walk` and `CrewHiding._run`. The common shape was one rule missing, not six special cases: nothing made a walker out of a fight stop trying when the existing ways out each failed in turn, and two states ignored the pause a give-up asks for.
+
+11. **Pinned with no rule that ends it.** Small 931813205 caught, (54, 66): two Workers swapping places in a lane. The one at (54.5, 66.3) had its own tile shut round the other body, so `route_around` started from the nearest open tile past a row of props and its untested first leg ran into them; each second it alternated between that way round (not clear at `SCRAPE`, so re-routed) and the re-route (straight back through the other Worker), 10 s and more. The same shape as the pocket at (54, 58) on seed 238880540. Not fixed in `route_around` (testing its first leg broke cause 5 last round): whatever holds it, a walker out of the fight pinned `PINNED_GIVE_UP` (3.5 s, so on its fourth stuck second) gives the walk up by `_give_up_walk`, in every state.
+12. **A fleeing Worker ignored the pause.** Medium 159633347 caught, (58, 33): a Worker fleeing to its Guard pressed into a Guard holding its spot in a fight; `_get_past` gave the walk up every third stuck second, but `_tick_flee` re-paths every 0.5 s whatever `_hold_timer` says, so it stood a fraction of a second and pressed again. A walk given up is now stood out for `BLOCKED_PAUSE` in every state (`_blocked_left`: the path is cleared each frame while it runs). Large 119163668 caught (a Worker FLEE against a Guard in COVER) did not reproduce narrowed even on `cfbef27` (it fails only inside the full sweep) and has this shape.
+13. **A run to hide pressed against the Pirate himself.** Small 48175086 loud, (53, 15): a Worker running to hide, the Pirate 0.7 m off in its way. No crew member in its way, so no `_get_past`; both sidesteps blocked; the hiding stall rule gave its tile up each 2 s for another whose route ran past him too; and running, it never counted as cornered, so it never surrendered (spec ticket 24: a Worker with no way out surrenders within 4 m). Now, its run given up (rule 11, or behind a crew member), it hides where it stands for the pause (`CrewHiding.hold_here`, as with no way out), so with him in sight within 4 m it surrenders; else it looks again after the pause.
+
+Fix: `scripts/crew/crew.gd` (`PINNED_GIVE_UP`, `_blocked_left`, `_watch_progress`, `_give_up_walk` taking a null `other`), `scripts/crew/crew_hiding.gd` (`hold_here`), `scripts/crew/CREW_AI.md` ("Getting about", "Workers: running and hiding").
+
+Evidence:
+- Regression checks: `tests/test_crew.gd::_check_walks_unstuck` (11) a fleeing Worker pinned 3.5 s with nobody in its way gives the walk up, (12) a fleeing Worker whose walk was given up does not walk for 1.5 s; `::_check_hide_stalled` a run given up with him 0.7 m off hides where it stands and surrenders. Each mutated back alone on `only=crew seed=255510525` and failed: `FAIL unstuck: fleeing, pinned 3.5 s with nobody in its way, it walks on [(5.0, 0.0, 19.5), (4.0, 0.0, 13.5)]; want it to give the walk up`, `FAIL unstuck: fleeing, its walk given up, it walked again after 0.00 s; want it to stand 1.5 s`, `FAIL hide stalled: its run given up with him 0.7 m off, it hides where it stands false and surrenders false (state 8)`.
+- The four narrowed replays (`seed=166163022 seeds=20` with `class=small ship=931813205 script=caught`, `class=small ship=48175086 script=loud`, `class=medium ship=159633347 script=caught`, `class=large ship=119163668 script=caught`): PASS each.
+- `only=raid_smoke seed=238880540`: PASS (1285 checks); `seed=641152174`: PASS (1285); `seed=845239490`: PASS (1285).
+- `only=crew` (seed 727082280): PASS (555 checks); `_check_time_to_die` medians Pistol 9.56 s, Assault Rifle 5.68 s, unchanged.
+- `only=raid_smoke seed=166163022 seeds=20` (180 Raids): `whole-Raid smoke run: PASS (5087 checks, 1279 s)`; endings quiet 0 failed, loud 0 failed, caught 60 of 60 down.
+
+Found on the way, not caused by this change: `_check_workers_in_fight` fails on medium ship seed 296842 on `cfbef27` too (forced in the check's `ship_seed` on two suite seeds: `a Worker of Room 5 in state 8, hiding where it stands, at (65, 73)`; the Worker at its spawn tile finds no fair run to any hiding place for 25 s, all eight best tiles of its Post Room and the next Room's passing nearer him than both ends less 1 m). The crew suite rolls that ship rarely (`tests/run_all.sh only=crew seed=803924633` rolled it with this round's code before its new checks shifted the draws). Left for its own ticket.
 
 ## Owed to playtest
 

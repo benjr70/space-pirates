@@ -110,6 +110,10 @@ const SIDESTEP := 1.0
 ## Out of the fight, blocked by a Guard holding its spot in one with no way
 ## round, it gives that walk up and stands this many seconds.
 const BLOCKED_PAUSE := 1.5
+## Out of the fight, trying to walk this many seconds without moving
+## UNSTICK_MOVE whatever stops it, it gives that walk up as above
+## ([method _give_up_walk]); checked each stuck second, so on the fourth.
+const PINNED_GIVE_UP := 3.5
 ## Stuck against another crew member (centres closer than GIVE_WAY_NEAR,
 ## it ahead): go round it if the floor allows; else, both walking, one gives
 ## way, stepping off the other's way and waiting there until the other has
@@ -395,6 +399,9 @@ var _stuck_clock := 0.0
 var _stuck_tries := 0
 ## Seconds trying to walk without moving UNSTICK_MOVE, across tries.
 var _pinned_for := 0.0
+## Seconds left of a walk given up ([method _give_up_walk]): it stands,
+## whatever its state would walk to meanwhile.
+var _blocked_left := 0.0
 ## Giving way: the crew member it stepped aside for, how many points at the
 ## front of its path are still the walk to its spot, where the other stood
 ## then, and how long ago that was.
@@ -664,6 +671,7 @@ func _physics_process(delta: float) -> void:
 		magazine.tick(delta)
 	_shot_timer = maxf(_shot_timer - delta, 0.0)
 	_hold_timer = maxf(_hold_timer - delta, 0.0)
+	_blocked_left = maxf(_blocked_left - delta, 0.0)
 	_repath_timer = maxf(_repath_timer - delta, 0.0)
 	_glance_timer = maxf(_glance_timer - delta, 0.0)
 	_chat_cooldown = maxf(_chat_cooldown - delta, 0.0)
@@ -688,6 +696,11 @@ func _physics_process(delta: float) -> void:
 		State.SURRENDER:
 			_tick_surrender(delta)
 
+	if _blocked_left > 0.0 and _yield_to == null:
+		# A walk given up: it stands its pause out whatever its state routes
+		# it to meanwhile (a fleeing Worker re-paths to its Guard every
+		# 0.5 s, and pressed straight back into the Guard holding its way).
+		_path.clear()
 	var waiting := _waiting_to_pass(delta)
 	_steer(delta, waiting)
 	_open_doors_ahead()
@@ -1648,7 +1661,9 @@ func _steer(delta: float, waiting := false) -> void:
 ## or a prop ([constant CrewPaths.SCRAPE]) and a route finds another. With another crew
 ## member in its way, it gets past it ([method _get_past]); with anything
 ## else no route knows of (the Pirate), it steps aside, a side at a time, and
-## walks on. A Job it still cannot reach is given up at JOB_GIVE_UP.
+## walks on. Out of the fight and pinned PINNED_GIVE_UP whatever the cause,
+## it gives the walk up ([method _give_up_walk]). A Job it still cannot
+## reach is given up at JOB_GIVE_UP.
 func _watch_progress(delta: float) -> void:
 	if _path.is_empty():
 		_stuck_tries = 0
@@ -1667,6 +1682,13 @@ func _watch_progress(delta: float) -> void:
 		# Blocked on the way to the spot it was stepping to: wait here instead.
 		_path = _path.slice(_yield_left)
 		_yield_left = 0
+		return
+	if _pinned_for >= PINNED_GIVE_UP and not _fighting():
+		# Whatever holds it (a body that will not move with a way round that
+		# leads nowhere, the Pirate himself, a prop no route gets it past),
+		# out of the fight it stops trying: in every state, it gives the walk
+		# up (raid-smoke-bugs 12).
+		_give_up_walk(_crew_in_way(GIVE_WAY_FAR))
 		return
 	if layout != null and (_stuck_tries == 1 or (_crew_in_way(GIVE_WAY_FAR) == null
 			and not CrewPaths.clear(CrewPaths.grid(layout), global_position, _path[0], CrewPaths.SCRAPE))):
@@ -1808,7 +1830,10 @@ func _step_aside(other: Crew3D, spot: Array[Vector3]) -> void:
 ## him, it joins the fight from where it stands; otherwise it stands
 ## BLOCKED_PAUSE before it walks anywhere again, and one walking to a Job on
 ## routine (behind one standing still or fighting) then sets off for its
-## next Job.
+## next Job. Whatever its state, it stands the pause out
+## ([member _blocked_left]); running to hide, it hides where it stands for
+## it ([method CrewHiding.hold_here]). [param other] may be null: pinned
+## PINNED_GIVE_UP by something else ([method _watch_progress]).
 ## (Crew-combat ticket 22 gave up only behind a Guard holding its spot in
 ## a fight with no way round; ticket 27's smoke invariant, no crew member
 ## trying to walk 5 s without moving 0.3 m, caught a Worker pressing 10 s
@@ -1818,7 +1843,7 @@ func _step_aside(other: Crew3D, spot: Array[Vector3]) -> void:
 ## sent straight back into it by its routine; one sent straight on to its
 ## next Job pressed on into a Guard in cover in its Room's only doorway.)
 func _give_up_walk(other: Crew3D) -> void:
-	var fighting := other.state in [State.FIGHT, State.COVER]
+	var fighting := other != null and other.state in [State.FIGHT, State.COVER]
 	if fighting and state == State.HUNT and cover != null and not flanking:
 		_enter(State.COVER)
 		return
@@ -1829,6 +1854,10 @@ func _give_up_walk(other: Crew3D) -> void:
 		job_phase = JobPhase.WAITING
 	_path.clear()
 	_hold_timer = maxf(_hold_timer, BLOCKED_PAUSE)
+	_blocked_left = BLOCKED_PAUSE
+	if state == State.COWER and hiding != null:
+		# Running to hide: it hides where it stands for the pause.
+		hiding.hold_here(BLOCKED_PAUSE)
 
 
 ## Asked by [param walker], which it stands in the way of with no way
