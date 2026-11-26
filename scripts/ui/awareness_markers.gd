@@ -3,8 +3,10 @@ extends Control
 ## A small bar over each crew member's head that fills with its Awareness of
 ## the Pirate: white while unaware, yellow once suspicious, solid red when
 ## spotted. Drawn on the HUD over the 3D view, only for crew that are on
-## screen (or within [constant NEAR] metres) and aware of him at all.
-## Rings the spotted sting once each time a crew member tips into red.
+## screen (or within [constant NEAR] metres), aware of him at all, and in a
+## clear line from the camera (walls, props and shut Doors hide a bar).
+## Rings the spotted sting once each time a crew member tips into red, seen
+## or not.
 
 const WHITE := Color(1.0, 1.0, 1.0, 0.9)
 const YELLOW := Color(1.0, 0.82, 0.2)
@@ -62,21 +64,50 @@ func _draw() -> void:
 		return
 	for node in get_tree().get_nodes_in_group(&"crew"):
 		var crew := node as Crew3D
-		if crew == null or not crew.is_alive() or crew.perception.awareness <= 0.0:
+		if crew == null:
 			continue
-		var head := crew.global_position + Vector3.UP * HEAD_OFFSET
-		var distance := camera.global_position.distance_to(head)
-		var behind := camera.is_position_behind(head)
-		if distance > FAR or (behind and distance > NEAR):
-			continue
-		var screen := get_viewport_rect().size
-		var at := camera.unproject_position(head)
-		if behind:
-			# Mirror across the centre and pin to the bottom edge.
-			at = Vector2(screen.x - at.x, screen.y - BAR.y)
-		at.x = clampf(at.x, BAR.x, screen.x - BAR.x)
-		at.y = clampf(at.y, BAR.y, screen.y - BAR.y)
-		_draw_bar(at, crew.perception.awareness)
+		var at := mark_at(crew, camera)
+		if at != Vector2.INF:
+			_draw_bar(at, crew.perception.awareness)
+
+
+## Where on screen a crew member's bar goes, seen from [param camera], or
+## [code]Vector2.INF[/code] when it gets none: dead, Bound, unaware, too far, more
+## than [constant NEAR] metres behind the camera, or with the ship (hull,
+## props, shut Doors: the world layer crew sight uses) between the camera and
+## its eyes. A bar for crew close behind the camera is pinned to the bottom
+## edge, mirrored across the centre.
+func mark_at(crew: Crew3D, camera: Camera3D) -> Vector2:
+	if not crew.is_alive() or crew.is_bound() or crew.perception.awareness <= 0.0:
+		return Vector2.INF
+	var head := crew.global_position + Vector3.UP * HEAD_OFFSET
+	var distance := camera.global_position.distance_to(head)
+	var behind := camera.is_position_behind(head)
+	if distance > FAR or (behind and distance > NEAR):
+		return Vector2.INF
+	if not _in_clear_line(camera, crew):
+		return Vector2.INF
+	var screen := get_viewport_rect().size
+	if is_zero_approx((camera.global_transform.affine_inverse() * head).z):
+		# On the camera's own plane there is no point on screen: a hair
+		# behind it is pinned like anything else behind.
+		head += camera.global_basis.z * 0.01
+		behind = true
+	var at := camera.unproject_position(head)
+	if behind:
+		# Mirror across the centre and pin to the bottom edge.
+		at = Vector2(screen.x - at.x, screen.y - BAR.y)
+	at.x = clampf(at.x, BAR.x, screen.x - BAR.x)
+	at.y = clampf(at.y, BAR.y, screen.y - BAR.y)
+	return at
+
+
+## True when nothing on the world layer stands between the camera and the
+## crew member's eye height.
+static func _in_clear_line(camera: Camera3D, crew: Crew3D) -> bool:
+	var eyes := crew.global_position + Vector3.UP * Crew3D.EYE_HEIGHT
+	var params := PhysicsRayQueryParameters3D.create(camera.global_position, eyes, Crew3D.WORLD_LAYER)
+	return camera.get_world_3d().direct_space_state.intersect_ray(params).is_empty()
 
 
 func _draw_bar(at: Vector2, awareness: float) -> void:

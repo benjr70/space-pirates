@@ -1,8 +1,8 @@
 class_name CrewTraces
 extends RefCounted
 ## What the Pirate leaves behind that crew can find: bodies where they fell,
-## the boarding Hatch he left open, Containers he emptied and Doors he left
-## standing open. A crew member that sees an unreported trace in its forward
+## Workers he left Bound, the boarding Hatch he left open, Containers he
+## emptied and Doors he left standing open. A crew member that sees an unreported trace in its forward
 ## cone becomes suspicious and walks to it, and reaching it reports it once.
 ## How hard it reacts depends on how bad the trace is ([method serious]).
 ## See `CREW_AI.md`.
@@ -43,10 +43,11 @@ static func spot(crew: Crew3D) -> Node3D:
 
 
 ## Whether [param node] is a trace nobody has reported yet: a dead crew
-## member, an emptied Container, or a Door or Hatch the Pirate left open.
+## member or a Bound Worker, an emptied Container, or a Door or Hatch the
+## Pirate left open.
 static func is_trace(node: Node) -> bool:
 	if node is Crew3D:
-		return not node.is_alive() and not node.reported
+		return (not node.is_alive() or node.is_bound()) and not node.reported
 	if node is Container3D:
 		return node.is_open and not node.reported
 	if node is Door3D:
@@ -54,7 +55,8 @@ static func is_trace(node: Node) -> bool:
 	return false
 
 
-## A body or the boarding Hatch: worth raising the Alarm over. An emptied
-## Container or a Door left open only puts a crew member On Edge.
+## A body, a Bound Worker or the boarding Hatch: worth raising the Alarm
+## over. An emptied Container or a Door left open only puts a crew member
+## On Edge.
 static func serious(node: Node) -> bool:
 	return node is Crew3D or (node is Door3D and node.is_hatch())

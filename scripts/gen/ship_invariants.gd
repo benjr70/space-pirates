@@ -14,7 +14,8 @@ extends RefCounted
 ##  6  every Room reachable from every Hatch       [method _check_connectivity]
 ##  7  not mirror-symmetric                        [method _check_asymmetry]
 ##  8  2 to 4 Hatches, in the Class band           [method _check_hatches]
-##  9  Hatch tiles are Hull, reachable, one Room   [method _check_hatches]
+##  9  Hatch tiles are Hull, reachable, one Room,
+##     a clear pod lane straight out               [method _check_hatches]
 ## 10  ≤ 1 Hatch per Room, none on fixed Roles,
 ##     exactly one Cargo Hatch Room                [method _check_hatches]
 ## 11  Hatch separation along the Hull and inside  [method _check_hatches]
@@ -251,7 +252,9 @@ func _check_asymmetry(layout: ShipLayout) -> void:
 
 
 ## Hatches: count in the Class band, each a two-wide gap in Hull reachable
-## from outside opening into exactly one Room, at most one per Room, none on
+## from outside opening into exactly one Room, with
+## [constant HatchPlacer.POD_LANE] tiles of open space straight out of it for
+## a Boarding Pod, at most one per Room, none on
 ## the Bridge, an Engine or a Corridor, exactly one Hatch Room a Cargo, and
 ## every pair separated along the Hull and by at least two Rooms inside,
 ## at the relaxation level the ship records ([member ShipLayout.hatch_relaxation]).
@@ -291,6 +294,9 @@ func _check_hatches(layout: ShipLayout, ship_class: StringName) -> void:
 				if r != -1:
 					touching[r] = true
 			_expect(touching.size() == 1 and touching.has(h.room), "hatch tile %s touches rooms %s" % [t, touching.keys()])
+		if step != Vector2i.ZERO:
+			_expect(HatchPlacer.lane_clear(h, -step, floors, wall_set),
+					"hatch at %s has no clear lane out for a boarding pod" % h.tile)
 	_expect(cargo_hatches == 1, "%d hatch rooms are cargo, want exactly one" % cargo_hatches)
 	# The separation rules, at the relaxation level the placer had to reach:
 	# strict, then without the Flow Distance floor, then half the Hull separation.

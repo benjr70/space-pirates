@@ -6,7 +6,7 @@ extends CanvasLayer
 ## shot; F1 or Esc closes the sheet and the Raid resumes with it. A cell
 ## that differs from disk turns amber and shows the disk value beside it.
 ## Save writes the resources and `docs/sandbox.md`; Revert puts back what is
-## on disk. Crew read their Pistol and Gunnery live, so those need nothing
+## on disk. Crew read their weapon and Gunnery live, so those need nothing
 ## more. Health is taken at spawn, so a Health change is pushed onto the
 ## Pirate (refilled) and every crew member still standing.
 ##

@@ -7,7 +7,7 @@ extends RefCounted
 ## and save them. The in-Raid sheet draws it; [SandboxSheet] renders it as
 ## Markdown.
 ##
-## A new kind of table (Gunnery, one Resource per crew type) is
+## A new kind of table (Gunnery, one Resource per weapon) is
 ## [method from_resources] over its Resources; a new derived row is
 ## [method add_derived]; a new exported field on a Resource is a new row
 ## with no change here.
@@ -37,9 +37,10 @@ var _disk: Array[Resource] = []
 
 
 ## A table over [param resources], one column each, named by
-## [param column_names], with a row per exported script property.
+## [param column_names], with a row per exported script property; only
+## those under the export groups named in [param groups], when any are.
 static func from_resources(table_title: String, column_names: PackedStringArray,
-		resources: Array) -> SheetTable:
+		resources: Array, groups: PackedStringArray = PackedStringArray()) -> SheetTable:
 	var table := SheetTable.new()
 	table.title = table_title
 	table.columns = column_names
@@ -47,7 +48,7 @@ static func from_resources(table_title: String, column_names: PackedStringArray,
 		table.targets.append(resource)
 		table.paths.append(resource.resource_path)
 	if not resources.is_empty():
-		table._rows_from(resources[0])
+		table._rows_from(resources[0], groups)
 	table.reload_disk()
 	return table
 
@@ -80,12 +81,13 @@ static func from_factors(table_title: String, column_names: PackedStringArray,
 	return table
 
 
-func _rows_from(resource: Resource) -> void:
+func _rows_from(resource: Resource, groups: PackedStringArray) -> void:
 	var group := ""
 	for p: Dictionary in resource.get_property_list():
 		if p.usage & PROPERTY_USAGE_GROUP:
 			group = p.name
-		elif p.usage & PROPERTY_USAGE_SCRIPT_VARIABLE and p.usage & PROPERTY_USAGE_EDITOR:
+		elif p.usage & PROPERTY_USAGE_SCRIPT_VARIABLE and p.usage & PROPERTY_USAGE_EDITOR \
+				and (groups.is_empty() or group in groups):
 			var editable: bool = p.type in [TYPE_BOOL, TYPE_INT, TYPE_FLOAT]
 			rows.append({"key": StringName(p.name), "label": String(p.name).capitalize(), "group": group,
 					"kind": Kind.EDIT if editable else Kind.READ_ONLY, "type": p.type, "compute": Callable()})

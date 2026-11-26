@@ -202,6 +202,8 @@ static func build(layout: ShipLayout, parent: Node3D, boarding_hatch := -1) -> v
 	var crew := Node3D.new()
 	crew.name = "Crew"
 	parent.add_child(crew)
+	# Each Guard's gun, from a stream of its own ([GunRoll]); Workers get none.
+	var guns := GunRoll.roll(layout)
 	for i in layout.rooms.size():
 		var room: RoomData = layout.rooms[i]
 		for n in room.crew_count:
@@ -209,6 +211,8 @@ static func build(layout: ShipLayout, parent: Node3D, boarding_hatch := -1) -> v
 			hostile.layout = layout
 			hostile.home_room = i
 			hostile.crew_type = CrewTypes.for_role(room.role, n)
+			hostile.weapon = GunRoll.weapon(guns[i][n])
+			hostile.gunnery = Gunnery.for_weapon(hostile.weapon)
 			# Interior generation names each body's tile; hand-authored Rooms
 			# are spread across the floor.
 			if n < room.crew_spawns.size():

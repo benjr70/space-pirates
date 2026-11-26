@@ -1,0 +1,22 @@
+[gd_resource type="Resource" script_class="Gunnery" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/crew/gunnery.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+aim_error_degrees = 5.0
+opening_spread = 3.0
+closing_time = 1.2
+lead = 0.3
+shots_per_burst_low = 2
+shots_per_burst_high = 3
+bursts_per_peek = 1
+gap_between_bursts_low = 0.0
+gap_between_bursts_high = 0.0
+time_down_low = 0.6
+time_down_high = 1.2
+settle = 0.35
+range_near = 4.0
+range_far = 8.0
+hold_before_shifting = 4.0
+reload_factor = 1.5

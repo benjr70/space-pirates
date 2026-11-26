@@ -4,11 +4,16 @@ extends RefCounted
 ## for kills, more for kills on crew that never saw him coming, and kept
 ## whichever way the Raid ends; gold is carried from the Containers he opens
 ## and banked only if he extracts with it. Extracting with the Alarm never
-## raised adds the Ghost bonus.
+## raised adds the Ghost bonus. Tying up a surrendered Worker (Bound) earns
+## XP too; killing one that had surrendered, or was Bound, earns none.
 
 const KILL_XP := 100
 ## A kill on a crew member that had not spotted him.
 const UNAWARE_KILL_XP := 150
+## A kill on a Worker that had surrendered, or was Bound.
+const SURRENDERED_KILL_XP := 0
+## Tying up a surrendered Worker.
+const BIND_XP := 50
 ## Extraction XP by Ship Class: the bigger the ship, the further from home.
 const EXTRACT_XP := {&"small": 200, &"medium": 350, &"large": 500}
 ## Ghost: extracting with the Alarm never raised, by Ship Class.
@@ -18,6 +23,10 @@ var ship_class: StringName = &""
 var kills := 0
 ## Of those, kills on crew that had not spotted him.
 var unaware_kills := 0
+## Of those, kills on Workers that had surrendered or were Bound.
+var surrendered_kills := 0
+## Workers he tied up this Raid.
+var bound := 0
 ## The ship's Alarm went up at some point this Raid: no Ghost bonus.
 var alarm_raised := false
 ## Gold he is carrying, lost if he does not get out with it.
@@ -31,7 +40,17 @@ func _init(raid_class: StringName = &"") -> void:
 
 
 func kill_xp() -> int:
-	return (kills - unaware_kills) * KILL_XP + unaware_kills * UNAWARE_KILL_XP
+	return (kills - unaware_kills - surrendered_kills) * KILL_XP + unaware_kills * UNAWARE_KILL_XP \
+			+ surrendered_kills * SURRENDERED_KILL_XP
+
+
+func bind_xp() -> int:
+	return bound * BIND_XP
+
+
+## XP kept whichever way the Raid ends: kills and Workers bound.
+func kept_xp() -> int:
+	return kill_xp() + bind_xp()
 
 
 ## The Ghost bonus this Raid would earn on extracting now: zero once the
@@ -44,12 +63,22 @@ func extract_xp() -> int:
 	return EXTRACT_XP.get(ship_class, EXTRACT_XP[&"medium"])
 
 
-## [param unaware]: the crew member had not spotted him when it fell.
-func record_kill(unaware := false) -> void:
+## [param unaware]: the crew member had not spotted him when it fell;
+## [param surrendered]: a Worker that had surrendered, or was Bound (it wins
+## over unaware).
+func record_kill(unaware := false, surrendered := false) -> void:
 	if not settled:
 		kills += 1
-		if unaware:
+		if surrendered:
+			surrendered_kills += 1
+		elif unaware:
 			unaware_kills += 1
+
+
+## He tied up a surrendered Worker.
+func record_bind() -> void:
+	if not settled:
+		bound += 1
 
 
 func carry(gold: int) -> void:
@@ -57,17 +86,19 @@ func carry(gold: int) -> void:
 		carried_gold += gold
 
 
-## Got out: kill XP, the extraction bonus and every coin carried are kept.
+## Got out: kill and bind XP, the extraction bonus and every coin carried
+## are kept.
 func settle_extracted() -> void:
 	if settled:
 		return
 	settled = true
-	Profile.bank(kill_xp() + extract_xp() + ghost_xp(), carried_gold)
+	Profile.bank(kept_xp() + extract_xp() + ghost_xp(), carried_gold)
 
 
-## Went down or walked away: kill XP is kept, the gold stays on the ship.
+## Went down or walked away: kill and bind XP are kept, the gold stays on
+## the ship.
 func settle_lost() -> void:
 	if settled:
 		return
 	settled = true
-	Profile.bank(kill_xp(), 0)
+	Profile.bank(kept_xp(), 0)

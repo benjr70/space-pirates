@@ -44,6 +44,10 @@ var shooter: Node3D
 ## Shots pass straight through anyone on the shooter's own side.
 var team: StringName = &""
 
+## Shared by every pellet of one shot: at most its cap of them do damage
+## (a crew Shotgun shot's pellet cap); null, and every pellet does.
+var volley: Volley
+
 var _age := 0.0
 ## Metres flown, which is as long as the streak's tail may be.
 var _travelled := 0.0
@@ -156,13 +160,57 @@ func _head_on_line(from: Vector3, to: Vector3) -> Dictionary:
 	return {collider = zone.body, position = found.position, head = true}
 
 
-## A bolt born inside a body, or grazing one with its own width: a
-## Headshot if it was flying into that body's head.
+## A bolt born inside a body, or grazing a crew member or the Pirate with
+## its own width: a Headshot if it was flying into that body's head. The
+## hull and props it only skims let it by. Touching several at
+## once (the floor and a leg it skims), it strikes the one it is deepest
+## in, not the first reported: Jolt reports a step's touches in an order
+## that differs from run to run, and a seed would not replay.
 func _on_body_entered(body: Node3D) -> void:
 	if body == shooter or _passes_through(body):
 		return
+	body = _deepest_touch(body)
+	if not body.has_method("take_damage") and not _inside(body):
+		# Skimming the hull or a prop with its width alone: only its own
+		# line stops it there ([method _sweep]), or a bolt aimed at a head
+		# showing over a crate would die on the crate's top.
+		return
 	var head := _head_on_line(global_position, global_position + direction * HEAD_DEPTH)
 	_strike(body, head.get("collider") == body)
+
+
+## Whether the bolt's centre is inside [param body] (a bolt born in a wall,
+## which no ray from inside would ever strike).
+func _inside(body: Node3D) -> bool:
+	var params := PhysicsPointQueryParameters3D.new()
+	params.position = global_position
+	params.collision_mask = collision_mask
+	for found: Dictionary in get_world_3d().direct_space_state.intersect_point(params, 8):
+		if found.collider == body:
+			return true
+	return false
+
+
+## The body this bolt's sphere is deepest in, of those it may strike;
+## [param touched] when the query finds none of them.
+func _deepest_touch(touched: Node3D) -> Node3D:
+	var params := PhysicsShapeQueryParameters3D.new()
+	params.shape = ($CollisionShape3D as CollisionShape3D).shape
+	params.transform = global_transform
+	params.collision_mask = collision_mask
+	var exclude: Array[RID] = []
+	if shooter is CollisionObject3D:
+		exclude.append((shooter as CollisionObject3D).get_rid())
+	for i in 4:
+		params.exclude = exclude
+		var rest := get_world_3d().direct_space_state.get_rest_info(params)
+		var body := instance_from_id(rest.get("collider_id", 0)) as Node3D
+		if body == null:
+			return touched
+		if not _passes_through(body):
+			return body
+		exclude.append(rest.rid)
+	return touched
 
 
 ## Friendly fire passes through rather than stopping the shot dead.
@@ -174,7 +222,23 @@ func _strike(body: Node3D, on_head := false) -> void:
 	if _struck:
 		return
 	_struck = true
-	if body.has_method("take_damage"):
+	if body.has_method("take_damage") and (volley == null or volley.hurts()):
 		body.take_damage(WeaponProfile.head_damage(damage, headshot_multiplier) if on_head else damage, shooter)
 	hit.emit(body, on_head)
 	queue_free()
+
+
+## The pellets of one shot, counting how many have done damage.
+class Volley extends RefCounted:
+	## How many may do damage; negative, all of them.
+	var cap := -1
+	var hurt := 0
+
+	## Whether one more pellet may do damage, counting it if so.
+	func hurts() -> bool:
+		if cap < 0:
+			return true
+		if hurt >= cap:
+			return false
+		hurt += 1
+		return true

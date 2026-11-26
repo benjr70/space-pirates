@@ -5,6 +5,10 @@ extends SceneTree
 ##   flatpak run org.godotengine.Godot --headless --path . --script res://tests/test_ship_3d.gd
 
 const UP := Vector3.UP
+## Frames the crew phase waits for the gunman's first hit. It fights from
+## cover (crew-combat ticket 18): it may hide or walk to a spot before it
+## peeks, so the hit comes later than the old 4 s rush.
+const CREW_SHOT_FRAMES := 900
 
 var failures: Array[String] = []
 var checks := 0
@@ -408,7 +412,7 @@ func _begin_crew_phase() -> void:
 	# A dead-eye: no cone at all, so every shot of his lands.
 	gunman.weapon = (gunman.weapon as WeaponProfile).duplicate()
 	gunman.weapon.spread_base_degrees = 0.0
-	gunman.gunnery = (load(Gunnery.GUARD_PATH) as Gunnery).duplicate()
+	gunman.gunnery = (load(Gunnery.PATHS[0]) as Gunnery).duplicate()
 	gunman.gunnery.aim_error_degrees = 0.0
 	gunman.position = player.global_position + Vector3(5.6, 0.0, 0.0)
 	holder.add_child(gunman)
@@ -438,9 +442,9 @@ func _physics_crew() -> void:
 		75:
 			_expect(gunman.state in [Crew3D.State.HUNT, Crew3D.State.FIGHT, Crew3D.State.COVER],
 					"crew saw the pirate and stayed on patrol (state %d)" % gunman.state)
-		240:
+		_ when frames >= CREW_SHOT_FRAMES or (frames >= 240 and player.health.current < player.health.max_health):
 			_expect(player.health.current < player.health.max_health,
-					"crew never landed a shot on the pirate")
+					"crew never landed a shot on the pirate in %d frames" % frames)
 			_expect(bystander.health.current == bystander.health.max_health,
 					"crew shot one of their own")
 			_check_cover()
@@ -846,6 +850,10 @@ func _check_boarding(layout: ShipLayout) -> void:
 			_expect(leaf.prompt_text() != (leaves[main.entry_hatch] as Door3D).prompt_text(),
 					"a sealed hatch prompts like the boarding one")
 	_expect(BoardingPod.fits(layout, hatch, false), "the boarding pod runs into the ship's own hull")
+	# The generator keeps HatchPlacer.POD_LANE tiles clear out of every Hatch:
+	# enough for the tube and its back wall.
+	_expect(HatchPlacer.POD_LANE >= ceili(BoardingPod.DEPTH + BoardingPod.WALL),
+			"a %d-tile pod lane is shorter than the %.1f m pod" % [HatchPlacer.POD_LANE, BoardingPod.DEPTH + BoardingPod.WALL])
 
 
 ## The stripe texture holds both its colours, and the material that carries

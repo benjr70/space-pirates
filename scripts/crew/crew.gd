@@ -2,9 +2,9 @@ class_name Crew3D
 extends CharacterBody3D
 ## Hostile crew: patrols its room, builds Awareness of the pirate through a
 ## forward sight cone ([CrewPerception]), comes to look when suspicious,
-## hunts him once spotted, and fights from cover -- shoot a burst, duck
-## behind something to reload, lean back out. The whole system is written up
-## in `CREW_AI.md` beside this file.
+## hunts him once spotted, and a Guard fights from cover ([CrewCover]):
+## down behind a prop, a wall or a corner, peeking to fire. The whole system
+## is written up in `CREW_AI.md` beside this file.
 ##
 ## A straight port of the 2D crew onto the XZ plane. Movement between rooms
 ## rides the door graph via [ShipNavigator]; inside a room [CrewPaths] bends
@@ -19,8 +19,28 @@ extends CharacterBody3D
 ## under `Model`; the rigs share one skeleton and Quaternius's clip names,
 ## which the brain plays by state.
 
+## A Guard's reload began: from a dry gun, or topping up ([CrewMagazine]).
+## A reload pose plays from here.
+signal reload_started(from_empty: bool)
+## A shell is seated in a shell-by-shell reload (the Shotgun).
+signal shell_loaded
+## The reload is over: full, or [param broken] off to fire (the Shotgun).
+signal reload_ended(broken: bool)
+
 ## Newer states go last so the older ones keep their numbers.
-enum State { PATROL, HUNT, FIGHT, COVER, SEARCH, DEAD, INVESTIGATE, FLEE, COWER }
+## COWER is a Worker hiding ([CrewHiding]); REPORT, a Worker come out of
+## hiding walking to raise the Alarm or a Guard; SURRENDER, a Worker that
+## has given up to the Pirate (Surrender); BOUND, one he has tied up.
+enum State { PATROL, HUNT, FIGHT, COVER, SEARCH, DEAD, INVESTIGATE, FLEE, COWER, REPORT, SURRENDER, BOUND }
+
+## Where a Worker is in giving up, for its poses (crew-combat ticket 25):
+## hands up on surrendering, kneeling after the Sandbox's kneel time, Bound
+## once tied up; NONE otherwise.
+enum Surrender { NONE, HANDS_UP, KNEELING, BOUND }
+const SURRENDER_NAMES: PackedStringArray = ["none", "hands up", "kneeling", "Bound"]
+
+## A Worker's [member surrender] stage changed.
+signal surrender_changed(stage: Surrender)
 
 ## Called on every node in this group, with the crew member, each time one
 ## tips into spotted: the HUD's sting and markers listen here.
@@ -59,12 +79,20 @@ const CHAT_TIME := Vector2(3.0, 5.0)
 const CHAT_COOLDOWN := 40.0
 ## Seconds walking toward one Job before giving it up as unreachable.
 const JOB_GIVE_UP := 30.0
-## A Worker fights only with the Pirate this close and in sight, and goes
-## back to running once he is further than CORNER_RELEASE.
+## A Worker with the Pirate this close and in sight is cornered
+## ([method _cornered]): read by the smoke run's bot; Surrender (crew-combat
+## ticket 24) is to decide what it does.
 const CORNERED_RANGE := 3.0
-const CORNER_RELEASE := 5.0
-## Chance a spotted Worker hides where it is rather than run for a Guard.
+## Chance a Worker spotting him with the Alarm down freezes and hides rather
+## than run to raise it.
 const HIDE_CHANCE := 0.25
+## Seconds a surrendered Worker goes without him in its sight before it
+## gives the Surrender up and hides again (so one frame of a prop between
+## them does not end it).
+const SURRENDER_LOST := 0.5
+## Seconds between a Worker's looks for a way out past him, while it
+## weighs surrendering.
+const WAY_OUT_EVERY := 1.0
 ## A fleeing Worker has reached its Guard this close, and raises it.
 const GUARD_REACH := 2.5
 ## A Worker has reached an Alarm Panel this close to its use spot.
@@ -73,19 +101,19 @@ const PANEL_REACH := 0.9
 const ON_EDGE_PAUSE := 0.5
 ## Under the Alarm, a sweeping Guard's pause at each Room it checks.
 const SWEEP_PAUSE := 1.5
-## Seconds a hiding Worker stays put with nothing in sight before it
-## creeps back to its routine.
-const COWER_CALM := 15.0
-## Seconds a crew member runs for its cover point before giving up on
-## reaching it (the way blocked by the Pirate, another body or a prop) and
-## holding where it is.
-const COVER_GIVE_UP := 3.0
 ## A crew member trying to walk that moves less than UNSTICK_MOVE metres in
 ## UNSTICK_AFTER seconds is stuck and works itself loose: re-routes, then
 ## steps SIDESTEP metres aside.
 const UNSTICK_AFTER := 1.0
 const UNSTICK_MOVE := 0.3
 const SIDESTEP := 1.0
+## Out of the fight, blocked by a Guard holding its spot in one with no way
+## round, it gives that walk up and stands this many seconds.
+const BLOCKED_PAUSE := 1.5
+## Out of the fight, trying to walk this many seconds without moving
+## UNSTICK_MOVE whatever stops it, it gives that walk up as above
+## ([method _give_up_walk]); checked each stuck second, so on the fourth.
+const PINNED_GIVE_UP := 3.5
 ## Stuck against another crew member (centres closer than GIVE_WAY_NEAR,
 ## it ahead): go round it if the floor allows; else, both walking, one gives
 ## way, stepping off the other's way and waiting there until the other has
@@ -93,11 +121,28 @@ const SIDESTEP := 1.0
 ## Which one is fixed (see [method _gives_way]); after GIVE_WAY_INSIST tries
 ## still blocked, either will.
 const GIVE_WAY_NEAR := 1.0
+## Stuck this many tries with nobody that near, it looks for one in its way
+## out to GIVE_WAY_FAR (a body just past arm's length closing a lane).
+const GIVE_WAY_LOOK_FURTHER := 3
+const GIVE_WAY_FAR := 1.5
 const GIVE_WAY_PASSED := 2.0
 const GIVE_WAY_WAIT := 5.0
 const GIVE_WAY_INSIST := 8
 ## How fast the body turns to face where it is looking, radians a second.
 const TURN_RATE := 6.0
+## A Worker's sat poses (crew-combat ticket 25): the wall behind is looked
+## for at this height, metres; the drawn body moves back to SEAT_GAP from
+## it, at most SEAT_BACK_MOST. Bound sat, it sits against the nearest wall
+## or prop within BOUND_WALL_REACH of its centre (looked for in BOUND_LOOKS
+## ways round), its body BOUND_STANDOFF off it (the capsule's radius and a
+## margin), shuffling there over BOUND_SHUFFLE seconds.
+const SEAT_HEIGHT := 0.45
+const SEAT_GAP := 0.22
+const SEAT_BACK_MOST := 0.3
+const BOUND_WALL_REACH := 1.0
+const BOUND_LOOKS := 16
+const BOUND_STANDOFF := 0.37
+const BOUND_SHUFFLE := 0.5
 
 const TEAM := &"crew"
 ## Layer 1 is the ship itself: hull, props and shut doors.
@@ -107,11 +152,16 @@ const WORLD_LAYER := 1
 const EYE_HEIGHT := 1.5
 ## Cover only counts if it hides someone crouched this high.
 const COVER_HEIGHT := 0.9
-## Shots leave here, this far ahead of the body, and are aimed at the
-## target's torso. Where the gun sits on the body, not a gun number.
+## Roughly where a gun is held, metres off the floor and ahead of the
+## body: where its action sounds ring, and the muzzle of a crew member with
+## no gun model. A Guard's shots leave its gun's own `Muzzle` marker
+## ([method aim_muzzle]). Shots are aimed at the target's torso.
 const MUZZLE_HEIGHT := 1.3
 const MUZZLE_FORWARD := 0.625
 const TORSO_HEIGHT := 1.0
+## A Guard keeps its gun up in the aimed hold this long after a shot, even
+## out of FIGHT (firing on his cover, a break-off shot).
+const AIM_HOLD := 0.5
 ## The muzzle line is tested as a ball this wide (a bolt's 0.09 m overlap
 ## sphere and a hair), stopping this short of the target's centre (his
 ## capsule's 0.35 m radius and a margin).
@@ -119,10 +169,18 @@ const MUZZLE_BALL := 0.1
 const MUZZLE_TARGET_GAP := 0.4
 ## How far out from the muzzle the edges of its spread must be clear too.
 const MUZZLE_NEAR := 1.5
+## A pellet straying up or down is kept out of the ship for this far past
+## the muzzle ([method _over_own_cover]).
+const OWN_COVER := 2.5
 static var _bolt_ball := _ball(MUZZLE_BALL)
-## A spot it moves to for a clear shot is at least this far from where it
-## stands, so it steps out from cover rather than shuffling against it.
+## Its body's room to stand: the capsule's 0.35 m radius, a hair less.
+static var _body_ball := _ball(0.33)
+## A spot a Guard fighting in the open moves to for a clear shot is at
+## least this far from where it stands, a real step rather than a shuffle.
 const FIRING_STEP := 1.0
+## A reload's sounds play this high at the Guard's position, metres: its
+## hands.
+const RELOAD_HEIGHT := 1.0
 
 @export_group("Movement")
 @export var max_speed := 3.59
@@ -133,22 +191,31 @@ const FIRING_STEP := 1.0
 
 @export_group("Perception")
 @export var vision_range := CrewPerception.SIGHT_RANGE
-## Seconds out of sight before the crew stops shooting and starts searching.
+## Seconds out of sight before a hunting Guard gives up and searches (a
+## Guard fighting from cover gives up after [constant CrewCover.UNSEEN_SEARCH]).
 @export var lose_target_after := 3.0
 
 @export_group("Gunnery")
-## What they fire: the Pirate's own Pistol, the same live Resource, so a
-## Sandbox sheet edit reaches crew shots too. Crew read its damage, bolt and
-## time between shots, and ignore its magazine, reloads, bloom, Aim Down
-## Sights, recoil and Viewmodel: they fire a burst and pause.
+## What a Guard fires: one of the Pirate's four bare weapons, the same live
+## Resource, rolled by [ShipBuilder3D] ([GunRoll]); the Pistol unless set.
+## A Sandbox sheet edit reaches crew shots too. Crew read its damage,
+## projectile, pellets, time between shots, sounds and loudness, and ignore
+## its magazine, reloads, bloom, Aim Down Sights, recoil and Viewmodel: they
+## fire their bursts and go down. A Worker carries nothing: null from spawn.
 @export var weapon: WeaponProfile = preload("res://resources/weapons/pistol.tres")
-## How they handle it ([Gunnery]): aim error, burst, pause, engage range.
-## Left empty, it is their crew type's at spawn.
+## How a Guard handles it ([Gunnery]): aim error, its rhythm in cover, its
+## range band. Left empty, it is the weapon's own at spawn; a Worker has none.
 @export var gunnery: Gunnery
 @export var projectile_scene: PackedScene = preload("res://scenes/projectile_3d.tscn")
 ## How loud their shot rings at the muzzle. What it sounds like is the
 ## weapon's own shot sounds, and distance does the rest.
 @export var shot_volume_db := -3.0
+## A Shotgun's shot is far louder on the sample than the other guns', so a
+## crew Shotgun's shot is turned down by this much more.
+@export var shotgun_shot_trim_db := -9.0
+## How loud a gun's action rings (a pump, a bolt, the Shotgun's rack before
+## its shot): quieter than a shot, and still plain to hear across a Room.
+@export var action_volume_db := -9.0
 
 @export_group("Sandbox")
 ## Health at spawn, shared with the Pirate and the Sandbox sheet.
@@ -168,42 +235,116 @@ const LOOPING_CLIPS: Array[StringName] = [&"CharacterArmature|Idle", &"Character
 		&"CharacterArmature|Idle_Gun_Pointing", &"CharacterArmature|Run", &"CharacterArmature|Walk"]
 
 @export_group("Cover")
+## How far a Worker looks for somewhere to cower.
 @export var cover_search_radius := 6.9
-## Seconds spent behind cover before leaning back out.
-@export var cover_hold_time := 1.2
 
 ## Set by [ShipBuilder3D] so the crew can route around its own ship.
 var layout: ShipLayout
 ## Guard or Worker ([CrewTypes]), set by [ShipBuilder3D] from the Post
 ## Room's Role before the crew member enters the tree.
 var crew_type: CrewTypes.Type = CrewTypes.Type.GUARD
+## A Guard's cover fight, which drives its FIGHT and COVER states; null
+## for a Worker.
+var cover: CrewCover
+## A Guard's magazine and its reloads; null for a Worker.
+var magazine: CrewMagazine
+## A Guard's gun, seen in its hands, whose `Muzzle` its shots leave from;
+## null for a Worker.
+var gun: CrewGun
+## Its body's pose ([CrewPose]): a Guard's in a fight (down, ducking,
+## running low, stepping out), a Worker's hiding, surrendering and Bound.
+var pose: CrewPose
+## A Worker's poses, rolled once at ship build ([method CrewPose.roll_set]):
+## {pair: pose} for hide, hands, kneel and bound. Empty for a Guard.
+var pose_set := {}
+## Metres a Worker's sat or crouched pose moves back toward the wall behind
+## it (its hiding tile's, or the one it was Bound against).
+var seat_back := 0.0
+## Bound sat: the way to the wall or prop it sits against; zero with none
+## within BOUND_WALL_REACH (it kneels instead).
+var bound_against := Vector3.ZERO
 ## The Guard a fleeing Worker is running to.
 var _flee_to: Crew3D
 ## The Alarm Panel a fleeing Worker is running to, instead of a Guard.
 var _flee_panel: AlarmPanel
+## A Worker's hiding ([CrewHiding]), which drives its COWER state; null for
+## a Guard.
+var hiding: CrewHiding
+## Set while [method _hide] enters COWER after a roll: freeze first.
+var _freeze_next := false
 var _alarm: ShipAlarm
 ## The physics frame this crew member last started a burst on, so no two
 ## start in step ([method CrewCombat.burst_blocked]).
 var burst_frame := -1000
-## Seconds the Pirate has been in its sight without a break: its aim
-## tightens with it ([method CrewCombat.spread]).
+## Seconds the Pirate has been in its sight without a break: its spread
+## closes with it ([method spread_degrees]). Held, not reset, while it is
+## down behind its own cover or stepping out or back (it ducked; he did not
+## break sight); reset when he breaks sight, and when he hits it.
 var _exposed_for := 0.0
+## Bursts it has started in this sighting: the first walks in.
+var _sighting_bursts := 0
+## The burst it is on walks in, and to which side (+1 right, -1 left).
+var _walk_in := false
+var _walk_side := 1.0
+## Its last shot, before spread: where it was aimed from and at, whether it
+## aimed true, whether it was a walk-in round, and for a miss whether he was
+## behind cover ("cover") or in the open ("open"), or it fired on the prop
+## he hid behind ("prop", [CrewTeam]).
+var last_aim_origin := Vector3.ZERO
+var last_aim_point := Vector3.ZERO
+var last_aimed_true := false
+var last_walk_in := false
+var last_miss_kind := ""
+## Where its next shot goes, set by its habit for that one shot: the
+## Marksman Rifle's sight line, fixed before the shot. INF otherwise.
+var aim_override := Vector3.INF
+## Where its next shot goes as a deliberate miss, never true: the edge of
+## the prop he broke sight behind ([CrewTeam]). INF otherwise.
+var miss_at := Vector3.INF
+## The physics frame it last fired on: a partner up and firing within
+## [constant CrewCover.COVER_FIRE] covers a Guard changing cover.
+var shot_frame := -1000000
+## The physics frame it last racked its gun (the Shotgun's tell).
+var _rack_frame := -1000000
 var _share_timer := 0.0
-## A Guard going round through another Door while another pins him.
+## A Guard going round through another Door while another pins him
+## ([CrewTeam] picks it), the centre of that Door, and his Room behind it.
 var flanking := false
+var _flank_door := Vector3.INF
+var _flank_room := -1
+## It has flanked in this fight: it flanks no more until it loses him.
+var flank_done := false
+## Set while [method _start_flank] enters HUNT, so entering does not look
+## for a flanker again.
+var _starting_flank := false
+## Hunting where a trace (a body, the open Hatch) says he was, not where
+## anyone saw him: today's hunt carries it, into his pod if that is where
+## it leads, until it sees him.
+var _hunting_trace := false
 var _flank_clock := 0.0
 ## Set once this crew member's body has been found and reported, so the
 ## crew raise nothing over it twice.
 var reported := false
 ## It fell without having spotted the Pirate: a stealth kill.
 var died_unaware := false
+## It fell surrendered or Bound (crew-combat ticket 24): no XP for the kill.
+var died_surrendered := false
+var died_bound := false
+## Where a Worker is in giving up (Surrender, Bound).
+var surrender := Surrender.NONE
+## Seconds since it surrendered.
+var surrendered_for := 0.0
+## Seconds his crosshair has rested on it in a row.
+var aimed_for := 0.0
+var _unseen_for := 0.0
+## Its last look for a way out past him, and when it may look again.
+var _way_out := true
+var _way_out_left := 0.0
 ## The trace this crew member is walking to look at ([CrewTraces]).
 var _trace: Node3D
 var _trace_timer := 0.0
 ## Traces this crew member gave up on reaching: it does not keep going back.
 var abandoned_traces: Array[Node3D] = []
-## A Worker running to raise the Alarm over a trace does not stop to hide.
-var _no_hiding := false
 ## Chance this Worker hides rather than runs; [constant HIDE_CHANCE] unless
 ## a test wants it certain.
 var hide_chance := HIDE_CHANCE
@@ -221,18 +362,14 @@ var _path: Array[Vector3] = []
 var _aim := Vector3.FORWARD
 var _shots_left := 0
 var _shot_timer := 0.0
-var _reload_timer := 0.0
-## This crew member's own rhythm, drawn at spawn over its Gunnery and
-## weapon's base values: a Guard's burst a round longer or shorter, and
-## multipliers on time between shots and the pause between bursts.
-var _burst_offset := 0
+## This crew member's own rhythm, drawn at spawn over its weapon's base
+## values: a multiplier on the time between shots.
 var _gap_jitter := 1.0
-var _pause_jitter := 1.0
-## Shots in this crew member's bursts: its Gunnery's, give or take its own
-## spawn offset, never under one.
-var burst_length: int:
-	get:
-		return maxi(gunnery.burst_length + _burst_offset, 1)
+## Shots in the burst it is on: drawn from its Gunnery's shots per burst
+## as each burst starts; 0 for a Worker.
+var burst_length := 0
+## The projectiles of its last shot: one, or a Shotgun's pellets.
+var last_pellets: Array[Projectile3D] = []
 ## Counts down inside states that wait: holding cover, pausing on patrol.
 var _hold_timer := 0.0
 var _repath_timer := 0.0
@@ -258,16 +395,19 @@ var _chat_cooldown := 0.0
 ## Seconds spent walking to the current Job; a route that never arrives
 ## (blocked by a body in a doorway, say) is given up on.
 var _walk_clock := 0.0
-## Seconds since it ducked for cover, for giving up on a cover point it
-## cannot reach.
-var _cover_clock := 0.0
-## In FIGHT, walking to a spot it picked because its muzzle line was blocked.
-var _stepping_out := false
+## Where its walk to the current Job ends: the Job's spot, a free spot in a
+## patrol stop's Room, or a wander round its Post when no Job could be reached.
+var _job_spot := Vector3.ZERO
 ## Where it last made progress along its path, how long since, and how many
 ## times in a row it has had to work itself loose ([method _watch_progress]).
 var _stuck_at := Vector3.INF
 var _stuck_clock := 0.0
 var _stuck_tries := 0
+## Seconds trying to walk without moving UNSTICK_MOVE, across tries.
+var _pinned_for := 0.0
+## Seconds left of a walk given up ([method _give_up_walk]): it stands,
+## whatever its state would walk to meanwhile.
+var _blocked_left := 0.0
 ## Giving way: the crew member it stepped aside for, how many points at the
 ## front of its path are still the walk to its spot, where the other stood
 ## then, and how long ago that was.
@@ -276,6 +416,14 @@ var _yield_left := 0
 var _yield_from := Vector3.ZERO
 var _yield_clock := 0.0
 var _rng := RandomNumberGenerator.new()
+## Crew readied so far in this run, and this one's place among them: who
+## gives way to whom, which instance ids (they differ run to run) cannot
+## replay.
+static var _readied := 0
+var _ready_order := 0
+## A Worker's capsule standing ([method _fit_capsule]).
+var _stand_height := 1.7
+var _stand_y := 0.85
 var _gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)
 var _anim: AnimationPlayer
 
@@ -287,16 +435,34 @@ func _ready() -> void:
 		target = get_tree().get_first_node_in_group(&"player")
 	# Seeded off the global RNG (randomized at launch) so a test can replay it.
 	_rng.seed = randi()
-	if gunnery == null:
-		gunnery = Gunnery.for_type(crew_type)
+	_readied += 1
+	_ready_order = _readied
+	if is_worker():
+		# Workers are unarmed.
+		weapon = null
+		gunnery = null
+	elif gunnery == null:
+		gunnery = Gunnery.for_weapon(weapon)
 	if not is_worker():
-		# No two Guards keep the same rhythm.
-		_burst_offset = _rng.randi_range(-1, 1)
+		magazine = CrewMagazine.new(self)
+		cover = CrewCover.new(self)
+	else:
+		hiding = CrewHiding.new(self)
+		pose_set = CrewPose.roll_set(layout.gen_seed if layout != null else 0,
+				ShipBuilder3D.world_to_tile(global_position), _rng.seed)
+		var shape := get_node_or_null("CollisionShape3D") as CollisionShape3D
+		if shape != null and shape.shape is CapsuleShape3D:
+			# Its own, so lowering it with a pose lowers no one else's.
+			shape.shape = shape.shape.duplicate()
+			_stand_height = (shape.shape as CapsuleShape3D).height
+			_stand_y = shape.position.y
 	_gap_jitter = CrewCombat.jitter(_rng)
-	_pause_jitter = CrewCombat.jitter(_rng)
-	cover_hold_time *= CrewCombat.jitter(_rng)
-	_shots_left = burst_length
+	_new_burst()
 	_dress()
+	# The pose first: a Guard's gun is placed from the posed chest.
+	pose = CrewPose.fit(self)
+	if not is_worker():
+		gun = CrewGun.arm(self)
 	_anim = _find_animation_player(model)
 	if _anim != null:
 		for clip in LOOPING_CLIPS:
@@ -361,20 +527,86 @@ func get_team() -> StringName:
 	return TEAM
 
 
+## Degrees either side a shot may stray once its aim has closed (1x): the
+## weapon's base cone plus its Gunnery's aim error.
+## A Marksman Rifle firing from the hip has it doubled ([constant CrewHabit.HIP_CONE]).
+func base_cone_degrees() -> float:
+	if weapon == null:
+		return 0.0
+	var cone := weapon.spread_base_degrees + (gunnery.aim_error_degrees if gunnery != null else 0.0)
+	if cover != null and cover.hip:
+		cone *= CrewHabit.HIP_CONE
+	return cone
+
+
+## Degrees either side a shot strays now: its base cone times the exposure
+## ramp, its Gunnery's opening spread (3x) on first sight closing to 1x over
+## its closing time (2 s) of unbroken sight. Never under 1x.
+func spread_degrees() -> float:
+	var base := base_cone_degrees()
+	if gunnery == null:
+		return base
+	var closed := clampf(_exposed_for / gunnery.closing_time, 0.0, 1.0) if gunnery.closing_time > 0.0 else 1.0
+	return base * lerpf(maxf(gunnery.opening_spread, 1.0), 1.0, closed)
+
+
+## Whether it could aim true now: a Guard in the fight with the Pirate in
+## sight from its eyes and a clear muzzle line. Judged afresh, at the start
+## of a frame, by [CrewFire]. A Guard reloading, or dry on its way to
+## reload, takes none (it gave its place up as the reload started). A Shotgun holding its fire takes none; a
+## Marksman Rifle firing by its sight line wants one only to start its line
+## ([method CrewCover.wants_place]).
+func can_aim_true() -> bool:
+	if is_worker() or not is_alive() or target == null or not is_instance_valid(target):
+		return false
+	if magazine != null and not magazine.can_fire():
+		return false  # reloading, or dry on its way to reload
+	if cover != null and cover.uses_line():
+		return cover.wants_place()
+	if cover != null and cover.holds_fire():
+		return false
+	if _flat_distance(global_position, target.global_position) > vision_range:
+		return false
+	if _blocked(global_position + Vector3.UP * EYE_HEIGHT, target.global_position + Vector3.UP * EYE_HEIGHT):
+		return false
+	return not _muzzle_blocked()
+
+
+## Starts a fresh burst: its Gunnery's shots per burst, drawn, capped by
+## the rounds left in its magazine.
+func _new_burst() -> void:
+	burst_length = gunnery.draw_shots(_rng) if gunnery != null else 0
+	if magazine != null and magazine.rounds > 0:
+		burst_length = mini(burst_length, magazine.rounds)
+	_shots_left = burst_length
+
+
+## Reloading now ([CrewMagazine]): it fires nothing and takes no true-aim
+## place until the reload ends.
+func is_reloading() -> bool:
+	return magazine != null and magazine.reloading
+
+
+## Holding its gun in the aimed hold ([CrewGun]): fighting (today's FIGHT),
+## or within AIM_HOLD of a shot.
+func aiming() -> bool:
+	return state == State.FIGHT or shot_age() < AIM_HOLD
+
+
+## Where its shots leave from when it stands at [param at] and aims at
+## [param toward]: its gun's `Muzzle` marker in the aimed hold
+## ([method CrewGun.muzzle_from]). A crew member with no gun model: muzzle
+## height, a little ahead of its axis. The clear-shot test sweeps from here.
+func aim_muzzle(at: Vector3, toward: Vector3) -> Vector3:
+	if gun != null:
+		return gun.muzzle_from(at, toward)
+	var flat := Vector3(toward.x - at.x, 0.0, toward.z - at.z)
+	var ahead := flat.normalized() if flat.length_squared() > 0.000001 else _aim
+	return at + Vector3.UP * MUZZLE_HEIGHT + ahead * MUZZLE_FORWARD
+
+
 ## Takes Health from the Sandbox, full: at spawn, and when the Sandbox sheet
 ## changes it mid-Raid on anyone still standing.
-## Degrees either side a shot may stray before aim tightens
-## ([method CrewCombat.spread]): the weapon's base cone plus its Gunnery's
-## aim error.
-func base_cone_degrees() -> float:
-	return weapon.spread_base_degrees + gunnery.aim_error_degrees
-
-
-## Metres off the Pirate this crew member opens fire from: its Gunnery's.
-func engage_range() -> float:
-	return gunnery.engage_range
-
-
 func apply_sandbox() -> void:
 	health.max_health = sandbox.crew_health
 	health.reset()
@@ -395,34 +627,57 @@ func take_damage(amount: int, from: Node = null) -> void:
 		return
 	if health.take_damage(amount, from):
 		return
+	if state in [State.SURRENDER, State.BOUND]:
+		# A hit that does not kill leaves a surrendered or Bound Worker as it
+		# was; wounded, it never comes out should it hide again.
+		hiding.wounded = true
+		return
+	# Hit: its aim is spoiled, thrown back open to close again; a Marksman
+	# Rifle hit during its sight line loses the shot.
+	_exposed_for = 0.0
+	if cover != null:
+		cover.hit()
 	# Being shot at from somewhere unseen still tells you roughly where to look.
 	if from != null and is_instance_valid(from) and from is Node3D:
 		_last_seen = (from as Node3D).global_position
 		_seen_ago = 0.0
 	if perception.alert():
 		_announce_spotted()
+	if hiding != null:
+		# A Worker shot and alive hides, with no roll, and never comes out.
+		hiding.wounded = true
+		_hide()
+		return
 	match state:
 		State.PATROL, State.SEARCH, State.INVESTIGATE:
 			_react_spotted()
-		State.FLEE, State.COWER:
-			if _cornered():
-				_enter(State.FIGHT)
-		State.FIGHT:
-			if _rng.randf() < 0.6:
-				_enter(State.COVER)
 
 
 func _physics_process(delta: float) -> void:
 	if state == State.DEAD:
 		return
+	if state == State.BOUND:
+		# Tied up: it never moves, looks, hears, reports or raises anything
+		# for the rest of the Raid.
+		velocity = Vector3.ZERO
+		_update_animation()
+		return
 
 	if not is_on_floor():
 		velocity.y -= _gravity * delta
 
+	if not is_worker() and target != null and is_instance_valid(target):
+		# Who aims true this frame, and what the team does (a flank, fire on
+		# his cover), settled before anyone moves or fires.
+		CrewFire.of(target).update()
+		CrewTeam.of(target).update()
 	_update_perception(delta)
+	if magazine != null:
+		# A reload runs to its end whatever the Guard does meanwhile.
+		magazine.tick(delta)
 	_shot_timer = maxf(_shot_timer - delta, 0.0)
-	_reload_timer = maxf(_reload_timer - delta, 0.0)
 	_hold_timer = maxf(_hold_timer - delta, 0.0)
+	_blocked_left = maxf(_blocked_left - delta, 0.0)
 	_repath_timer = maxf(_repath_timer - delta, 0.0)
 	_glance_timer = maxf(_glance_timer - delta, 0.0)
 	_chat_cooldown = maxf(_chat_cooldown - delta, 0.0)
@@ -432,10 +687,8 @@ func _physics_process(delta: float) -> void:
 			_tick_patrol()
 		State.HUNT:
 			_tick_hunt()
-		State.FIGHT:
-			_tick_fight()
-		State.COVER:
-			_tick_cover()
+		State.FIGHT, State.COVER:
+			_tick_fight(delta)
 		State.SEARCH:
 			_tick_search()
 		State.INVESTIGATE:
@@ -443,8 +696,17 @@ func _physics_process(delta: float) -> void:
 		State.FLEE:
 			_tick_flee()
 		State.COWER:
-			_tick_cower()
+			_tick_cower(delta)
+		State.REPORT:
+			_tick_report()
+		State.SURRENDER:
+			_tick_surrender(delta)
 
+	if _blocked_left > 0.0 and _yield_to == null:
+		# A walk given up: it stands its pause out whatever its state routes
+		# it to meanwhile (a fleeing Worker re-paths to its Guard every
+		# 0.5 s, and pressed straight back into the Guard holding its way).
+		_path.clear()
 	var waiting := _waiting_to_pass(delta)
 	_steer(delta, waiting)
 	_open_doors_ahead()
@@ -453,6 +715,7 @@ func _physics_process(delta: float) -> void:
 	if waiting:
 		_stuck_at = global_position
 		_stuck_clock = 0.0
+		_pinned_for = 0.0
 	else:
 		_watch_progress(delta)
 	_face()
@@ -483,6 +746,9 @@ func _update_perception(delta: float) -> void:
 		if _can_see:
 			_last_seen = target.global_position
 			_seen_ago = 0.0
+			_hunting_trace = false
+			if hiding != null:
+				hiding.noticed()
 			_exposed_for += delta
 			_share_timer -= delta
 			if not is_worker() and _share_timer <= 0.0:
@@ -490,9 +756,10 @@ func _update_perception(delta: float) -> void:
 				CrewCombat.share(self, _last_seen)
 		else:
 			_seen_ago += delta
-			_exposed_for = 0.0
+			if cover == null or not cover.behind_own_cover():
+				_break_sight()
 		return
-	_exposed_for = 0.0
+	_break_sight()
 
 	_look_for_traces(delta)
 	var crouched: bool = target.has_method("is_crouched") and target.is_crouched()
@@ -509,11 +776,26 @@ func _update_perception(delta: float) -> void:
 		_seen_ago += delta
 
 
+## He broke its sight: its spread opens again and its next burst walks in.
+func _break_sight() -> void:
+	_exposed_for = 0.0
+	_sighting_bursts = 0
+
+
 ## A noise reached this crew member (see [CrewNoise]). Raises Awareness toward
 ## suspicious, never to spotted, and gives it somewhere to look. Crew shrug
 ## off their mates' footsteps and doors, not their gunfire. Returns whether
 ## it took any notice.
 func hear(at: Vector3, kind: CrewNoise.Kind, source: Node = null) -> bool:
+	if state == State.BOUND:
+		return false
+	if state == State.COWER and hiding != null and kind == CrewNoise.Kind.GUNSHOT and pose != null:
+		# Hiding crouched, it ducks lower at any gunshot it hears ([CrewPose]).
+		pose.flinch()
+	if state == State.COWER and hiding != null and not source is Crew3D:
+		# A sound of him keeps a hiding Worker hidden ([CrewHiding]).
+		hiding.noticed()
+		return true
 	if state == State.DEAD or _in_combat():
 		return false
 	if kind != CrewNoise.Kind.GUNSHOT and source is Crew3D:
@@ -573,13 +855,13 @@ func _report(trace: Node3D) -> void:
 		# a crew member already suspicious of something else.
 		_enter(State.PATROL if is_worker() else State.SEARCH)
 	elif is_worker():
-		_no_hiding = true
+		# No roll to hide: straight for a panel, or a Guard.
 		_enter(State.FLEE)
-		_no_hiding = false
 	else:
 		perception.awareness = 1.0
 		_enter(State.HUNT)
-		CrewCombat.share(self, _last_seen)
+		_hunting_trace = true
+		CrewCombat.share(self, _last_seen, true)
 
 
 ## Which way this crew member is looking, flat.
@@ -588,20 +870,34 @@ func facing() -> Vector3:
 
 
 func _in_combat() -> bool:
-	return state in [State.HUNT, State.FIGHT, State.COVER, State.FLEE, State.COWER]
+	return state in [State.HUNT, State.FIGHT, State.COVER, State.FLEE, State.COWER, State.SURRENDER]
 
 
-## Just spotted him: a Guard hunts him; a Worker runs, unless he is right
-## on top of it, when it fights.
+## Just spotted him: a Guard hunts him. A Worker, with the Alarm down,
+## runs for the nearest working Alarm Panel, else the nearest living Guard,
+## three times in four, and one time in four freezes 1 s and hides; with
+## neither panel nor Guard, or wounded, or with the Alarm up, it hides.
 func _react_spotted() -> void:
 	if not is_worker():
 		_enter(State.HUNT)
 		_share_timer = CrewCombat.SHARE_EVERY
 		CrewCombat.share(self, _last_seen)
-	elif _cornered():
-		_enter(State.FIGHT)
+	elif hiding.wounded or _alarm_raised() or (_nearest_panel() == null and _nearest_guard() == null):
+		_hide()
+	elif hiding.rolls_hide():
+		_hide(true)
 	else:
 		_enter(State.FLEE)
+
+
+## A Worker goes to hide (COWER), frozen 1 s first when [param freeze]; one
+## already hiding carries on.
+func _hide(freeze := false) -> void:
+	if state == State.COWER or state == State.DEAD:
+		return
+	_freeze_next = freeze
+	_enter(State.COWER)
+	_freeze_next = false
 
 
 ## The Pirate is in sight and within arm's reach of a Worker.
@@ -646,6 +942,18 @@ func _solid(point: Vector3) -> bool:
 	return not get_world_3d().direct_space_state.intersect_point(params, 1).is_empty()
 
 
+## True when its body cannot stand at [param point]: the hull or a prop is
+## within its capsule's radius there, so it would stop short of the point
+## and fire from somewhere else. (A prop the walking grid does not know of
+## stops it the same way.)
+func _no_room(point: Vector3) -> bool:
+	var params := PhysicsShapeQueryParameters3D.new()
+	params.shape = _body_ball
+	params.transform = Transform3D(Basis.IDENTITY, point + Vector3.UP * 0.6)
+	params.collision_mask = WORLD_LAYER
+	return not get_world_3d().direct_space_state.intersect_shape(params, 1).is_empty()
+
+
 static func _ball(radius: float) -> SphereShape3D:
 	var ball := SphereShape3D.new()
 	ball.radius = radius
@@ -659,10 +967,19 @@ func _flat_distance(a: Vector3, b: Vector3) -> float:
 # --- states -------------------------------------------------------------------
 
 func _enter(next: State) -> void:
+	if cover != null and not next in [State.FIGHT, State.COVER]:
+		cover.release()
+	if hiding != null and next != State.COWER:
+		hiding.release()
+	if not next in [State.SURRENDER, State.BOUND] and surrender != Surrender.NONE:
+		_set_surrender(Surrender.NONE)
 	state = next
 	_stop_giving_way()
 	_speed_scale = 1.0
 	flanking = false
+	_hunting_trace = false
+	if next in [State.PATROL, State.SEARCH]:
+		flank_done = false
 	match next:
 		State.PATROL:
 			_path.clear()
@@ -678,37 +995,42 @@ func _enter(next: State) -> void:
 			_hold_timer = INVESTIGATE_LINGER
 		State.HUNT:
 			_repath_to(_last_seen)
-			_try_flank()
-		State.FIGHT:
+			if not _starting_flank:
+				_try_flank()
+		State.FIGHT, State.COVER:
+			# A Guard fights from cover; a Worker has nothing to fight with.
 			_path.clear()
-			_stepping_out = false
-			_shots_left = burst_length
-			# A beat before the first shot, different every time.
-			_shot_timer = _rng.randf_range(0.05, 0.35)
-		State.COVER:
-			_cover_clock = 0.0
-			var spot := _find_cover_point()
-			if spot != Vector3.INF:
-				_repath_to(spot)
-			else:
-				_path.clear()
-			_hold_timer = cover_hold_time
+			if cover != null:
+				_listen_for_shots()
+				cover.begin()
 		State.FLEE:
 			_flee_panel = null
 			_flee_to = null
-			if not _no_hiding and _rng.randf() < hide_chance:
-				_enter(State.COWER)
-				return
 			_pick_flight()
 		State.COWER:
 			_flee_to = null
 			_flee_panel = null
-			_hold_timer = COWER_CALM
-			var spot := _find_cover_point()
-			if spot != Vector3.INF:
-				_repath_to(spot)
+			if hiding != null:
+				hiding.begin(_freeze_next)
 			else:
 				_path.clear()
+		State.REPORT:
+			_speed_scale = ROUTINE_SPEED
+			_pick_report()
+		State.SURRENDER:
+			_path.clear()
+			_flee_to = null
+			_flee_panel = null
+			surrendered_for = 0.0
+			_unseen_for = 0.0
+			_set_surrender(Surrender.HANDS_UP)
+		State.BOUND:
+			_path.clear()
+			velocity = Vector3.ZERO
+			_settle_bound()
+			# Tied up it shows no Awareness bar and notices nothing again.
+			perception.awareness = 0.0
+			_set_surrender(Surrender.BOUND)
 		State.SEARCH:
 			perception.on_edge = true
 			perception.awareness = minf(perception.awareness, SEARCH_AWARENESS)
@@ -745,7 +1067,7 @@ func _glance() -> void:
 func _tick_routine() -> void:
 	if _alarm_raised():
 		if is_worker():
-			_enter(State.COWER)
+			_hide()
 		else:
 			_tick_sweep()
 		return
@@ -758,7 +1080,15 @@ func _tick_routine() -> void:
 				_start_job()
 		JobPhase.WALKING:
 			_walk_clock += get_physics_process_delta_time()
-			if _path.is_empty():
+			if _path.is_empty() and not job.patrol and _walk_clock <= JOB_GIVE_UP \
+					and _flat_distance(global_position, _job_spot) > arrive_radius + 0.05:
+				# Pushed off the end of its walk (a body passing in a lane):
+				# on to the spot itself before working, by a route. Not
+				# straight at the Job's own spot: a walk that wandered its
+				# Post instead ([method _start_job]) ends far from it, and a
+				# straight line there runs into the hull (raid-smoke-bugs 12).
+				_repath_to(_job_spot)
+			elif _path.is_empty():
 				job_phase = JobPhase.WORKING
 				_hold_timer = job.duration * (ON_EDGE_PAUSE if perception.on_edge and job.patrol else 1.0)
 			elif _walk_clock > JOB_GIVE_UP:
@@ -828,6 +1158,7 @@ func _start_job() -> void:
 	if spot == Vector3.INF:
 		spot = _random_point_in_room(home_room)
 	_repath_to(spot)
+	_job_spot = spot
 	job_phase = JobPhase.WALKING
 	_walk_clock = 0.0
 
@@ -907,8 +1238,9 @@ func _tick_investigate() -> void:
 
 
 ## Told by another Guard where the Pirate is: hunt there, or keep hunting
-## with the fresher position.
-func hear_position(at: Vector3) -> void:
+## with the fresher position. [param from_trace]: only where a trace says
+## he was, so it hunts there the old way rather than taking cover from it.
+func hear_position(at: Vector3, from_trace := false) -> void:
 	if state == State.DEAD or is_worker():
 		return
 	if state in [State.FIGHT, State.COVER]:
@@ -918,44 +1250,54 @@ func hear_position(at: Vector3) -> void:
 	perception.awareness = 1.0
 	if state != State.HUNT:
 		_enter(State.HUNT)
+	_hunting_trace = from_trace
 
 
-## With another Guard already pinning him, go round through his Room's
-## other Door rather than in behind it.
+## With another Guard already pinning him, one Guard goes round through his
+## Room's other Door rather than in behind it: the team picks which, by gun
+## ([method CrewTeam.consider_flank]).
 func _try_flank() -> void:
-	if is_worker():
+	if is_worker() or target == null or not is_instance_valid(target):
 		return
-	var pinner: Crew3D = null
-	for node in get_tree().get_nodes_in_group(&"crew"):
-		var other := node as Crew3D
-		if other == null or other == self or other.is_worker() or not other.is_alive():
-			continue
-		if other.flanking:
-			return  # someone is already going round
-		if other.state in [State.FIGHT, State.COVER]:
-			pinner = other
-	if pinner == null:
-		return
-	var route := CrewCombat.flank_route(self, _last_seen, pinner.global_position)
-	if route.is_empty():
-		return
+	var team := CrewTeam.of(target)
+	if team != null:
+		team.consider_flank()
+
+
+## Sets off on a flank: [param route] round to the Door at [param door] into
+## his Room [param room], out of the cover fight if it was in it.
+func _start_flank(route: Array[Vector3], door: Vector3, room: int) -> void:
+	_starting_flank = true
+	_enter(State.HUNT)
+	_starting_flank = false
 	_path = CrewPaths.route(layout, global_position, route)
 	flanking = true
 	_flank_clock = 0.0
+	flank_done = true
+	_flank_door = door
+	_flank_room = room
 
 
+## Hunting him the straight way, or going round on a flank. Within
+## [constant CrewCover.TAKE_OVER] of where he was last seen, or in his Room
+## or one joined to it, and not flanking, it fights from cover instead.
+## Radioed in from further off, it runs until then.
 func _tick_hunt() -> void:
 	if flanking:
 		_flank_clock += get_physics_process_delta_time()
-		if _can_see and _flat_distance(global_position, target.global_position) <= engage_range():
+		var to_door := _flat_distance(global_position, _flank_door)
+		if to_door <= CrewCombat.FLANK_ARRIVE or _path.is_empty() or (_can_see and to_door <= CrewCombat.FLANK_SEE):
+			# At the Door it went round to: a cover spot inside it.
+			_end_flank()
+		elif _can_see:
 			_enter(State.FIGHT)
-		elif _path.is_empty() or _flank_clock > CrewCombat.FLANK_GIVE_UP:
-			# Arrived, or given up: back to hunting him the straight way.
-			flanking = false
-			_repath_to(_last_seen)
+		elif _flank_clock > CrewCombat.FLANK_GIVE_UP:
+			# Given up: it takes cover where it stands.
+			_enter(State.COVER)
 		return
-	if _can_see and _flat_distance(global_position, target.global_position) <= engage_range():
-		_enter(State.FIGHT)
+	if cover != null and not _hunting_trace \
+			and (CrewCover.takes_over(global_position, _last_seen) or _in_rooms_by(_last_seen)):
+		_enter(State.COVER)
 		return
 	if _seen_ago > lose_target_after:
 		_enter(State.SEARCH)
@@ -964,64 +1306,59 @@ func _tick_hunt() -> void:
 		_repath_to(_last_seen)
 
 
-func _tick_fight() -> void:
-	if is_worker() and not _cornered() and target != null and is_instance_valid(target) \
-			and _flat_distance(global_position, target.global_position) > CORNER_RELEASE:
-		_enter(State.FLEE)
+## The flank's end: into the cover fight, on a spot inside the Door it came
+## round to, picked by the cover rules ([method CrewCover.begin_flank]).
+func _end_flank() -> void:
+	var door := _flank_door
+	var room := _flank_room
+	_enter(State.COVER)
+	if cover != null:
+		cover.begin_flank(door, room)
+
+
+## Whether it stands in the Room holding [param at] or one a Door joins to it.
+func _in_rooms_by(at: Vector3) -> bool:
+	if layout == null:
+		return false
+	var near := CrewCombat.rooms_near(layout, CrewNoise.rooms_at(layout, at))
+	for room in CrewNoise.rooms_at(layout, global_position):
+		if room in near:
+			return true
+	return false
+
+
+## FIGHT and COVER: a Guard's cover fight ([CrewCover]) drives both. A
+## Worker has nothing to fight with and cowers.
+func _tick_fight(delta: float) -> void:
+	if cover == null:
+		_enter(State.COWER)
 		return
-	if _seen_ago > lose_target_after:
-		_enter(_lost_state())
+	cover.tick(delta)
+
+
+## A Guard hears every shot the Pirate fires, to duck a near miss
+## ([method CrewCover.near_miss]).
+func _listen_for_shots() -> void:
+	if target == null or not is_instance_valid(target) or not target.has_signal(&"fired"):
 		return
+	if not target.is_connected(&"fired", _on_target_fired):
+		target.connect(&"fired", _on_target_fired)
 
-	# Stepping out to a spot it chose for a clear shot, it goes all the way
-	# rather than firing the moment its line clears by a hair.
-	var stepping := _stepping_out and not _path.is_empty()
-	if _can_see and not stepping and not _muzzle_blocked():
-		_stepping_out = false
-		_path.clear()
-		_aim = (target.global_position + Vector3.UP * TORSO_HEIGHT
-				- (global_position + Vector3.UP * MUZZLE_HEIGHT)).normalized()
-		if _shots_left > 0:
-			if _shot_timer <= 0.0:
-				if _shots_left == burst_length:
-					# Start of a burst: never in step with another's.
-					if CrewCombat.burst_blocked(self):
-						_shot_timer = 0.05
-						return
-					burst_frame = Engine.get_physics_frames()
-				_fire()
-		else:
-			# Burst spent: get behind something while reloading.
-			_enter(State.COVER)
+
+func _on_target_fired() -> void:
+	if cover == null or not cover.is_engaged() or not is_alive():
 		return
-
-	# Lost the angle but not the scent, or its eyes see over cover its
-	# muzzle would hit: hold fire and move somewhere with a shot.
-	if _path.is_empty():
-		var spot := _find_firing_position()
-		_stepping_out = _can_see and spot != Vector3.INF
-		_repath_to(spot if spot != Vector3.INF else _last_seen)
-
-
-func _tick_cover() -> void:
-	if _seen_ago > lose_target_after:
-		_enter(_lost_state())
+	var camera := target.get("camera") as Camera3D
+	if camera == null:
 		return
-	_cover_clock += get_physics_process_delta_time()
-	if not _path.is_empty():
-		if _cover_clock < COVER_GIVE_UP:
-			return  # still getting there
-		_path.clear()  # the way is blocked: hold here instead
-	if _hold_timer > 0.0 or _reload_timer > 0.0:
-		return  # tucked in, reloading
-	_enter(State.FIGHT)
+	cover.near_miss(camera.global_position, -camera.global_basis.z)
 
 
-## A Worker running to the nearest Guard to raise it; it hides on arrival,
-## and fights only if cornered on the way.
+## A Worker running for an Alarm Panel to raise it, or for the nearest
+## Guard to raise it; it hides on arrival. If its Guard dies on the way it
+## runs on to the next.
 func _tick_flee() -> void:
-	if _cornered():
-		_enter(State.FIGHT)
+	if _gives_up(get_physics_process_delta_time()):
 		return
 	if _flee_panel != null:
 		if _flee_panel.broken or _alarm_raised():
@@ -1029,7 +1366,8 @@ func _tick_flee() -> void:
 			_pick_flight()
 		elif _flat_distance(global_position, _flee_panel.use_at) <= PANEL_REACH:
 			_raise_alarm()
-			_enter(State.COWER)
+			# (The Alarm itself sends it to hide: see on_alarm.)
+			_hide()
 		elif _repath_timer <= 0.0:
 			_repath_to(_flee_panel.use_at)
 		return
@@ -1037,31 +1375,165 @@ func _tick_flee() -> void:
 		# Its Guard is gone: on to the next one, without a second roll to hide.
 		_flee_to = _nearest_guard()
 		if _flee_to == null:
-			_enter(State.COWER)
+			_hide()
 		else:
 			_repath_to(_flee_to.global_position)
 		return
 	if _flat_distance(global_position, _flee_to.global_position) <= GUARD_REACH:
 		_raise(_flee_to)
-		_enter(State.COWER)
+		_hide()
 		return
 	if _repath_timer <= 0.0:
 		_repath_to(_flee_to.global_position)
 
 
-## Tucked behind cover; fights only if cornered, and once nothing has been
-## seen for a while creeps back to its routine.
-func _tick_cower() -> void:
-	if _cornered():
-		_enter(State.FIGHT)
+## Hiding ([CrewHiding]): frozen, running to its hiding place, or on it.
+## It comes out ([method _come_out]) only with the Alarm down, after
+## [constant CrewHiding.COME_OUT] seconds with no sight or sound of him, and
+## never once wounded.
+func _tick_cower(delta := -1.0) -> void:
+	if hiding == null:
 		return
-	if _can_see or _alarm_raised():
-		# Under the Alarm a Worker stays hidden for good.
-		_hold_timer = COWER_CALM
-	if _path.is_empty() and _hold_timer <= 0.0:
-		perception.awareness = CrewPerception.SUSPICIOUS * 0.5
-		perception.on_edge = true
+	var step := delta if delta >= 0.0 else get_physics_process_delta_time()
+	if _gives_up(step):
+		return
+	hiding.tick(step)
+
+
+# --- Surrender and Bound (crew-combat ticket 24) ----------------------------
+
+## Whether a fleeing or hiding Worker surrenders now, surrendering if so: it
+## sees him and either he is within the Sandbox's surrender reach (4 m) or
+## his crosshair has rested on it for its aim time (0.5 s) within its aim
+## reach (10 m), and it is hiding (on its tile, or where it stands with
+## nowhere to run) or has no route away that does not pass him. A Worker
+## running with a way out keeps running. Never a Guard. The Alarm changes
+## nothing.
+func _gives_up(delta: float) -> bool:
+	_way_out_left = maxf(_way_out_left - delta, 0.0)
+	if not is_worker() or not _can_see or target == null or not is_instance_valid(target):
+		aimed_for = 0.0
+		return false
+	var distance := _flat_distance(global_position, target.global_position)
+	var aimed: bool = distance <= sandbox.surrender_aim_reach and target.has_method("crosshair_on") \
+			and target.crosshair_on(self, sandbox.surrender_aim_reach)
+	aimed_for = aimed_for + delta if aimed else 0.0
+	if distance > sandbox.surrender_reach and aimed_for < sandbox.surrender_aim_time - 0.0001:
+		return false
+	if not _cornered_now():
+		return false
+	_enter(State.SURRENDER)
+	return true
+
+
+## Hiding, or with no route away that does not pass him: a Worker frozen
+## or fleeing looks for a fair run (to its panel or Guard, else to any
+## hiding place) at most once every WAY_OUT_EVERY; one already running to
+## hide has a way out.
+func _cornered_now() -> bool:
+	if state == State.COWER:
+		if hiding.is_hidden():
+			return true
+		if hiding.phase == CrewHiding.Phase.RUN:
+			return false
+	if _way_out_left <= 0.0:
+		_way_out_left = WAY_OUT_EVERY
+		var him := target.global_position
+		var fair := false
+		if state == State.FLEE and not _path.is_empty():
+			fair = hiding.fair_run(_path, _path[_path.size() - 1], him)
+		_way_out = fair or not hiding.find().is_empty()
+	return not _way_out
+
+
+## Surrendered: still, facing him; kneeling after the Sandbox's kneel time.
+## It holds while he is in its sight; out of it for SURRENDER_LOST it hides
+## again and the hiding rules apply, its come-out clock running from the
+## last time it saw him.
+func _tick_surrender(delta: float) -> void:
+	surrendered_for += delta
+	if surrender == Surrender.HANDS_UP and surrendered_for >= sandbox.kneel_after - 0.0001:
+		_set_surrender(Surrender.KNEELING)
+	_unseen_for = 0.0 if _can_see else _unseen_for + delta
+	if _unseen_for >= SURRENDER_LOST:
+		_hide()
+		hiding.quiet_for = _seen_ago
+
+
+## Surrendered (hands up or kneeling), and so can be Bound.
+func is_surrendered() -> bool:
+	return state == State.SURRENDER
+
+
+func is_bound() -> bool:
+	return state == State.BOUND
+
+
+## Tied up by the Pirate: Bound for the rest of the Raid. Only a
+## surrendered Worker can be.
+func bind() -> void:
+	if state == State.SURRENDER:
+		_enter(State.BOUND)
+
+
+func _set_surrender(stage: Surrender) -> void:
+	if stage == surrender:
+		return
+	surrender = stage
+	surrender_changed.emit(stage)
+
+
+## Out of hiding, On Edge: it walks to the nearest working Alarm Panel or
+## Guard to report him (REPORT); with neither it goes back to its routine.
+func _come_out() -> void:
+	perception.awareness = CrewPerception.SUSPICIOUS * 0.5
+	perception.on_edge = true
+	if _nearest_panel() == null and _nearest_guard() == null:
 		_enter(State.PATROL)
+	else:
+		_enter(State.REPORT)
+
+
+## Where a Worker come out of hiding walks to report him: the nearest
+## working Alarm Panel, else the nearest living Guard; with neither, back to
+## its routine.
+func _pick_report() -> void:
+	_flee_panel = _nearest_panel()
+	_flee_to = null if _flee_panel != null else _nearest_guard()
+	if _flee_panel != null:
+		_repath_to(_flee_panel.use_at)
+	elif _flee_to != null:
+		_repath_to(_flee_to.global_position)
+	else:
+		_enter(State.PATROL)
+
+
+## Walking On Edge to report him: at a working panel it raises the Alarm
+## (which sends it to hide), at a Guard it alerts it to where it last saw
+## him; then back to its routine. Spotting him again on the way, it reacts
+## as to any spotting.
+func _tick_report() -> void:
+	if _spotted():
+		_react_spotted()
+		return
+	if _flee_panel != null:
+		if _flee_panel.broken:
+			_pick_report()
+		elif _flat_distance(global_position, _flee_panel.use_at) <= PANEL_REACH:
+			_raise_alarm()
+			if state == State.REPORT:
+				_enter(State.PATROL)
+		elif _repath_timer <= 0.0:
+			_repath_to(_flee_panel.use_at)
+		return
+	if _flee_to == null or not is_instance_valid(_flee_to) or not _flee_to.is_alive():
+		_pick_report()
+		return
+	if _flat_distance(global_position, _flee_to.global_position) <= GUARD_REACH:
+		_raise(_flee_to)
+		_enter(State.PATROL)
+	elif _repath_timer <= 0.0:
+		_repath_to(_flee_to.global_position)
 
 
 ## Where a fleeing Worker runs: while the Alarm is down, the nearest working
@@ -1075,7 +1547,7 @@ func _pick_flight() -> void:
 		return
 	_flee_to = _nearest_guard()
 	if _flee_to == null:
-		_enter(State.COWER)
+		_hide()
 	else:
 		_repath_to(_flee_to.global_position)
 
@@ -1112,15 +1584,22 @@ func _raise_alarm() -> void:
 
 
 ## The ship's Alarm went up, the Pirate last known at [param at]: every
-## routine stops. A Guard not already fighting hunts there; a Worker not
-## already running or fighting hides. Everyone is On Edge from now on.
+## routine stops. A Guard not already fighting hunts there; every Worker
+## not already hiding runs to a hiding place, one running for a Guard or
+## walking to report included. Everyone is On Edge from now on.
 func on_alarm(at: Vector3) -> void:
 	if state == State.DEAD:
 		return
 	perception.on_edge = true
+	if state in [State.SURRENDER, State.BOUND]:
+		# The Alarm changes nothing for a Worker that has given up.
+		return
 	if is_worker():
-		if state in [State.PATROL, State.INVESTIGATE, State.SEARCH]:
-			_enter(State.COWER)
+		if state in [State.PATROL, State.INVESTIGATE, State.SEARCH, State.REPORT]:
+			# It has not seen him: it hides from where the Alarm says he is.
+			_last_seen = at
+		if state != State.COWER:
+			_hide()
 		return
 	if state in [State.PATROL, State.INVESTIGATE, State.SEARCH]:
 		_last_seen = at
@@ -1183,18 +1662,24 @@ func _steer(delta: float, waiting := false) -> void:
 
 ## Trying to walk but getting nowhere: UNSTICK_MOVE in UNSTICK_AFTER
 ## seconds. The first time it re-routes from where it stands (round the
-## props it may have been pushed against). After that, with another crew
+## props it may have been pushed against), and again any time, with no crew
+## member in its way, the straight way to its next point runs into the hull
+## or a prop ([constant CrewPaths.SCRAPE]) and a route finds another. With another crew
 ## member in its way, it gets past it ([method _get_past]); with anything
 ## else no route knows of (the Pirate), it steps aside, a side at a time, and
-## walks on. A Job it still cannot reach is given up at JOB_GIVE_UP.
+## walks on. Out of the fight and pinned PINNED_GIVE_UP whatever the cause,
+## it gives the walk up ([method _give_up_walk]). A Job it still cannot
+## reach is given up at JOB_GIVE_UP.
 func _watch_progress(delta: float) -> void:
 	if _path.is_empty():
 		_stuck_tries = 0
 	if _path.is_empty() or _flat_distance(global_position, _stuck_at) > UNSTICK_MOVE:
 		_stuck_at = global_position
 		_stuck_clock = 0.0
+		_pinned_for = 0.0
 		return
 	_stuck_clock += delta
+	_pinned_for += delta
 	if _stuck_clock < UNSTICK_AFTER:
 		return
 	_stuck_clock = 0.0
@@ -1204,10 +1689,34 @@ func _watch_progress(delta: float) -> void:
 		_path = _path.slice(_yield_left)
 		_yield_left = 0
 		return
-	if _stuck_tries == 1 and layout != null:
-		_path = CrewPaths.route(layout, global_position, _path)
+	if _pinned_for >= PINNED_GIVE_UP and not _fighting():
+		# Whatever holds it (a body that will not move with a way round that
+		# leads nowhere, the Pirate himself, a prop no route gets it past),
+		# out of the fight it stops trying: in every state, it gives the walk
+		# up (raid-smoke-bugs 12).
+		_give_up_walk(_crew_in_way(GIVE_WAY_FAR))
 		return
+	if layout != null and (_stuck_tries == 1 or (_crew_in_way(GIVE_WAY_FAR) == null
+			and not CrewPaths.clear(CrewPaths.grid(layout), global_position, _path[0], CrewPaths.SCRAPE))):
+		# The first time, and whenever nobody is in its way and the way on
+		# runs into the hull or a prop (pushed off its line, it heads for
+		# its next point past a corner or a doorway's jamb), it re-routes
+		# from where it stands. With a crew member in its way it gets past
+		# it below, which routes round it.
+		var rerouted := CrewPaths.route(layout, global_position, _path)
+		if _stuck_tries == 1:
+			_path = rerouted
+			return
+		# Taken only when it mends that: a route that leads it the same way
+		# (its first stop the tile it stands on) leaves it to get past.
+		while rerouted.size() > 1 and _flat_distance(global_position, rerouted[0]) <= arrive_radius:
+			rerouted.pop_front()
+		if CrewPaths.clear(CrewPaths.grid(layout), global_position, rerouted[0], CrewPaths.SCRAPE):
+			_path = rerouted
+			return
 	var other := _crew_in_way()
+	if other == null and _stuck_tries >= GIVE_WAY_LOOK_FURTHER:
+		other = _crew_in_way(GIVE_WAY_FAR)
 	if other != null and layout != null:
 		_get_past(other)
 		return
@@ -1225,12 +1734,13 @@ func _watch_progress(delta: float) -> void:
 			return
 
 
-## The nearest living crew member ahead of it within GIVE_WAY_NEAR, or null.
-func _crew_in_way() -> Crew3D:
+## The nearest living crew member ahead of it within [param reach]
+## (GIVE_WAY_NEAR), or null.
+func _crew_in_way(reach := GIVE_WAY_NEAR) -> Crew3D:
 	var ahead := _path[0] - global_position
 	ahead.y = 0.0
 	var best: Crew3D = null
-	var best_distance := GIVE_WAY_NEAR
+	var best_distance := reach
 	for node in get_tree().get_nodes_in_group(&"crew"):
 		var other := node as Crew3D
 		if other == null or other == self or not other.is_alive():
@@ -1251,26 +1761,66 @@ func _crew_in_way() -> Crew3D:
 ## else stepping off its way to wait for it to pass.
 func _get_past(other: Crew3D) -> void:
 	var detour := CrewPaths.route_around(layout, global_position, _path, _bodies_near())
-	if not other.is_walking():
-		if not detour.is_empty():
+	if not other.is_walking() and other._yield_to != null and other._yield_left == 0 and detour.is_empty():
+		# Giving way, and stood still (stopped short of its spot, or on a
+		# spot still in this one's way), it is the body in the way: three
+		# crew in a one-wide lane at a gap, the one giving way stood in
+		# the gap's mouth with this one pressed beside it. This one steps
+		# off its way instead and it walks on (raid-smoke-bugs 12).
+		var way: Array[Vector3] = [Vector3(other.global_position.x, 0.0, other.global_position.z)]
+		way.append_array(other._path.slice(0, 3))
+		var aside := CrewPaths.make_way(layout, global_position, way, _bodies_near())
+		if not aside.is_empty():
+			other._stop_giving_way()
+			_step_aside(other, aside)
+		return
+	# Walking the same way and stuck itself (a queue behind one that will
+	# not move): it is no more going anywhere than one standing still.
+	var queued := other.is_walking() and other._pinned_for >= UNSTICK_AFTER and _heading().dot(other._heading()) > 0.0
+	if not other.is_walking() or queued:
+		# The one in the way will not move of itself: it holds its spot in
+		# a fight (down in cover, a Shotgun in ambush, fighting in the
+		# open), or stands still (working at a prop, hiding in a doorway).
+		var held := queued or other.state in [State.FIGHT, State.COVER] or (other._yield_to == null and other._path.is_empty())
+		var out_of_fight := not state in [State.FIGHT, State.COVER]
+		# A way round already taken, and still stuck against it.
+		var tried := _stuck_tries >= GIVE_WAY_LOOK_FURTHER
+		if not detour.is_empty() and not (tried and held and out_of_fight):
 			_path = detour
 			_repath_timer = UNSTICK_AFTER
-		else:
-			other.make_way_for(self)
+		# With no way round it asks the other to make way, in a fight too
+		# (a Worker stood still where a Guard walks to cover held it 5 s:
+		# raid-smoke-bugs 12); out of the fight, refused, it gives up.
+		elif held and (not detour.is_empty() or not other.make_way_for(self)) and out_of_fight:
+			_give_up_walk(other)
 		return
 	if other._yield_to == self:
 		return  # it is stepping aside for this one
 	var spot: Array[Vector3] = []
-	if detour.is_empty():
+	# Out of the fight, in the way of one fighting, it steps off that one's
+	# way rather than go round it: a way round is a way across its path
+	# (a Worker on routine and a Guard walking to cover in a corridor, each
+	# going round the other into the other's way, raid-smoke-bugs 12).
+	var clears_for := not _fighting() and other._fighting()
+	if detour.is_empty() or clears_for:
 		spot = CrewPaths.make_way(layout, global_position, other._way(), _bodies_near())
-		if spot.is_empty():
+		if spot.is_empty() and detour.is_empty():
 			return  # nothing it can do: the other's to act
 	if not _acts_first(other):
+		return
+	if not spot.is_empty() and clears_for:
+		_step_aside(other, spot)
 		return
 	if not detour.is_empty():
 		_path = detour
 		_repath_timer = UNSTICK_AFTER
 		return
+	_step_aside(other, spot)
+
+
+## Gives way to [param other]: walks through [param spot] (the tile centres
+## to a spot off its way) and waits there for it to pass.
+func _step_aside(other: Crew3D, spot: Array[Vector3]) -> void:
 	_yield_to = other
 	_yield_from = other.global_position
 	_yield_clock = 0.0
@@ -1280,23 +1830,64 @@ func _get_past(other: Crew3D) -> void:
 	_repath_timer = GIVE_WAY_WAIT
 
 
+## Blocked by [param other], which will not move, with no way round (or
+## one that did not get it past) and no making way: out of the fight
+## itself, it gives this walk up. Hunting him behind a partner fighting
+## him, it joins the fight from where it stands; otherwise it stands
+## BLOCKED_PAUSE before it walks anywhere again, and one walking to a Job on
+## routine (behind one standing still or fighting) then sets off for its
+## next Job. Whatever its state, it stands the pause out
+## ([member _blocked_left]); running to hide, it hides where it stands for
+## it ([method CrewHiding.hold_here]). [param other] may be null: pinned
+## PINNED_GIVE_UP by something else ([method _watch_progress]).
+## (Crew-combat ticket 22 gave up only behind a Guard holding its spot in
+## a fight with no way round; ticket 27's smoke invariant, no crew member
+## trying to walk 5 s without moving 0.3 m, caught a Worker pressing 10 s
+## into a working one at the end of a lane and a hunting Guard pressing
+## into a partner fighting in the open in a one-wide way. Raid-smoke-bugs
+## 12: a routine walker behind a Guard fighting stood its pause only to be
+## sent straight back into it by its routine; one sent straight on to its
+## next Job pressed on into a Guard in cover in its Room's only doorway.)
+func _give_up_walk(other: Crew3D) -> void:
+	var fighting := other != null and other.state in [State.FIGHT, State.COVER]
+	if fighting and state == State.HUNT and cover != null and not flanking:
+		_enter(State.COVER)
+		return
+	if state == State.PATROL and routine != null and job_phase == JobPhase.WALKING:
+		# Not straight off again: every Job past a Guard holding a doorway
+		# runs through that doorway.
+		routine.advance()
+		job_phase = JobPhase.WAITING
+	_path.clear()
+	_hold_timer = maxf(_hold_timer, BLOCKED_PAUSE)
+	_blocked_left = BLOCKED_PAUSE
+	if state == State.COWER and hiding != null:
+		# Running to hide: it hides where it stands for the pause.
+		hiding.hold_here(BLOCKED_PAUSE)
+
+
 ## Asked by [param walker], which it stands in the way of with no way
-## round: a crew member on routine working at a prop or waiting steps off the
-## walker's way and waits there as one giving way does; one that was working
-## then walks back to its spot and works its Job again from the start.
-## Anyone else (chatting, hiding, fighting, already giving way) stays put.
-## Returns whether it moved.
+## round: a crew member on routine working at a prop or waiting, or one with
+## no routine stood still between wanders, steps off the walker's way and
+## waits there as one giving way does; one that was working then walks back
+## to its spot and works its Job again from the start. Anyone else
+## (chatting, hiding, fighting, already giving way) stays put. Returns
+## whether it moved.
 func make_way_for(walker: Crew3D) -> bool:
-	if state != State.PATROL or routine == null or _yield_to != null or layout == null \
-			or not job_phase in [JobPhase.WORKING, JobPhase.WAITING]:
+	if state != State.PATROL or _yield_to != null or layout == null:
+		return false
+	if routine == null and not _path.is_empty():
+		return false
+	if routine != null and not job_phase in [JobPhase.WORKING, JobPhase.WAITING]:
 		return false
 	var spot := CrewPaths.make_way(layout, global_position, walker._way(), _bodies_near())
 	if spot.is_empty():
 		return false
 	_path.clear()
-	if job_phase == JobPhase.WORKING:
+	if routine != null and job_phase == JobPhase.WORKING:
 		var job := routine.current()
 		_path.append(job.at if not job.patrol else Vector3(global_position.x, 0.0, global_position.z))
+		_job_spot = _path.back()
 		job_phase = JobPhase.WALKING
 		_walk_clock = 0.0
 	_yield_to = walker
@@ -1310,13 +1901,23 @@ func make_way_for(walker: Crew3D) -> bool:
 
 ## Of two walking crew blocking each other, which acts, so they never mirror
 ## each other. Called only on one that can act (go round or step aside):
-## it does if the other cannot, and of two that both can, the one created
-## first (lower instance id), always the same one of the pair. Stuck
-## GIVE_WAY_INSIST tries, it acts whenever it can.
+## it does if the other cannot; of one in a fight and one out of it, the one
+## out of it; and of two that both can, the one created first (readied
+## first), always the same one of the pair. Stuck GIVE_WAY_INSIST tries,
+## it acts whenever it can.
 func _acts_first(other: Crew3D) -> bool:
-	if _stuck_tries >= GIVE_WAY_INSIST or get_instance_id() < other.get_instance_id():
+	if _stuck_tries >= GIVE_WAY_INSIST:
+		return true
+	if _fighting() != other._fighting():
+		# The one out of the fight makes room for the one in it.
+		return other._fighting() or not other._can_get_past(self)
+	if _ready_order < other._ready_order:
 		return true
 	return not other._can_get_past(self)
+
+
+func _fighting() -> bool:
+	return state in [State.FIGHT, State.COVER]
 
 
 ## Whether, blocked by [param other], it has a way round or somewhere off
@@ -1325,6 +1926,15 @@ func _can_get_past(other: Crew3D) -> bool:
 	var bodies := _bodies_near()
 	return not CrewPaths.route_around(layout, global_position, _path, bodies).is_empty() \
 			or not CrewPaths.make_way(layout, global_position, other._way(), bodies).is_empty()
+
+
+## Which way it is heading: flat, towards its next point; zero standing.
+func _heading() -> Vector3:
+	if _path.is_empty():
+		return Vector3.ZERO
+	var ahead := _path[0] - global_position
+	ahead.y = 0.0
+	return ahead.normalized()
 
 
 ## Walking somewhere, not stood giving way.
@@ -1392,8 +2002,36 @@ func _repath_to(destination: Vector3) -> void:
 ## The door graph's waypoints from here to [param destination]. A doorway
 ## belongs to no Room, so stood in one it steps onto whichever Room tile
 ## beside it gives the shorter route first, rather than walking straight
-## at the destination through the hull.
+## at the destination through the hull; and a destination in one (where
+## the Pirate was last seen, say) is reached through whichever Room tile
+## beside it gives the shorter route (raid-smoke-bugs 12: a searching Guard
+## walked straight at a doorway two Rooms off and pressed into the wall).
 func _waypoints(destination: Vector3) -> Array[Vector3]:
+	var end := ShipBuilder3D.world_to_tile(destination)
+	if layout.room_at(end) >= 0:
+		return _waypoints_to(destination)
+	var best: Array[Vector3] = []
+	var best_length := INF
+	for side: Vector2i in [Vector2i.UP, Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT]:
+		if layout.room_at(end + side) < 0:
+			continue
+		var legs := _waypoints_to(ShipBuilder3D.tile_to_world(end + side))
+		if legs.is_empty():
+			continue
+		legs.append(destination)
+		var length := 0.0
+		var cursor := global_position
+		for point in legs:
+			length += _flat_distance(cursor, point)
+			cursor = point
+		if length < best_length:
+			best_length = length
+			best = legs
+	return best
+
+
+## [method _waypoints] to a destination in a Room.
+func _waypoints_to(destination: Vector3) -> Array[Vector3]:
 	var at := ShipBuilder3D.world_to_tile(global_position)
 	if layout.room_at(at) >= 0:
 		return ShipNavigator.waypoints_3d(layout, global_position, destination)
@@ -1487,7 +2125,11 @@ func _close_doors_behind() -> void:
 
 func _face() -> void:
 	var look := _aim
-	if state == State.FIGHT or (_in_combat() and _can_see):
+	if state == State.COWER and hiding != null and hiding.phase == CrewHiding.Phase.HIDDEN and hiding.facing != Vector3.ZERO:
+		# On its hiding tile: back to the wall, facing into the Room, its
+		# head turning to watch him ([CrewPose]).
+		look = hiding.facing
+	elif state == State.FIGHT or (_in_combat() and _can_see):
 		look = _last_seen - global_position
 	elif Vector2(velocity.x, velocity.z).length_squared() > 0.004:
 		look = velocity
@@ -1509,29 +2151,177 @@ func _face() -> void:
 
 # --- gunnery ------------------------------------------------------------------
 
+## One shot of its gun: every pellet of it, each thrown inside the cone on
+## its own, with the gun's shot sound, action sound and loudness. Aimed
+## first by fair fire ([CrewFire]): true at him (led, and walking in on the
+## first burst of a sighting) or at a miss point beside him; then each
+## pellet strays inside its spread ([method spread_degrees]), a real cone.
+## A Shotgun shot hurts with at most the Sandbox's pellet cap. Each shot
+## spends a round of its magazine; with none in, or reloading, it fires
+## nothing. Returns the first projectile ([member last_pellets] holds them
+## all), or null unarmed, dry or reloading.
 func _fire() -> Projectile3D:
-	if projectile_scene == null or weapon == null:
+	last_pellets.clear()
+	if projectile_scene == null or weapon == null or gunnery == null:
 		return null
+	if magazine != null:
+		if not magazine.can_fire():
+			return null
+		magazine.spend()
+	var in_burst := burst_length - _shots_left
+	if in_burst <= 0:
+		if miss_at != Vector3.INF:
+			# Fire on his cover is no part of a sighting, and never walks in.
+			_walk_in = false
+		else:
+			# The first round of a burst: the first of a sighting walks in.
+			_walk_in = _sighting_bursts == 0
+			_walk_side = 1.0 if _rng.randf() < 0.5 else -1.0
+			_sighting_bursts += 1
 	_shots_left -= 1
+	shot_frame = Engine.get_physics_frames()
 	_shot_timer = weapon.fire_interval * _gap_jitter
-	if _shots_left <= 0:
-		_reload_timer = gunnery.pause_between_bursts * _pause_jitter
 
-	var cone := CrewCombat.spread(base_cone_degrees(), _exposed_for)
-	var spread := deg_to_rad(_rng.randf_range(-cone, cone))
-	var direction := _aim.rotated(Vector3.UP, spread)
-	var origin := global_position + Vector3.UP * MUZZLE_HEIGHT + direction * MUZZLE_FORWARD
-	var shot: Projectile3D = projectile_scene.instantiate()
-	shot.damage = weapon.damage
-	shot.headshot_multiplier = weapon.headshot_multiplier
-	shot.speed = weapon.projectile_speed
-	shot.lifetime = weapon.projectile_lifetime
-	shot.launch(origin, direction, self, TEAM)
-	_shot_parent().add_child(shot)
+	# From its gun's Muzzle in the aimed hold: aimed from where the muzzle
+	# will be, then the gun turned onto that point and the shot sent from
+	# its marker.
+	var toward := target.global_position + Vector3.UP * TORSO_HEIGHT \
+			if target != null and is_instance_valid(target) else global_position + _aim
+	var from := aim_muzzle(global_position, toward)
+	var aim_at := _aim_point(from, maxi(in_burst, 0))
+	if gun != null:
+		gun.aim_at(aim_at)
+		from = gun.muzzle_point()
+		last_aim_origin = from
+	var along := (aim_at - from).normalized() if aim_at.distance_squared_to(from) > 0.0001 else _aim
+	var origin := from
+	var cone := spread_degrees()
+	var volley := Projectile3D.Volley.new()
+	volley.cap = sandbox.shotgun_pellet_cap if sandbox != null and weapon.pellet_count > 1 else -1
+	for i in maxi(weapon.pellet_count, 1):
+		var direction := _over_own_cover(from, along, CrewFire.scatter(along, cone, _rng), aim_at)
+		var shot: Projectile3D = projectile_scene.instantiate()
+		shot.damage = weapon.damage
+		shot.headshot_multiplier = weapon.headshot_multiplier
+		shot.speed = weapon.projectile_speed
+		shot.lifetime = weapon.projectile_lifetime
+		shot.volley = volley
+		shot.launch(from, direction, self, TEAM)
+		_shot_parent().add_child(shot)
+		last_pellets.append(shot)
 	if not weapon.shot_sounds.is_empty():
-		SoundAt.play(_shot_parent(), origin, weapon.shot_sounds.pick_random(), shot_volume_db, 0.06, "Shot")
+		var volume := shot_volume_db + (shotgun_shot_trim_db if CrewHabit.racks(weapon) else 0.0)
+		SoundAt.play(_shot_parent(), origin, weapon.shot_sounds.pick_random(), volume, 0.06, "Shot")
+	if weapon.action_sound != null and not CrewHabit.racks(weapon):
+		# (A Shotgun racks before its shot instead: [method rack].)
+		_play_action_later(weapon.action_sound, weapon.action_sound_delay)
 	CrewNoise.make(get_tree(), global_position, CrewNoise.Kind.GUNSHOT, weapon.loudness, self)
-	return shot
+	return last_pellets[0]
+
+
+## [param direction], a pellet's draw inside the cone round [param along],
+## kept out of the prop or wall just in front of the muzzle (the low cover it
+## fires over): a draw whose first OWN_COVER metres (or less, short of
+## [param aim_at]) would strike the ship has its up-and-down stray turned the
+## other way, and failing that dropped. A real cone strays down as well as
+## sideways, and a Guard holds its gun over its cover, not into it.
+func _over_own_cover(from: Vector3, along: Vector3, direction: Vector3, aim_at: Vector3) -> Vector3:
+	var reach := minf(OWN_COVER, from.distance_to(aim_at) - MUZZLE_TARGET_GAP)
+	if reach <= 0.0 or not _ball_blocked(from, direction * reach):
+		return direction
+	var right := along.cross(Vector3.UP)
+	if right.length_squared() < 0.0001:
+		return direction
+	right = right.normalized()
+	var up := right.cross(along).normalized()
+	var rise := direction.dot(up)
+	var flipped := (direction - up * rise * 2.0).normalized()
+	if not _ball_blocked(from, flipped * reach):
+		return flipped
+	return (direction - up * rise).normalized()
+
+
+## Where this shot goes before its spread, from the muzzle at [param from],
+## round [param in_burst] (from 0) of its burst. Records it in the
+## last_aim_* fields.
+func _aim_point(from: Vector3, in_burst: int) -> Vector3:
+	last_aim_origin = from
+	last_walk_in = false
+	last_miss_kind = ""
+	if target == null or not is_instance_valid(target):
+		last_aimed_true = false
+		last_aim_point = from + _aim
+		return last_aim_point
+	var fire := CrewFire.of(target)
+	last_aimed_true = fire.aims_true(self)
+	if miss_at != Vector3.INF:
+		# At the edge of the prop he hid behind: a deliberate miss.
+		last_aimed_true = false
+		last_miss_kind = "prop"
+		last_aim_point = miss_at
+		miss_at = Vector3.INF
+		return last_aim_point
+	if aim_override != Vector3.INF:
+		last_aim_point = aim_override
+		aim_override = Vector3.INF
+		return last_aim_point
+	if not last_aimed_true:
+		var kind := []
+		last_aim_point = fire.miss_point(self, _rng, kind)
+		last_miss_kind = kind[0] if not kind.is_empty() else ""
+		return last_aim_point
+	var at := CrewFire.lead_point(self, from)
+	if _walk_in:
+		var distance := sandbox.walk_in_distance if sandbox != null else 1.0
+		var off := CrewFire.walk_in_offset(in_burst, burst_length, distance)
+		if off > 0.0:
+			# A round walking in is aimed where the ship does not stand in its
+			# way (a door frame or a wall corner beside him): the other side,
+			# else at him.
+			var across := CrewFire.side_axis(from, at)
+			for side: float in [_walk_side, -_walk_side]:
+				var aside: Vector3 = at + across * side * off
+				var reach := from.distance_to(aside) - MUZZLE_TARGET_GAP
+				if reach <= 0.0 or not _ball_blocked(from, (aside - from).normalized() * reach):
+					_walk_side = side
+					last_walk_in = true
+					at = aside
+					break
+	last_aim_point = at
+	return at
+
+
+## Seconds since its last shot.
+func shot_age() -> float:
+	return (Engine.get_physics_frames() - shot_frame) / float(Engine.physics_ticks_per_second)
+
+
+## Racks its gun now: the Profile's action sound at the muzzle, the
+## Shotgun's tell before it shows itself ([CrewCover]).
+func rack() -> void:
+	_rack_frame = Engine.get_physics_frames()
+	if weapon != null and weapon.action_sound != null:
+		_play_action(weapon.action_sound)
+
+
+## Seconds since it last racked its gun.
+func rack_age() -> float:
+	return float(Engine.get_physics_frames() - _rack_frame) / Engine.physics_ticks_per_second
+
+
+## The gun's action (a pump, a bolt) [param delay] seconds after a shot, at
+## wherever the body is by then. A connection, not an await, so a body
+## freed in between simply plays nothing.
+func _play_action_later(sound: AudioStream, delay: float) -> void:
+	if delay <= 0.0:
+		_play_action(sound)
+	else:
+		get_tree().create_timer(delay, false).timeout.connect(_play_action.bind(sound))
+
+
+func _play_action(sound: AudioStream) -> void:
+	if is_inside_tree():
+		SoundAt.play(_shot_parent(), global_position + Vector3.UP * MUZZLE_HEIGHT, sound, action_volume_db, 0.06, "Action")
 
 
 func _shot_parent() -> Node:
@@ -1543,7 +2333,8 @@ func _shot_parent() -> Node:
 
 ## Somewhere nearby that the ship stands between us and the pirate: the ray
 ## from a crouched head there to the pirate's torso must be blocked, and the
-## walk to it must be clear.
+## walk to it must be clear. Where a Worker cowers (a Guard's cover is
+## [CrewCover]'s).
 func _find_cover_point() -> Vector3:
 	if target == null or not is_instance_valid(target):
 		return Vector3.INF
@@ -1564,7 +2355,8 @@ func _find_cover_point() -> Vector3:
 
 
 ## True when the ship stands between the muzzle and the Pirate's torso,
-## though its eyes may see over: bolts from here would hit the cover.
+## though its eyes may see over: bolts from here would hit the cover. The
+## muzzle is its gun's in the aimed hold ([method aim_muzzle]).
 func _muzzle_blocked() -> bool:
 	if target == null or not is_instance_valid(target):
 		return false
@@ -1573,19 +2365,23 @@ func _muzzle_blocked() -> bool:
 
 ## The same from a crew member standing at [param at], aiming at [param torso]:
 ## a ball as wide as a bolt (whose overlap strikes whatever it brushes),
-## swept from the body's axis at muzzle height, so a barrel poking into a
-## prop counts, to just short of the target's body; and along both edges of
-## its spread for the first MUZZLE_NEAR metres, so cover at its shoulder
-## does not eat half of every burst.
+## swept along the barrel from the body's axis at the muzzle's height to the
+## muzzle, so a barrel poking into a prop counts; then from the muzzle,
+## where its shots leave, to just short of the target's body; and along
+## both edges of its spread for the first MUZZLE_NEAR metres, so cover at
+## its shoulder does not eat half of every burst.
 func _muzzle_blocked_from(at: Vector3, torso: Vector3) -> bool:
-	var from := at + Vector3.UP * MUZZLE_HEIGHT
+	var from := aim_muzzle(at, torso)
+	var axis := Vector3(at.x, from.y, at.z)
+	if _ball_blocked(axis, from - axis):
+		return true
 	var reach := from.distance_to(torso) - MUZZLE_TARGET_GAP
 	if reach <= 0.0:
 		return false
 	var along := (torso - from).normalized()
 	if _ball_blocked(from, along * reach):
 		return true
-	var cone := deg_to_rad(CrewCombat.spread(base_cone_degrees(), _exposed_for))
+	var cone := deg_to_rad(spread_degrees())
 	for side in [-1.0, 1.0]:
 		if _ball_blocked(from, along.rotated(Vector3.UP, side * cone) * minf(reach, MUZZLE_NEAR)):
 			return true
@@ -1602,18 +2398,25 @@ func _ball_blocked(from: Vector3, motion: Vector3) -> bool:
 	return get_world_3d().direct_space_state.cast_motion(query)[0] < 1.0
 
 
-## Somewhere nearby with a clear shot at the pirate.
+## Somewhere nearby with a clear shot at the pirate, for a Guard fighting
+## in the open ([CrewCover]).
 func _find_firing_position() -> Vector3:
 	if target == null or not is_instance_valid(target):
 		return Vector3.INF
 	var aim_at := _last_seen + Vector3.UP * TORSO_HEIGHT
 	var best := Vector3.INF
 	var best_score := -INF
+	# Within its sight of him; a Shotgun, within the range it fires at.
+	var reach := vision_range
+	if CrewHabit.gun_of(weapon) == CrewHabit.Gun.SHOTGUN:
+		reach = minf(reach, CrewHabit.SHOTGUN_HOLD_FIRE)
 	for point in _candidate_points():
-		if _flat_distance(point, _last_seen) > engage_range():
+		if _flat_distance(point, _last_seen) > reach:
 			continue
 		if _flat_distance(point, global_position) < FIRING_STEP:
 			continue  # where it stands already has no shot: a real step
+		if _no_room(point):
+			continue  # it would stop short, and judge its shot from elsewhere
 		if _muzzle_blocked_from(point, aim_at):
 			continue
 		var score := -_flat_distance(global_position, point)
@@ -1624,25 +2427,27 @@ func _find_firing_position() -> Vector3:
 
 
 ## Tile centres in the current room within the search radius, minus any that
-## are inside the hull or a prop.
+## are inside the hull or a prop. Stood in a doorway, both Rooms its Door
+## joins; outside every Room, its Post.
 func _candidate_points() -> Array[Vector3]:
 	var points: Array[Vector3] = []
 	if layout == null:
 		return points
-	var room := layout.room_at(ShipBuilder3D.world_to_tile(global_position))
-	if room == -1:
-		room = home_room
-	var breakers := _breaker_tiles(room)
-	for tile: Vector2i in layout.rooms[room].tiles():
-		var point := ShipBuilder3D.tile_to_world(tile)
-		if _flat_distance(global_position, point) > cover_search_radius:
-			continue
-		if _solid(point):
-			continue
-		# A Breaker is the pirate's cover on the way in, never the defender's.
-		if breakers.has(tile):
-			continue
-		points.append(point)
+	var rooms := CrewNoise.rooms_at(layout, global_position)
+	if rooms.is_empty() and home_room >= 0 and home_room < layout.rooms.size():
+		rooms.append(home_room)
+	for room in rooms:
+		var breakers := _breaker_tiles(room)
+		for tile: Vector2i in layout.rooms[room].tiles():
+			var point := ShipBuilder3D.tile_to_world(tile)
+			if _flat_distance(global_position, point) > cover_search_radius:
+				continue
+			if _solid(point):
+				continue
+			# A Breaker is the pirate's cover on the way in, never the defender's.
+			if breakers.has(tile):
+				continue
+			points.append(point)
 	return points
 
 
@@ -1699,7 +2504,19 @@ func _update_animation() -> void:
 	if state == State.DEAD:
 		return
 	var speed := Vector2(velocity.x, velocity.z).length()
-	if speed > WALK_ANIM_SPEED:
+	if is_worker():
+		_fit_capsule()
+	if state in [State.SURRENDER, State.BOUND]:
+		# Posed over the standing clip ([CrewPose]).
+		_play_any(["CharacterArmature|Idle", "Idle"])
+	elif cover != null and cover.stepping():
+		# Stepping out from full cover and back: its feet step on their own
+		# ([CrewPose]) under a still upper body.
+		if state == State.FIGHT:
+			_play_any(["CharacterArmature|Idle_Gun_Pointing", "CharacterArmature|Idle_Gun", "Idle_Gun", "Idle"])
+		else:
+			_play_any(["CharacterArmature|Idle", "Idle"])
+	elif speed > WALK_ANIM_SPEED:
 		_play_any(["CharacterArmature|Run", "CharacterArmature|Walk", "Run", "Walk"])
 	elif speed > 0.5:
 		_play_any(["CharacterArmature|Walk", "CharacterArmature|Run", "Walk", "Run"])
@@ -1709,10 +2526,88 @@ func _update_animation() -> void:
 		_play_any(["CharacterArmature|Idle", "Idle"])
 
 
+## A Worker's capsule cut to the top of the pose it is in
+## ([constant CrewPose.WORKER_TOP]), standing at the scene's height.
+func _fit_capsule() -> void:
+	var shape := get_node_or_null("CollisionShape3D") as CollisionShape3D
+	if shape == null or not shape.shape is CapsuleShape3D:
+		return
+	var capsule := shape.shape as CapsuleShape3D
+	var top := CrewPose.worker_top(self)
+	var height := _stand_height if top == INF else maxf(top, capsule.radius * 2.0)
+	if is_equal_approx(capsule.height, height):
+		return
+	capsule.height = height
+	shape.position.y = _stand_y if top == INF else height / 2.0
+
+
+## How far behind [param away] (the way it faces) the nearest wall or prop
+## is, from its centre at SEAT_HEIGHT, up to [param reach]; INF with none.
+func wall_behind(away: Vector3, reach := BOUND_WALL_REACH) -> float:
+	away.y = 0.0
+	if away.length_squared() < 0.001 or not is_inside_tree():
+		return INF
+	var from := global_position + Vector3.UP * SEAT_HEIGHT
+	var hit := get_world_3d().direct_space_state.intersect_ray(
+			PhysicsRayQueryParameters3D.create(from, from - away.normalized() * reach, WORLD_LAYER))
+	return INF if hit.is_empty() else _flat_distance(from, hit.position)
+
+
+## How far a pose sat or crouched with its back to a wall [param behind]
+## metres off moves back to it: to SEAT_GAP from it, at most SEAT_BACK_MOST.
+static func seat_back_for(behind: float) -> float:
+	return 0.0 if behind == INF else clampf(behind - SEAT_GAP, 0.0, SEAT_BACK_MOST)
+
+
+## Just Bound, with its set's sat pose: the nearest wall or prop within
+## BOUND_WALL_REACH, looked for all round at SEAT_HEIGHT, is the one it
+## sits against. It shuffles back to it (its body BOUND_STANDOFF off it,
+## turned to face away), drawn sliding there from where it knelt. With none
+## it kneels ([method CrewPose.worker_pose]).
+func _settle_bound() -> void:
+	bound_against = Vector3.ZERO
+	seat_back = 0.0
+	if pose_set.get("bound", "") != "bound_sat" or not is_inside_tree():
+		return
+	var space := get_world_3d().direct_space_state
+	var from := global_position + Vector3.UP * SEAT_HEIGHT
+	var nearest := INF
+	for k in BOUND_LOOKS:
+		var way := Vector3.FORWARD.rotated(Vector3.UP, TAU * k / BOUND_LOOKS)
+		var hit := space.intersect_ray(PhysicsRayQueryParameters3D.create(from, from + way * BOUND_WALL_REACH, WORLD_LAYER))
+		if not hit.is_empty() and _flat_distance(from, hit.position) < nearest:
+			nearest = _flat_distance(from, hit.position)
+			bound_against = way
+	if bound_against == Vector3.ZERO:
+		return
+	var was := global_transform
+	if nearest > BOUND_STANDOFF:
+		global_position += bound_against * (nearest - BOUND_STANDOFF)
+		nearest = BOUND_STANDOFF
+	face_direction(-bound_against)
+	seat_back = seat_back_for(nearest)
+	# The body is at the wall at once; what is drawn slides there.
+	var rest := model.transform
+	model.transform = global_transform.affine_inverse() * was * rest
+	create_tween().tween_property(model, "transform", rest, BOUND_SHUFFLE) \
+			.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+
+
 # --- death --------------------------------------------------------------------
 
 func _on_died(_from: Node) -> void:
-	died_unaware = not _in_combat() and not _spotted()
+	died_surrendered = state in [State.SURRENDER, State.BOUND]
+	died_bound = state == State.BOUND
+	died_unaware = not died_surrendered and not _in_combat() and not _spotted()
+	if died_bound:
+		# A Bound Worker killed leaves a body, a trace as any other, even if
+		# its being Bound was reported.
+		reported = false
+	_set_surrender(Surrender.NONE)
+	if cover != null:
+		cover.release()
+	if magazine != null:
+		magazine.stop()
 	state = State.DEAD
 	_path.clear()
 	velocity = Vector3.ZERO
@@ -1720,6 +2615,10 @@ func _on_died(_from: Node) -> void:
 	$CollisionShape3D.set_deferred("disabled", true)
 	if head_zone != null:
 		head_zone.disable()
+	if gun != null:
+		gun.drop()
+	if pose != null:
+		pose.active = false
 	if not _play_any(["CharacterArmature|Death", "Death", "Die"]):
 		# No death clip: tip the model over so a corpse still reads as one.
 		create_tween().tween_property(model, "rotation:x", -PI / 2.0, 0.4)

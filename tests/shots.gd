@@ -22,15 +22,29 @@ extends SceneTree
 ##              measures the reticle's centre and a 1 m target's span at 50 m.
 ##   ship       class=<small|medium|large> seed=<n>: one shot per Room from a
 ##              corner at eye height, room_<i>_<role>.png, plus overview.png.
-##   crew       one of each crew type side by side, front.png and side.png.
-##   hud        the in-Raid HUD with known values: hud.png, hud_busy.png.
+##   crew       one of each crew type side by side, front.png and side.png;
+##              a Guard with each gun carried, walking and aimed
+##              (guns_*.png), each gun's hands close up (hands_<gun>_<patrol|aim>.png)
+##              and the Marksman Rifle's sight line (sight_line.png); then
+##              Guards in a fight (crew-combat ticket 22): down behind crates
+##              squatting and on one knee, ducking a near miss, popped up,
+##              stepped out beside a wall, reloading (each gun, three moments)
+##              and running low and upright (down_*, duck_*, popup_*,
+##              stepout_*, reload_*, run_*.png); then Workers' poses
+##              (crew-combat ticket 25), both of each pair: hiding crouched,
+##              ducked at a gunshot and sat, hands by the head and straight
+##              up, kneeling upright and on the heels, Bound sat against the
+##              wall and kneeling (worker_*.png).
+##   hud        the in-Raid HUD with known values: hud.png, hud_busy.png,
+##              hud_bind.png.
 ##   menu       the main menu's screens (home, classes), the Loadout screen
 ##              (loadout: bare; loadout_slot: a fitted Assault Rifle with its
 ##              Underbarrel list open) and the Raid's own (pause, death,
 ##              extracted).
 ##   scene      path=<res://...> cam=x,y,z look=x,y,z [fov=<deg>] [name=<png>]
 ##   sheet      the Sandbox sheet (F1) open in a Raid carrying a fitted Loadout:
-##              sheet.png (strip and Weapons), sheet_attachments.png and
+##              sheet.png (strip and Weapons), sheet_crew_fight.png (Crew
+##              fight and Surrender and Bound), sheet_attachments.png and
 ##              sheet_attachments_end.png (the Attachments table, top and
 ##              bottom, the Suppressor's loudness dialled to 0.5).
 ##
@@ -505,7 +519,18 @@ func _room_camera(room: RoomData) -> Array:
 # --- crew ------------------------------------------------------------------
 
 func _crew() -> void:
-	_expect(["front", "side"])
+	var guns := ["pistol", "assault_rifle", "shotgun", "marksman_rifle"]
+	var labels := ["front", "side", "guns_patrol_front", "guns_patrol_side", "guns_walk_side", "guns_aim_front", "guns_aim_side"]
+	for gun in guns:
+		labels.append("hands_%s_patrol" % gun)
+		labels.append("hands_%s_aim" % gun)
+	labels.append("sight_line")
+	labels.append_array(FIGHT_SHOTS)
+	for gun in guns:
+		for moment in RELOAD_MOMENTS:
+			labels.append("reload_%s_%s" % [gun, moment])
+	labels.append_array(WORKER_SHOTS)
+	_expect(labels)
 	var world := _test_room()
 	var crew: Array[Crew3D] = []
 	var types := [CrewTypes.Type.GUARD, CrewTypes.Type.WORKER]
@@ -528,6 +553,318 @@ func _crew() -> void:
 	for body in crew:
 		body.face_direction(Vector3.LEFT)
 	await _snap("side")
+	for body in crew:
+		body.free()
+
+	# A Guard with each gun (crew-combat ticket 16), left to right: Pistol,
+	# Assault Rifle, Shotgun, Marksman Rifle; carrying on patrol, walking,
+	# and aimed; then each one's hands close up.
+	var guards: Array[Crew3D] = []
+	for i in guns.size():
+		var guard: Crew3D = load("res://scenes/crew_3d.tscn").instantiate()
+		guard.weapon = load("res://resources/weapons/%s.tres" % guns[i])
+		guard.position = Vector3(-2.4 + i * 1.6, 0.0, -1.0)
+		world.add_child(guard)
+		guard.set_physics_process(false)
+		guards.append(guard)
+	print("shots: guns_* and hands_*: Pistol, Assault Rifle, Shotgun, Marksman Rifle, left to right")
+	cam.fov = 60.0
+	# Front: facing the camera. Side: facing left along the row, seen from
+	# their left (the closeups show the right).
+	cam.look_at_from_position(Vector3(0, 1.3, 3.6), Vector3(0, 1.0, -1.0))
+	await _hold_guards(guards, false, Vector3.BACK)
+	await _snap("guns_patrol_front")
+	await _hold_guards(guards, false, Vector3.LEFT)
+	await _snap("guns_patrol_side")
+	await _hold_guards(guards, false, Vector3.LEFT, 1.4)
+	await _snap("guns_walk_side")
+	await _hold_guards(guards, true, Vector3.BACK)
+	await _snap("guns_aim_front")
+	await _hold_guards(guards, true, Vector3.LEFT)
+	await _snap("guns_aim_side")
+	cam.fov = 40.0
+	for i in guns.size():
+		var guard := guards[i]
+		for aimed in [false, true]:
+			await _hold_guards(guards, aimed, Vector3.BACK)
+			var hands := guard.gun.hand_place_global("grip").origin.lerp(guard.gun.hand_place_global("fore").origin, 0.5)
+			# From its right front, a little above the hands.
+			cam.look_at_from_position(hands + Vector3(-0.75, 0.25, 0.85), hands)
+			await _snap("hands_%s_%s" % [guns[i], "aim" if aimed else "patrol"])
+
+	# The Marksman Rifle's sight line (crew-combat ticket 20) from its
+	# rifle's muzzle to a point across the room, as a Guard shows it.
+	var marksman := guards[3]
+	await _hold_guards(guards, true, Vector3.RIGHT)
+	var line := CrewSightLine.new()
+	world.add_child(line)
+	var muzzle := marksman.gun.muzzle_point()
+	line.show_between(muzzle, muzzle + Vector3(6.0, -0.3, 1.5))
+	cam.fov = 50.0
+	cam.look_at_from_position(marksman.global_position + Vector3(-1.0, 1.5, 3.4), marksman.global_position + Vector3(1.0, 1.2, 0))
+	print("shots: the Marksman Rifle Guard's sight line runs from its muzzle off to the right")
+	await _snap("sight_line")
+	line.free()
+	for guard in guards:
+		guard.free()
+	await _crew_fight(guns)
+	await _crew_workers()
+
+
+## The fight shots in order (crew-combat ticket 22); the reload close ups
+## follow them, reload_<gun>_<moment>.
+const FIGHT_SHOTS := ["down_squat_front", "down_squat_above", "down_squat_close", "down_knee_front", "down_knee_above",
+		"down_knee_close", "duck_above", "popup_front", "popup_above", "stepout_above", "stepout_close", "run_side"]
+## A reload's moments for the close ups: the left hand at the well taking
+## the old magazine, at the belt, and seating the new one (for the Shotgun:
+## at the port, at the belt, and on its way back).
+const RELOAD_MOMENTS := ["well", "belt", "seat"]
+const RELOAD_AT := {"well": 0.12, "belt": 0.46, "seat": 0.80}
+const SHELL_AT := {"well": 0.02, "belt": 0.48, "seat": 0.80}
+
+
+## Guards in a fight, posed as [CrewCover] and [CrewPose] pose them: a row
+## of four, left to right Pistol, Assault Rifle, Shotgun, Marksman Rifle,
+## each behind a 1.1 m crate facing the camera (the Pirate's side).
+func _crew_fight(guns: Array) -> void:
+	var world := _test_room()
+	var guards: Array[Crew3D] = []
+	for i in guns.size():
+		var guard: Crew3D = load("res://scenes/crew_3d.tscn").instantiate()
+		guard.weapon = load("res://resources/weapons/%s.tres" % guns[i])
+		guard.position = Vector3(-2.4 + i * 1.6, 0.0, -1.2)
+		world.add_child(guard)
+		guard.set_physics_process(false)
+		guard.face_direction(Vector3.BACK)
+		guards.append(guard)
+		var crate: Node3D = load("res://scenes/props3d/prop_crate_3d.tscn").instantiate()
+		crate.position = Vector3(-2.4 + i * 1.6, 0.0, -0.2)
+		world.add_child(crate)
+	var cam := Camera3D.new()
+	world.add_child(cam)
+	cam.make_current()
+	var front := func() -> void:
+		cam.fov = 60.0
+		cam.look_at_from_position(Vector3(0, 1.5, 3.6), Vector3(0, 0.9, -1.0))
+	var above := func() -> void:
+		cam.fov = 60.0
+		cam.look_at_from_position(Vector3(2.9, 2.7, -3.6), Vector3(-0.6, 0.45, -0.7))
+	# From its right side, the others hidden.
+	var close := func(guard: Crew3D) -> void:
+		for other in guards:
+			other.visible = other == guard
+		cam.fov = 50.0
+		var at := guard.global_position
+		cam.look_at_from_position(at + Vector3(-1.8, 0.95, 0.1), at + Vector3(0, 0.6, 0.3))
+	# From its left, where the reloading hand is.
+	var left := func(guard: Crew3D) -> void:
+		for other in guards:
+			other.visible = other == guard
+		cam.fov = 45.0
+		var at := guard.global_position
+		cam.look_at_from_position(at + Vector3(1.7, 1.05, 0.15), at + Vector3(0, 0.55, 0.25))
+	var all := func() -> void:
+		for other in guards:
+			other.visible = true
+	print("shots: down_*, duck_*, popup_*: Pistol, Assault Rifle, Shotgun, Marksman Rifle behind 1.1 m crates; *_close is the Assault Rifle from its right")
+	for stance in [CrewPose.Stance.SQUAT, CrewPose.Stance.KNEE]:
+		var name: String = "squat" if stance == CrewPose.Stance.SQUAT else "knee"
+		await _pose_down(guards, stance)
+		front.call()
+		await _snap("down_%s_front" % name)
+		above.call()
+		await _snap("down_%s_above" % name)
+		close.call(guards[1])
+		await _snap("down_%s_close" % name)
+		all.call()
+	# A near miss: two squatting, two on one knee, each ducked lower.
+	for i in guards.size():
+		await _pose_down([guards[i]] as Array[Crew3D], CrewPose.Stance.SQUAT if i % 2 == 0 else CrewPose.Stance.KNEE, false)
+	for guard in guards:
+		guard.pose.flinch()
+	await create_timer(0.2).timeout
+	above.call()
+	print("shots: duck_above: squat, knee, squat, knee, each ducking a near miss")
+	await _snap("duck_above")
+	await _pose_down(guards, CrewPose.Stance.SQUAT, false)
+	for guard in guards:
+		guard.cover._stand()
+		guard.state = Crew3D.State.FIGHT
+		guard._update_animation()
+	await create_timer(0.5).timeout
+	front.call()
+	await _snap("popup_front")
+	above.call()
+	await _snap("popup_above")
+
+	# Reloading: each gun close up at three moments of its reload.
+	for i in guards.size():
+		var guard := guards[i]
+		await _pose_down([guard] as Array[Crew3D], CrewPose.Stance.SQUAT if i % 2 == 0 else CrewPose.Stance.KNEE)
+		guard.magazine.rounds = 0
+		guard.magazine.start()
+		await create_timer(0.3).timeout
+		left.call(guard)
+		for moment: String in RELOAD_MOMENTS:
+			var magazine := guard.magazine
+			if magazine.shell_by_shell():
+				magazine.left = guard.weapon.first_shell_time * magazine.factor() * (1.0 - SHELL_AT[moment])
+			else:
+				magazine.left = magazine.duration * (1.0 - RELOAD_AT[moment])
+			await _snap("reload_%s_%s" % [guns[i], moment])
+		guard.magazine.stop()
+		all.call()
+
+	# Stepped out from full cover: the Shotgun beside a wall it hides
+	# behind, out on its firing tile and aimed.
+	for guard in guards:
+		guard.visible = false
+	var shotgun := guards[2]
+	shotgun.visible = true
+	_box(world, Vector3(1.0, 2.2, 0.3), shotgun.global_position + Vector3(0, 1.1, 1.0), Color(0.5, 0.5, 0.55))
+	shotgun.cover._stand()
+	shotgun.cover.spot = shotgun.global_position
+	shotgun.global_position += Vector3(1.0, 0, 0)
+	shotgun.cover.step = shotgun.global_position
+	shotgun.cover.low = false
+	shotgun.cover.mode = CrewCover.Mode.SHOOT
+	shotgun.state = Crew3D.State.FIGHT
+	shotgun._update_animation()
+	await create_timer(0.5).timeout
+	above.call()
+	print("shots: stepout_*: the Shotgun stepped out right of a wall, aimed")
+	await _snap("stepout_above")
+	cam.fov = 45.0
+	cam.look_at_from_position(shotgun.global_position + Vector3(-0.4, 1.7, 3.0), shotgun.global_position + Vector3(-0.3, 1.0, 0.0))
+	await _snap("stepout_close")
+	shotgun.cover.mode = CrewCover.Mode.NONE
+	shotgun.visible = false
+
+	# Running to cover: low to low cover (left), upright to full cover.
+	var runners: Array[Crew3D] = [guards[1], guards[3]]
+	for k in runners.size():
+		var runner := runners[k]
+		runner.visible = true
+		runner.cover._stand()
+		runner.global_position = Vector3(-1.2 + k * 2.4, 0.0, 1.6)
+		runner.face_direction(Vector3.LEFT)
+		runner.state = Crew3D.State.COVER
+		runner.cover.mode = CrewCover.Mode.MOVE
+		runner.cover.low = k == 0
+		runner.velocity = Vector3.LEFT * 3.5
+		runner._update_animation()
+	await create_timer(0.6).timeout
+	cam.fov = 50.0
+	cam.look_at_from_position(Vector3(0, 1.1, 5.4), Vector3(0, 0.9, 1.6))
+	print("shots: run_side: the Assault Rifle running low (left), the Marksman Rifle upright (right)")
+	await _snap("run_side")
+	world.free()
+
+
+## Workers' poses (crew-combat ticket 25), left to right, each facing the
+## camera with a wall 0.5 m behind (the Bound sat one 0.37 m, as it settles
+## against one): hiding crouched, ducked at a gunshot, sat; hands by the
+## head, arms straight up; kneeling upright, on its heels; Bound sat, Bound
+## kneeling.
+const WORKER_POSES := ["hide", "hide_flinch", "hide_sat", "hands_up", "hands_high", "kneel", "kneel_low", "bound_sat", "bound_kneel"]
+## The shots: the whole row, each group of poses from the front quarter
+## and from its side (from the middle of the room), and the Bound kneeling
+## one from behind (its hands behind its back).
+const WORKER_GROUPS := {"hide": [0, 2], "hands": [3, 4], "kneel": [5, 6], "bound": [7, 8]}
+const WORKER_SHOTS := ["worker_row", "worker_hide_front", "worker_hide_side", "worker_hands_front", "worker_hands_side",
+		"worker_kneel_front", "worker_kneel_side", "worker_bound_front", "worker_bound_side", "worker_bound_back"]
+const WORKER_SPACING := 0.85
+const WORKER_WALL := -1.5
+
+
+func _crew_workers() -> void:
+	var world := _test_room()
+	_box(world, Vector3(8.0, 2.5, 0.2), Vector3(0.0, 1.25, WORKER_WALL - 0.1), Color(0.5, 0.52, 0.58))
+	var workers: Array[Crew3D] = []
+	for i in WORKER_POSES.size():
+		var pose: String = WORKER_POSES[i]
+		var worker: Crew3D = load("res://scenes/crew_3d.tscn").instantiate()
+		worker.crew_type = CrewTypes.Type.WORKER
+		var off := Crew3D.BOUND_STANDOFF if pose == "bound_sat" else 0.5
+		worker.position = Vector3((i - (WORKER_POSES.size() - 1) * 0.5) * WORKER_SPACING, 0.0, WORKER_WALL + off)
+		world.add_child(worker)
+		worker.set_physics_process(false)
+		worker.face_direction(Vector3.BACK)
+		workers.append(worker)
+	await physics_frame
+	await physics_frame
+	for i in workers.size():
+		var worker := workers[i]
+		worker.pose.forced = WORKER_POSES[i]
+		if CrewPose.POSES[WORKER_POSES[i]].get("back", 0.0) > 0.0:
+			# As the game sets it: back to the wall behind it.
+			worker.seat_back = Crew3D.seat_back_for(worker.wall_behind(Vector3.BACK))
+		worker.state = Crew3D.State.COWER
+		worker._update_animation()
+	await create_timer(0.8).timeout
+	print("shots: worker_*: hide, hide ducked, hide sat, hands up, hands high, kneel, kneel low, bound sat, bound kneel, left to right")
+	var cam := Camera3D.new()
+	world.add_child(cam)
+	cam.make_current()
+	cam.fov = 60.0
+	cam.look_at_from_position(Vector3(0, 1.4, 3.4), Vector3(0, 0.75, WORKER_WALL + 0.5))
+	await _snap("worker_row")
+	cam.fov = 45.0
+	for group: String in WORKER_GROUPS:
+		var span: Array = WORKER_GROUPS[group]
+		var a := workers[span[0]].global_position
+		var b := workers[span[1]].global_position
+		var mid := a.lerp(b, 0.5)
+		for w in workers.size():
+			workers[w].visible = w >= span[0] and w <= span[1]
+		# From the side nearer the middle of the room.
+		var side := -1.0 if mid.x > 0.0 else 1.0
+		# Standing with its hands up it is taller: further back, higher.
+		var tall := 1.6 if group == "hands" else 1.0
+		cam.look_at_from_position(mid + Vector3(0.9 * side, 1.25 * tall, 2.6 * tall), mid + Vector3(0, 0.7 * tall, 0))
+		await _snap("worker_%s_front" % group)
+		cam.look_at_from_position(mid + Vector3(2.6 * side * tall, 1.0 * tall, 0.9), mid + Vector3(0, 0.6 * tall, -0.1))
+		await _snap("worker_%s_side" % group)
+	# The Bound kneeling one from behind, the wall moved off: its hands.
+	var kneeler := workers[8]
+	for w in workers.size():
+		workers[w].visible = w == 8
+	kneeler.face_direction(Vector3.FORWARD)
+	await create_timer(0.2).timeout
+	cam.look_at_from_position(kneeler.global_position + Vector3(0.7, 1.3, 2.0), kneeler.global_position + Vector3(0, 0.6, 0))
+	await _snap("worker_bound_back")
+	world.free()
+
+
+## Each of [param guards] down behind its crate in [param stance], facing
+## the camera, the pose reached ([param settle]: waited out).
+func _pose_down(guards: Array[Crew3D], stance: CrewPose.Stance, settle := true) -> void:
+	for guard in guards:
+		guard.cover._stand()
+		guard.cover._stances = [stance] as Array[CrewPose.Stance]
+		guard.cover._crouch()
+		guard.cover.mode = CrewCover.Mode.DOWN
+		guard.state = Crew3D.State.COVER
+		guard.velocity = Vector3.ZERO
+		guard._update_animation()
+	if settle:
+		await create_timer(0.5).timeout
+
+
+## Every Guard in [param guards] faced along [param facing], its gun carried
+## (on patrol, walking at [param walking] m/s when above zero) or aimed
+## there, the hold reached at once.
+func _hold_guards(guards: Array[Crew3D], aimed: bool, facing: Vector3, walking := 0.0) -> void:
+	for guard in guards:
+		guard.face_direction(facing)
+		guard.state = Crew3D.State.FIGHT if aimed else Crew3D.State.PATROL
+		guard.velocity = facing * walking
+		guard._update_animation()
+		guard.gun.aim = 1.0 if aimed else 0.0
+	for i in 3:
+		await process_frame
+	for guard in guards:
+		guard.gun.aim = 1.0 if aimed else 0.0
 
 
 # --- hud and menu ----------------------------------------------------------
@@ -552,7 +889,7 @@ func _hud_raid() -> Node3D:
 
 
 func _hud() -> void:
-	_expect(["hud", "hud_busy"])
+	_expect(["hud", "hud_busy", "hud_bind"])
 	var main := await _hud_raid()
 	await create_timer(0.5).timeout
 	await _snap("hud")
@@ -562,6 +899,15 @@ func _hud() -> void:
 	hud.set_ammo(0)
 	print("shots: hud_busy adds the Alarm, a toast and an empty magazine")
 	await _snap("hud_busy")
+	# Tying up a surrendered Worker (crew-combat ticket 24): the prompt and
+	# its ring 60% full, the bind toast beside the crosshair. The Raid's own
+	# prompt is held off so the values stay.
+	main.set_process(false)
+	hud.show_prompt(main.BIND_PROMPT)
+	hud.set_bind_progress(0.6)
+	hud.toast("+50 XP  bound")
+	print("shots: hud_bind shows '%s' with its ring 60%% full and the bind toast" % main.BIND_PROMPT)
+	await _snap("hud_bind")
 
 
 func _menu() -> void:
@@ -616,7 +962,7 @@ func _loadout_shots(menu: Node) -> void:
 ## and a Drum, then the Pistol: Built Weapon values beside the bare ones.
 ## Nothing is saved; the dialled factor is reverted before the end.
 func _sheet() -> void:
-	_expect(["sheet", "sheet_attachments", "sheet_attachments_end"])
+	_expect(["sheet", "sheet_crew_fight", "sheet_attachments", "sheet_attachments_end"])
 	var rifle: WeaponProfile = load("res://resources/weapons/assault_rifle.tres")
 	var loadout := Loadout.new()
 	loadout.set_first(rifle)
@@ -635,6 +981,8 @@ func _sheet() -> void:
 	var scroll: ScrollContainer = view.find_child("Scroll", true, false)
 	await process_frame
 	var tables := scroll.get_child(0)
+	scroll.scroll_vertical = int(tables.get_child(view.sheet.tables.find(view.sheet.table(SandboxSheet.CREW_FIGHT))).position.y)
+	await _snap("sheet_crew_fight")
 	scroll.scroll_vertical = int(tables.get_child(tables.get_child_count() - 1).position.y)
 	await _snap("sheet_attachments")
 	scroll.scroll_vertical = int(scroll.get_v_scroll_bar().max_value)
