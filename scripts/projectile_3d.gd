@@ -161,12 +161,38 @@ func _head_on_line(from: Vector3, to: Vector3) -> Dictionary:
 
 
 ## A bolt born inside a body, or grazing one with its own width: a
-## Headshot if it was flying into that body's head.
+## Headshot if it was flying into that body's head. Touching several at
+## once (the floor and a leg it skims), it strikes the one it is deepest
+## in, not the first reported: Jolt reports a step's touches in an order
+## that differs from run to run, and a seed would not replay.
 func _on_body_entered(body: Node3D) -> void:
 	if body == shooter or _passes_through(body):
 		return
+	body = _deepest_touch(body)
 	var head := _head_on_line(global_position, global_position + direction * HEAD_DEPTH)
 	_strike(body, head.get("collider") == body)
+
+
+## The body this bolt's sphere is deepest in, of those it may strike;
+## [param touched] when the query finds none of them.
+func _deepest_touch(touched: Node3D) -> Node3D:
+	var params := PhysicsShapeQueryParameters3D.new()
+	params.shape = ($CollisionShape3D as CollisionShape3D).shape
+	params.transform = global_transform
+	params.collision_mask = collision_mask
+	var exclude: Array[RID] = []
+	if shooter is CollisionObject3D:
+		exclude.append((shooter as CollisionObject3D).get_rid())
+	for i in 4:
+		params.exclude = exclude
+		var rest := get_world_3d().direct_space_state.get_rest_info(params)
+		var body := instance_from_id(rest.get("collider_id", 0)) as Node3D
+		if body == null:
+			return touched
+		if not _passes_through(body):
+			return body
+		exclude.append(rest.rid)
+	return touched
 
 
 ## Friendly fire passes through rather than stopping the shot dead.

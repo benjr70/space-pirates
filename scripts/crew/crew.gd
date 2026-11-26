@@ -346,6 +346,11 @@ var _yield_left := 0
 var _yield_from := Vector3.ZERO
 var _yield_clock := 0.0
 var _rng := RandomNumberGenerator.new()
+## Crew readied so far in this run, and this one's place among them: who
+## gives way to whom, which instance ids (they differ run to run) cannot
+## replay.
+static var _readied := 0
+var _ready_order := 0
 var _gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)
 var _anim: AnimationPlayer
 
@@ -357,6 +362,8 @@ func _ready() -> void:
 		target = get_tree().get_first_node_in_group(&"player")
 	# Seeded off the global RNG (randomized at launch) so a test can replay it.
 	_rng.seed = randi()
+	_readied += 1
+	_ready_order = _readied
 	if is_worker():
 		# Workers are unarmed.
 		weapon = null
@@ -1580,10 +1587,10 @@ func make_way_for(walker: Crew3D) -> bool:
 ## Of two walking crew blocking each other, which acts, so they never mirror
 ## each other. Called only on one that can act (go round or step aside):
 ## it does if the other cannot, and of two that both can, the one created
-## first (lower instance id), always the same one of the pair. Stuck
+## first (readied first), always the same one of the pair. Stuck
 ## GIVE_WAY_INSIST tries, it acts whenever it can.
 func _acts_first(other: Crew3D) -> bool:
-	if _stuck_tries >= GIVE_WAY_INSIST or get_instance_id() < other.get_instance_id():
+	if _stuck_tries >= GIVE_WAY_INSIST or _ready_order < other._ready_order:
 		return true
 	return not other._can_get_past(self)
 

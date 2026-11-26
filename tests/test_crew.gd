@@ -106,6 +106,7 @@ func _initialize() -> void:
 	_check_shot()
 	_check_health_and_damage()
 	_check_died_unaware()
+	await _check_replays()
 	_check_sting()
 	await _check_bar_behind_walls()
 	await _check_hearing()
@@ -2760,6 +2761,50 @@ func _check_pirate_has_no_head() -> void:
 	_expect(pirate.health.current == 125, "a crew shot at the Pirate's head left him on %d, want 125" % pirate.health.current)
 	pirate.free()
 	crew.free()
+
+
+## A seed replays (raid-smoke-bugs ticket 11). A bolt touching two bodies
+## in one step strikes the one it is deepest in, whichever Jolt reports
+## first (the order differs run to run): born on the floor inside a
+## Guard's capsule, told of either first, it strikes the Guard. Of two crew
+## blocking each other the one readied first acts, not the lower instance
+## id (ids differ run to run): here it was instantiated second.
+func _check_replays() -> void:
+	var guard := _crew()
+	guard.health.max_health = 1000000
+	guard.health.reset()
+	for i in 2:
+		await physics_frame
+	var floor_map: Node3D = world.get_node("Ship/Floor")
+	for first: Node3D in [floor_map, guard]:
+		var bolt: Projectile3D = load("res://scenes/projectile_3d.tscn").instantiate()
+		bolt.monitoring = false
+		bolt.launch(guard.global_position + Vector3.UP * 0.05, Vector3.FORWARD, player, player.TEAM)
+		var struck: Array = []
+		bolt.hit.connect(func(body: Node3D, _head: bool) -> void: struck.append(body))
+		get_first_node_in_group(&"projectiles").add_child(bolt)
+		bolt.set_physics_process(false)
+		bolt._on_body_entered(first)
+		_expect(struck == [guard], "replay: a bolt on the floor inside a Guard, told of the %s first, struck %s; want the Guard either way"
+				% [first.name, struck.map(func(b: Node3D) -> String: return b.name)])
+		await physics_frame
+	guard.free()
+	var scene: PackedScene = load("res://scenes/crew_3d.tscn")
+	var later: Crew3D = scene.instantiate()
+	var earlier: Crew3D = scene.instantiate()
+	for crew: Crew3D in [earlier, later]:
+		crew.target = player
+		crew.layout = layout
+		crew.position = CREW_AT + Vector3.FORWARD * (1.0 if crew == later else 0.0)
+		world.add_child(crew)
+		crew.set_physics_process(false)
+	_expect(later._can_get_past(earlier) and earlier._can_get_past(later),
+			"replay: two crew 1 m apart in an empty Room cannot get past each other")
+	_expect(earlier._acts_first(later) and not later._acts_first(earlier),
+			"replay: of two crew blocking each other, the one readied first (instantiated second) acts %s, the other %s; want only the first"
+			% [earlier._acts_first(later), later._acts_first(earlier)])
+	earlier.free()
+	later.free()
 
 
 ## A crew member killed before it spotted the Pirate died unaware; one

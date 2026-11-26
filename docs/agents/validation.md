@@ -115,6 +115,23 @@ the same float positions, and the suites run as fast as the CPU allows. The
 audio mixer still runs in real time, so a suite that plays sounds stops them
 before it quits (`test_pirate.gd::_silence`).
 
+Two things still differ from run to run, so game code must never let them
+decide anything (ticket `.scratch/raid-smoke-bugs/issues/11-same-seed-runs-diverge.md`):
+
+- **Instance ids, and so auto-generated node names.** A one-off sound frees
+  itself when the real-time mixer finishes it, so which frame frees it, and
+  which id the next object gets, depends on machine load. Order crew by
+  when they were readied (`Crew3D._ready_order`), never by
+  `get_instance_id()`.
+- **The order Jolt reports a step's contacts in.** It fills them from
+  worker threads, so two `body_entered` signals of one step can come either
+  way round. A handler that keeps the first one reported does not replay;
+  `Projectile3D` instead strikes the body its sphere is deepest in.
+
+With both handled, `crew` and `raid_smoke` replay a seed to the same output
+apart from wall times (and node names in a trace). The same is checked in
+`crew` by `_check_replays`.
+
 ## Timings
 
 Timings, measured 2026-11-22 on the local machine (NVIDIA RTX 5080 box) over
