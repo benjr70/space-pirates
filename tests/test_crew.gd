@@ -1107,7 +1107,7 @@ func _whole_bursts(shots: Array) -> Array:
 ## Guard not aiming true is aimed 0.4 to 0.8 m from his body centre. With
 ## [param count] other than 2, the Sandbox's how-many-aim-true is set to it
 ## (as the Sandbox sheet would, live) and at most that many may aim true.
-func _check_true_aim(count := 2) -> void:
+func _check_true_aim(count := 3) -> void:
 	# Held where the check puts him, whatever an earlier check left running.
 	var pirate_physics := player.is_physics_processing()
 	player.set_physics_process(false)
@@ -1163,7 +1163,7 @@ func _check_true_aim(count := 2) -> void:
 	get_first_node_in_group(&"projectiles").child_entered_tree.disconnect(watch)
 	for guard in guards:
 		guard.set_physics_process(false)
-	numbers.true_aim_count = 2
+	numbers.true_aim_count = 3
 	_expect(most <= count, "true aim: %d Guards aimed true in one frame with %d to aim true, want at most %d" % [most, count, count])
 	_expect(with_line > 600 and bare == 0, "true aim: %d of %d frames with a clear muzzle line had no Guard aiming true, want none"
 			% [bare, with_line])
@@ -1336,7 +1336,7 @@ func _check_lead() -> void:
 ## Health and leaves a full-health Pirate alive.
 func _check_pellet_cap() -> void:
 	var numbers: Sandbox = ResourceLoader.load(Sandbox.PATH, "", ResourceLoader.CACHE_MODE_IGNORE)
-	_expect(numbers.true_aim_count == 2 and is_equal_approx(numbers.true_aim_handover, 0.8)
+	_expect(numbers.true_aim_count == 3 and is_equal_approx(numbers.true_aim_handover, 0.8)
 			and is_equal_approx(numbers.walk_in_distance, 1.0) and numbers.shotgun_pellet_cap == 9,
 			"the Sandbox's crew fight numbers are %d, %s s, %s m and %d pellets, want 2, 0.8 s, 1 m and 9"
 			% [numbers.true_aim_count, numbers.true_aim_handover, numbers.walk_in_distance, numbers.shotgun_pellet_cap])
@@ -1386,11 +1386,11 @@ func _check_pellet_cap() -> void:
 ## Standing still and exposed at full health against one Guard at its range
 ## (Pistol 6 m, Assault Rifle 7.5 m), the Guard behind a crate at its spot,
 ## over 20 seeded runs (seeds 1 to 20, fixed): the median time to die is
-## within 40% of 10 s and 6 s. The twenty run side by side, each in its own
+## within 40% of 5 s and 3.5 s (the first balance pass, 2026-11-26). The twenty run side by side, each in its own
 ## Room with its own Pirate, so each fight is its own. Measured, not tuned
 ## to: see the ticket.
 func _check_time_to_die() -> void:
-	var cases := [[GunRoll.PISTOL, 6.0, 10.0], [GunRoll.ASSAULT_RIFLE, 7.5, 6.0]]
+	var cases := [[GunRoll.PISTOL, 6.0, 5.0], [GunRoll.ASSAULT_RIFLE, 7.5, 3.5]]
 	for c in cases.size():
 		var gun := GunRoll.weapon(cases[c][0])
 		var range_m: float = cases[c][1]
@@ -1459,9 +1459,9 @@ func _check_time_to_die() -> void:
 			times.append(dead.get(pirate, INF))
 		times.sort()
 		var median := (times[DIE_RUNS / 2 - 1] + times[DIE_RUNS / 2]) / 2.0
-		print("  time to die, %s at %.1f m: median %.2f s (want %.0f s within 40%%), runs %s" % [Gunnery.NAMES[cases[c][0]], range_m, median, want,
+		print("  time to die, %s at %.1f m: median %.2f s (want %.1f s within 40%%), runs %s" % [Gunnery.NAMES[cases[c][0]], range_m, median, want,
 				times.map(func(x: float) -> String: return "%.1f" % x)])
-		_expect(absf(median - want) <= want * 0.4, "time to die: against a %s Guard at %.1f m the median of %d runs is %.2f s, want %.0f s within 40%%"
+		_expect(absf(median - want) <= want * 0.4, "time to die: against a %s Guard at %.1f m the median of %d runs is %.2f s, want %.1f s within 40%%"
 				% [Gunnery.NAMES[cases[c][0]], range_m, DIE_RUNS, median, want])
 		for guard in guards:
 			guard.free()
@@ -1479,10 +1479,10 @@ func _check_time_to_die() -> void:
 func _check_gunnery() -> void:
 	# {file: [aim error, range near, range far, shots low, shots high, time down low, high]}
 	var want := {
-		"pistol": [7.5, 4.0, 8.0, 2, 3, 1.0, 2.0],
-		"assault_rifle": [6.0, 5.0, 10.0, 3, 5, 1.5, 2.5],
-		"shotgun": [8.0, 2.0, 5.0, 1, 1, 1.2, 1.5],
-		"marksman_rifle": [0.0, 8.0, 14.0, 1, 1, 2.5, 4.0],
+		"pistol": [5.0, 4.0, 8.0, 2, 3, 0.6, 1.2],
+		"assault_rifle": [4.0, 5.0, 10.0, 3, 5, 0.9, 1.5],
+		"shotgun": [6.0, 2.0, 5.0, 1, 1, 0.7, 0.9],
+		"marksman_rifle": [0.0, 8.0, 14.0, 1, 1, 1.5, 2.4],
 	}
 	_expect(Gunnery.PATHS.size() == 4, "gunnery: %d Gunnery files listed, want 4" % Gunnery.PATHS.size())
 	_expect(not ResourceLoader.exists("res://resources/gunnery/guard.tres") and not ResourceLoader.exists("res://resources/gunnery/worker.tres"),
@@ -1501,14 +1501,14 @@ func _check_gunnery() -> void:
 				"gunnery: %s shots per burst %d to %d, want %d to %d" % [key, gunnery.shots_per_burst_low, gunnery.shots_per_burst_high, w[3], w[4]])
 		_expect(is_equal_approx(gunnery.time_down_low, w[5]) and is_equal_approx(gunnery.time_down_high, w[6]),
 				"gunnery: %s time down %s to %s s, want %s to %s" % [key, gunnery.time_down_low, gunnery.time_down_high, w[5], w[6]])
-		_expect(is_equal_approx(gunnery.opening_spread, 3.0) and is_equal_approx(gunnery.closing_time, 2.0)
+		_expect(is_equal_approx(gunnery.opening_spread, 3.0) and is_equal_approx(gunnery.closing_time, 1.2)
 				and is_equal_approx(gunnery.reload_factor, 1.5), "gunnery: %s opening spread, closing time or reload factor is off" % key)
 
 	var pistol: WeaponProfile = load("res://resources/weapons/pistol.tres")
 	var guard := _crew()
 	_expect(guard.weapon == pistol and guard.gunnery == load(Gunnery.PATHS[0]),
 			"gunnery: a Guard given no gun does not hold the Pistol and its Gunnery")
-	_expect(is_equal_approx(guard.base_cone_degrees(), 8.5), "gunnery: a Pistol Guard's cone is %.1f degrees, want 1 + 7.5" % guard.base_cone_degrees())
+	_expect(is_equal_approx(guard.base_cone_degrees(), 6.0), "gunnery: a Pistol Guard's cone is %.1f degrees, want 1 + 5" % guard.base_cone_degrees())
 	_expect(guard.burst_length >= 2 and guard.burst_length <= 3, "gunnery: a Pistol Guard fires a %d-round burst, want 2 to 3" % guard.burst_length)
 
 	_place(5.0)
@@ -1538,7 +1538,7 @@ func _check_gunnery() -> void:
 			% [downs.min(), downs.max(), pistol_gunnery.time_down_low, pistol_gunnery.time_down_high])
 	pistol_gunnery.aim_error_degrees = 2.0
 	_expect(is_equal_approx(guard.base_cone_degrees(), 3.0), "gunnery: dialling the Pistol Gunnery's aim error did not reach its cone")
-	pistol_gunnery.aim_error_degrees = 7.5
+	pistol_gunnery.aim_error_degrees = 5.0
 	guard.free()
 
 	# Each gun fired by a Guard, as the ship build arms it.
@@ -3251,7 +3251,8 @@ func _check_cover_ring() -> void:
 					r.peeks += 1
 				r.mode = mode
 				r.since = t
-			if mode == CrewCover.Mode.DOWN:
+			# (The capsule follows the body down, CrewPose.DROP_TIME after the drop.)
+			if mode == CrewCover.Mode.DOWN and t - r.since > CrewPose.DROP_TIME + 2.0 * STEP:
 				var shape: CollisionShape3D = guard.get_node("CollisionShape3D")
 				if shape.position.y + (shape.shape as CapsuleShape3D).height / 2.0 > 1.1:
 					r.tall += 1
@@ -3794,8 +3795,12 @@ func _check_down_poses() -> void:
 		cover._set_mode(CrewCover.Mode.SHOOT)
 		cover._duck()
 		stances.append(cover.stance)
+		# Still standing tall as the body starts down, at its stance's top
+		# once the body is down.
+		var tall: float = shape.position.y + (shape.shape as CapsuleShape3D).height / 2.0
+		cover.settle_capsule(CrewPose.DROP_TIME)
 		var top: float = shape.position.y + (shape.shape as CapsuleShape3D).height / 2.0
-		if cover.mode != CrewCover.Mode.DOWN or not is_equal_approx(top, CrewPose.BODY_TOP.get(cover.stance, -1.0)):
+		if tall < 1.69 or cover.mode != CrewCover.Mode.DOWN or not is_equal_approx(top, CrewPose.BODY_TOP.get(cover.stance, -1.0)):
 			tops_wrong.append("drop %d %s top %.2f" % [i, CrewPose.Stance.keys()[cover.stance], top])
 	var squats := stances.count(CrewPose.Stance.SQUAT)
 	var share := float(squats) / POSE_DROPS
@@ -3814,8 +3819,9 @@ func _check_down_poses() -> void:
 		cover._stand()
 		cover._stances = [stance] as Array[CrewPose.Stance]
 		cover._get_down(30.0)
-		for i in 30:
-			await physics_frame  # the pose blends in (0.15 s)
+		for i in 40:
+			await physics_frame  # the pose blends in and the capsule follows (0.4 s)
+			cover.settle_capsule(STEP)
 		var zone := guard.head_zone
 		var radius := (zone.get_child(0).shape as SphereShape3D).radius * zone.global_transform.basis.get_scale().y
 		var head := zone.global_position
@@ -3835,6 +3841,12 @@ func _check_down_poses() -> void:
 			_expect(head_top > KNEE_HEAD_TOP, "down poses: on one knee, the top of the head is %.3f m, want above %.2f m" % [head_top, KNEE_HEAD_TOP])
 			_expect(on_guard.size() == 1 and on_guard[0][1], "down poses: on one knee behind a 1.1 m crate, the level bolt at %.1f m struck %s, want its head zone (a Headshot)"
 					% [LEVEL_BOLT, level])
+			# Skimming the crate: a bolt whose line clears the crate's top by
+			# less than its own width still reaches the head behind it.
+			var skim := await _bolt_hits(pirate, Vector3(head.x, 1.14, from.z), Vector3(head.x, 1.14, head.z + 2.0))
+			_expect(skim.size() == 1 and skim[0][0] == guard and skim[0][1],
+					"down poses: on one knee behind a 1.1 m crate, a bolt skimming the crate at 1.14 m struck %s, want its head zone (a Headshot)"
+					% [skim.map(func(h: Array) -> String: return "%s%s" % [(h[0] as Node).name, " (head)" if h[1] else ""])])
 		# Never its body over the crate: level bolts across its width, and
 		# bolts down from his eyes at its body.
 		var body_hits: Array[String] = []
@@ -4547,6 +4559,8 @@ func _check_marksman_waits_for_place() -> void:
 	# their places for good (a handover time they never reach).
 	var sticky: Sandbox = (load(Sandbox.PATH) as Sandbox).duplicate()
 	sticky.true_aim_handover = 1000.0
+	sticky.true_aim_count = 2
+	guard.sandbox = sticky
 	var others: Array[Crew3D] = []
 	for tile in [Vector2i(2302, 6), Vector2i(2306, 6)]:
 		var other := _rig_guard(GunRoll.weapon(GunRoll.PISTOL), perch_layout, tile, him)

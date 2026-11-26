@@ -21,7 +21,7 @@ being built toward is `.scratch/crew-combat/spec.md`, after spec #52
 | `crew_traces.gd` (`CrewTraces`) | What the Pirate leaves behind that crew find: bodies, the open boarding Hatch, emptied Containers, Doors left open. |
 | `crew_combat.gd` (`CrewCombat`) | Guard teamwork: sharing the Pirate's position, staggered bursts, flank routes and the Door a flank goes in by. |
 | `crew_team.gd` (`CrewTeam`) | Guards together against one Pirate: which Guard flanks (by gun), and firing on the prop he broke sight behind (suppression). One per Pirate, settled once a physics frame like `CrewFire`. |
-| `crew_fire.gd` (`CrewFire`) | Fair fire: who aims true (at most two at once, handed on by a timer), and where every shot is aimed before its spread: at him, led and walking in, or at a miss point beside him. One per Pirate, shared by every Guard fighting him. |
+| `crew_fire.gd` (`CrewFire`) | Fair fire: who aims true (at most three at once (the Sandbox's count), handed on by a timer), and where every shot is aimed before its spread: at him, led and walking in, or at a miss point beside him. One per Pirate, shared by every Guard fighting him. |
 | `crew_cover.gd` (`CrewCover`) | One Guard's fight from cover: finding and claiming a spot, the fair walk there, holding it, peeking in its gun's rhythm, leaving it, and fighting with no cover in reach; its gun's habit: the Shotgun's ambush and rack, the Marksman Rifle's perch, sight line and hip fire; and its part in the team: covering fire, one mover at a time, the flank's last leg, firing on his cover, the last Guard. Every Guard holds one (`Crew3D.cover`); it drives the Guard's FIGHT and COVER states. |
 | `crew_magazine.gd` (`CrewMagazine`) | A Guard's magazine: rounds counted against its weapon's magazine size, and its reloads (empty, topping up, the Shotgun's shell by shell and its break-off), with their times and sounds. Every Guard holds one (`Crew3D.magazine`); `CrewCover` decides where and when a reload starts. |
 | `crew_habit.gd` (`CrewHabit`) | A habit per gun: which of the four guns a Guard carries (`gun_of`, by its weapon's file) and the habit numbers (the Shotgun's 4 m and 8 m, its ambush reach and rack timing; the Marksman Rifle's perch radius, line length and weight, 5 m, sight lock and hip fire). |
@@ -43,7 +43,7 @@ living Guard on a generated ship showing its Weapon Profile's model and no
 Worker one; aiming each gun with both wrists within 4 cm of their places on
 it; every bolt from its gun's Muzzle marker, the clear-shot test's point; a
 dead Guard's gun hidden), fair fire (the exposure ramp, the
-walk-in, five Guards with at most two aiming true, miss points in the open
+walk-in, five Guards with at most three aiming true, miss points in the open
 and at cover, lead, the Shotgun's pellet cap, and the median time to die
 against a Pistol and an Assault Rifle), magazines and reloads (each gun's
 shots before its first reload, a reload sound at the Guard as every reload
@@ -221,11 +221,11 @@ Viewmodel; the Gunnery's aim error stands in for them. How a Guard handles its g
 
 | | Pistol | Assault Rifle | Shotgun | Marksman Rifle |
 |---|---|---|---|---|
-| aim error, degrees, added to the gun's base cone | 7.5 | 6 | 8 | 0 |
-| opening spread, closing time | 3x, 2 s | 3x, 2 s | 3x, 2 s | 3x, 2 s |
+| aim error, degrees, added to the gun's base cone | 5 | 4 | 6 | 0 |
+| opening spread, closing time | 3x, 1.2 s | 3x, 1.2 s | 3x, 1.2 s | 3x, 1.2 s |
 | shots per burst | 2 to 3 | 3 to 5 | 1 | 1 |
 | bursts per peek, gap between | 1 | 2, 0.4 to 0.8 s | 1 | 1 |
-| time down, s | 1.0 to 2.0 | 1.5 to 2.5 | 1.2 to 1.5 | 2.5 to 4.0 |
+| time down, s | 0.6 to 1.2 | 0.9 to 1.5 | 0.7 to 0.9 | 1.5 to 2.4 |
 | settle, s | 0.35 | 0.35 | 0.35 | 0.9 |
 | lead | 0.3 | 0.5 | 0 | 1.0 |
 | range band, m | 4 to 8 | 5 to 10 | 2 to 5 | 8 to 14 |
@@ -358,7 +358,7 @@ they changed it is for a rule below.
     `CrewCover._crouch`), the top of its back and shoulders in that pose:
     under a crate's top either way, so the body cannot be hit over low
     cover; above it, only the head zone. It changes at once as the Guard
-    goes down or stands; the drawn pose takes 0.15 s down and 0.2 s up
+    goes down or stands; the drawn pose takes 0.4 s down and 0.3 s up, and the capsule comes down when the body has
     (the gun's own blend, so a popped up Guard is up as its gun is).
   - **The head zone** rides the head bone, which the pose moves even on a
     body the ship's reveal hides (only the legs and feet are left out
@@ -374,7 +374,7 @@ they changed it is for a rule below.
   steps when it is 8 cm or 25 degrees from there. It walks out and back at
   `CrewPose.STEP_SPEED` (0.45) of its speed so the steps keep up, and plays
   its standing clip, not a run. Down again, the feet blend into the stance
-  over 0.15 s.
+  over 0.4 s.
 - **Reloading**: the head turns down and to the gun; the arms are the
   gun's (above).
 - **Runs**: running to low cover (`CrewCover.low`, walking to its spot) the
@@ -771,7 +771,7 @@ its rules and numbers kept.
 ## Fair fire
 
 Where a Guard's shot goes (`CrewFire`, `Crew3D._fire`). Every Guard fires;
-at most two aim true; the rest aim to miss, close. From
+at most three aim true (two until the first balance pass); the rest aim to miss, close. From
 `.scratch/crew-combat/issues/06-gunnery-that-feels-fair.md` and the research
 note `docs/research/fair-fire-and-cover.md` (branch `research/fair-fire-and-cover`).
 

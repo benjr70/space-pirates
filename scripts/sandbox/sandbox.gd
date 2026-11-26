@@ -22,7 +22,7 @@ const PATH := "res://resources/sandbox.tres"
 @export_group("Crew fight")
 ## How many Guards aim true at once ([CrewFire]); at least one always does
 ## while any has a shot.
-@export var true_aim_count := 2
+@export var true_aim_count := 3
 ## Seconds a Guard holds true aim before it passes on: doubled while he is
 ## crouched or in cover, halved with him within 3 m.
 @export var true_aim_handover := 0.8

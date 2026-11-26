@@ -105,7 +105,7 @@ extends SceneTree
 ## 4a. firefights (crew-combat ticket 27, _open_with_cover, _check_invariants,
 ##    _on_shot): no Guard fights in the open (not reloading) for more than
 ##    OPEN_LIMIT (3 s) while a cover spot it would take (CrewCover.find) is
-##    in its reach; never more than TRUE_AIM_MOST (2) Guards aim true in one
+##    in its reach; never more than TRUE_AIM_MOST (3, the Sandbox's count) Guards aim true in one
 ##    frame (CrewFire.holders, asked at the start of the frame); no Worker
 ##    fires; no Bound Worker moves BOUND_MOVE from where it was Bound;
 ## 5. the HUD offers a Door's prompt only while the Pirate is in a Door's
@@ -253,7 +253,7 @@ const COVER_SHOT_RANGE := 2.0
 const OPEN_LIMIT := 3.0
 const OPEN_LOOK := 0.5
 ## Never more Guards aiming true in one frame than this (CrewFire.holders).
-const TRUE_AIM_MOST := 2
+const TRUE_AIM_MOST := 3
 ## A Bound Worker moving further than this from where it was first seen
 ## Bound fails the Raid: it never moves again.
 const BOUND_MOVE := 0.05

@@ -152,8 +152,10 @@ const BODY_TOP := {Stance.SQUAT: 0.82, Stance.KNEE: 1.0}
 ## Seconds to go down, to come up (the gun's own blend to the aimed hold,
 ## [constant CrewGun.BLEND], so it is up when the gun is), and to duck a
 ## near miss and come back from it.
-const DROP_TIME := 0.15
-const RISE_TIME := 0.2
+## (Slowed in the first balance pass: at 0.15 s a Guard was down before a
+## bolt fired at it arrived.)
+const DROP_TIME := 0.4
+const RISE_TIME := 0.3
 const FLINCH_IN := 0.12
 const FLINCH := 0.5
 ## Reloading, the head turns to the gun this far (down, left), degrees.

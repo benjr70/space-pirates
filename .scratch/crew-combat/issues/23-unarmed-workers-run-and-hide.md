@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: resolved
 Blocked by: 15
 
 # Unarmed Workers run and hide
@@ -84,3 +84,5 @@ Noticed, not changed: a Worker in REPORT is not "in combat" at Awareness 0.15, s
 Suite cost: `crew` went from about 64-74 s to 85-115 s (451 to 453 checks): the 60 s fight on a full medium ship and the 20-ship sweep.
 
 Validation, 2026-11-26: full gate twice, both PASS (rolled seed, then seed 917293733: crew 453 checks 79 s / 91 s, smoke 1104 checks, totals 387 s and 415 s); `tests/run_all.sh only=raid_smoke seeds=20` PASS (seed 34374158, 4389 checks, Quiet Ghost 60 of 60, Loud with a kill 60 of 60, Loot 120 of 120); `tests/run_all.sh only=crew` three more times PASS (seeds 56314714, 16615419, 998005864; 453 checks each). `tests/shots.sh crew` PASS; `front.png` and `side.png` read: the Worker (orange, unarmed) and the Guard stand on the floor, nothing missing or clipping; the hiding stand-in is today's Idle stance, so nothing new to see.
+
+- Closed 2026-11-26 at the user's close-out of the spec, with the "80% of hiding tiles out of every doorway's sight" line still unticked: measured 41%, because most Worker Post Rooms have no such tile; where a Room has one, Workers take it 87% of the time. The user was told and did not ask for a change. A generator change to give Rooms such tiles would be new work.

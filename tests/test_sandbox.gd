@@ -15,7 +15,7 @@ const GUNNERY_KEYS: Array[StringName] = [&"aim_error_degrees", &"opening_spread"
 		&"gap_between_bursts_high", &"time_down_low", &"time_down_high", &"settle", &"range_near", &"range_far",
 		&"hold_before_shifting", &"reload_factor"]
 ## The Crew fight table's rows, in order, at their starting numbers.
-const CREW_FIGHT := {&"true_aim_count": 2, &"true_aim_handover": 0.8, &"walk_in_distance": 1.0, &"shotgun_pellet_cap": 9,
+const CREW_FIGHT := {&"true_aim_count": 3, &"true_aim_handover": 0.8, &"walk_in_distance": 1.0, &"shotgun_pellet_cap": 9,
 		&"suppression_time": 4.0, &"too_close": 3.0, &"flank_reaction": 0.4, &"open_floor": 2.5}
 
 var failures: Array[String] = []
@@ -59,12 +59,12 @@ func _check_doc_fresh() -> void:
 			"| = Shots to kill crew by Headshot | 3 | 4 | 1 | 1 |", "| = Pellets to kill crew | - | - | 8 | - |",
 			"| = Reach (m) | 40.0 | 50.0 | 15.0 | 80.0 |", "| Pirate Health | 150 |", "| Crew Health | 100 |",
 			"| Melee Damage | 75 |", "kills outright", "## Gunnery", "| | Pistol | Assault Rifle | Shotgun | Marksman Rifle |\n|---|---|---|---|---|\n| **Aim** |",
-			"| Aim Error Degrees | 7.5 | 6.0 | 8.0 | 0.0 |", "| Shots Per Burst Low | 2 | 3 | 1 | 1 |",
-			"| Shots Per Burst High | 3 | 5 | 1 | 1 |", "| Time Down Low | 1.0 | 1.5 | 1.2 | 2.5 |",
+			"| Aim Error Degrees | 5.0 | 4.0 | 6.0 | 0.0 |", "| Shots Per Burst Low | 2 | 3 | 1 | 1 |",
+			"| Shots Per Burst High | 3 | 5 | 1 | 1 |", "| Time Down Low | 0.6 | 0.9 | 0.7 | 1.5 |",
 			"| Range Near | 4.0 | 5.0 | 2.0 | 8.0 |", "| Range Far | 8.0 | 10.0 | 5.0 | 14.0 |",
 			"| Reload Factor | 1.5 | 1.5 | 1.5 | 1.5 |", "A Guard fires the gun it rolled",
 			"| Aim Time | 0.15 | 0.22 | 0.22 | 0.32 |", "| Swap Time | 0.3 | 0.4 | 0.45 | 0.5 |",
-			"## Crew fight\n\n| | Value |\n|---|---|\n| **Crew fight** | |\n| True Aim Count | 2 |\n| True Aim Handover | 0.8 |\n"
+			"## Crew fight\n\n| | Value |\n|---|---|\n| **Crew fight** | |\n| True Aim Count | 3 |\n| True Aim Handover | 0.8 |\n"
 			+ "| Walk In Distance | 1.0 |\n| Shotgun Pellet Cap | 9 |\n| Suppression Time | 4.0 |\n| Too Close | 3.0 |\n"
 			+ "| Flank Reaction | 0.4 |\n| Open Floor | 2.5 |\n",
 			"## Surrender and Bound\n\n| | Value |\n|---|---|\n| **Surrender and Bound** | |\n| Surrender Reach | 4.0 |"]:
@@ -450,7 +450,7 @@ func _check_in_raid() -> void:
 		if not body.is_worker() and body.weapon == pistol:
 			_expect(body.gunnery == guard_gunnery and is_equal_approx(body.base_cone_degrees(), 4.0),
 					"a Pistol Guard's cone is %.1f after aim error 3 on a 1 degree Pistol" % body.base_cone_degrees())
-	_expect(view.disk_shown(SandboxSheet.GUNNERY, &"aim_error_degrees", 0) == "7.5", "the Gunnery cell does not show the disk value 7.5")
+	_expect(view.disk_shown(SandboxSheet.GUNNERY, &"aim_error_degrees", 0) == "5.0", "the Gunnery cell does not show the disk value 5.0")
 	_key(KEY_F1)
 	_check_rifle_aim_error(view, crew, pistol)
 	# Pirate Health applies live too.
@@ -458,7 +458,7 @@ func _check_in_raid() -> void:
 	(view.cell(SandboxSheet.HEALTH, &"pirate_health", 0) as SpinBox).value = 175
 	_expect(player.health.max_health == 175 and player.health.current == 175, "a Pirate Health edit did not reach the Pirate")
 	view.revert_button().pressed.emit()
-	_expect(is_equal_approx(guard_gunnery.aim_error_degrees, 7.5), "Revert left the Pistol Gunnery's aim error on %s" % guard_gunnery.aim_error_degrees)
+	_expect(is_equal_approx(guard_gunnery.aim_error_degrees, 5.0), "Revert left the Pistol Gunnery's aim error on %s" % guard_gunnery.aim_error_degrees)
 	_expect(pistol.damage == 25 and sandbox.pirate_health == 150 and player.health.max_health == 150,
 			"Revert left damage %d, Pirate Health %d" % [pistol.damage, sandbox.pirate_health])
 	_expect((view.cell(SandboxSheet.WEAPONS, &"damage", 0) as SpinBox).value == 25.0

@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: resolved
 Blocked by: 21, 24
 
 # Firefights in the raid smoke suite
@@ -57,3 +57,5 @@ Built 2026-11-26 (build order 13). Not resolved: the new "no crew member stuck" 
   - `tests/run_all.sh only=raid_smoke seed=166163022 seeds=20`: PASS, 5087 checks, 180 Raids, none failed, 1279 s (run by the fix builder on the final code). The same seed had failed 4 checks before the second fix round. First line ticked.
   - `tests/run_all.sh`: PASS, seed 21166296, every suite (static 182, generator 358259, layouts 252, ship_3d 3733, pirate 2402, crew 555, sandbox 537, attachments 1674, raid_smoke 1285), 493 s.
   - Timing half of the last line is NOT met: the smoke suite took 307 s in that gate (327 s in the gate before it) against 195 s before this ticket on seed 1111, about 57% longer, not 20%. The line stays unticked and the ticket stays `ready-for-agent` until the user rules: accept the longer run, or trim the suite.
+
+- Closed 2026-11-26 at the user's close-out of the spec, with the last line still unticked: the gate passed (above), but the smoke suite runs about 57% longer than before the ticket, not within 20%. The user was told and did not ask for it trimmed.

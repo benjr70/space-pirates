@@ -97,9 +97,9 @@ Melee from behind (inside the 120.0 degree cone behind the target's facing) kill
 | | Pistol | Assault Rifle | Shotgun | Marksman Rifle |
 |---|---|---|---|---|
 | **Aim** | | | | |
-| Aim Error Degrees | 7.5 | 6.0 | 8.0 | 0.0 |
+| Aim Error Degrees | 5.0 | 4.0 | 6.0 | 0.0 |
 | Opening Spread | 3.0 | 3.0 | 3.0 | 3.0 |
-| Closing Time | 2.0 | 2.0 | 2.0 | 2.0 |
+| Closing Time | 1.2 | 1.2 | 1.2 | 1.2 |
 | Lead | 0.3 | 0.5 | 0.0 | 1.0 |
 | **Bursts** | | | | |
 | Shots Per Burst Low | 2 | 3 | 1 | 1 |
@@ -107,8 +107,8 @@ Melee from behind (inside the 120.0 degree cone behind the target's facing) kill
 | Bursts Per Peek | 1 | 2 | 1 | 1 |
 | Gap Between Bursts Low | 0.0 | 0.4 | 0.0 | 0.0 |
 | Gap Between Bursts High | 0.0 | 0.8 | 0.0 | 0.0 |
-| Time Down Low | 1.0 | 1.5 | 1.2 | 2.5 |
-| Time Down High | 2.0 | 2.5 | 1.5 | 4.0 |
+| Time Down Low | 0.6 | 0.9 | 0.7 | 1.5 |
+| Time Down High | 1.2 | 1.5 | 0.9 | 2.4 |
 | Settle | 0.35 | 0.35 | 0.35 | 0.9 |
 | **Range** | | | | |
 | Range Near | 4.0 | 5.0 | 2.0 | 8.0 |
@@ -124,7 +124,7 @@ A Guard fires the gun it rolled at ship build: that weapon's damage, projectile,
 | | Value |
 |---|---|
 | **Crew fight** | |
-| True Aim Count | 2 |
+| True Aim Count | 3 |
 | True Aim Handover | 0.8 |
 | Walk In Distance | 1.0 |
 | Shotgun Pellet Cap | 9 |

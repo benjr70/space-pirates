@@ -210,6 +210,12 @@ const RELOAD_HEIGHT := 1.0
 ## How loud their shot rings at the muzzle. What it sounds like is the
 ## weapon's own shot sounds, and distance does the rest.
 @export var shot_volume_db := -3.0
+## A Shotgun's shot is far louder on the sample than the other guns', so a
+## crew Shotgun's shot is turned down by this much more.
+@export var shotgun_shot_trim_db := -9.0
+## How loud a gun's action rings (a pump, a bolt, the Shotgun's rack before
+## its shot): quieter than a shot, and still plain to hear across a Room.
+@export var action_volume_db := -9.0
 
 @export_group("Sandbox")
 ## Health at spawn, shared with the Pirate and the Sandbox sheet.
@@ -2204,7 +2210,8 @@ func _fire() -> Projectile3D:
 		_shot_parent().add_child(shot)
 		last_pellets.append(shot)
 	if not weapon.shot_sounds.is_empty():
-		SoundAt.play(_shot_parent(), origin, weapon.shot_sounds.pick_random(), shot_volume_db, 0.06, "Shot")
+		var volume := shot_volume_db + (shotgun_shot_trim_db if CrewHabit.racks(weapon) else 0.0)
+		SoundAt.play(_shot_parent(), origin, weapon.shot_sounds.pick_random(), volume, 0.06, "Shot")
 	if weapon.action_sound != null and not CrewHabit.racks(weapon):
 		# (A Shotgun racks before its shot instead: [method rack].)
 		_play_action_later(weapon.action_sound, weapon.action_sound_delay)
@@ -2314,7 +2321,7 @@ func _play_action_later(sound: AudioStream, delay: float) -> void:
 
 func _play_action(sound: AudioStream) -> void:
 	if is_inside_tree():
-		SoundAt.play(_shot_parent(), global_position + Vector3.UP * MUZZLE_HEIGHT, sound, shot_volume_db, 0.06, "Action")
+		SoundAt.play(_shot_parent(), global_position + Vector3.UP * MUZZLE_HEIGHT, sound, action_volume_db, 0.06, "Action")
 
 
 func _shot_parent() -> Node:

@@ -4,17 +4,17 @@
 
 [resource]
 script = ExtResource("1")
-aim_error_degrees = 6.0
+aim_error_degrees = 4.0
 opening_spread = 3.0
-closing_time = 2.0
+closing_time = 1.2
 lead = 0.5
 shots_per_burst_low = 3
 shots_per_burst_high = 5
 bursts_per_peek = 2
 gap_between_bursts_low = 0.4
 gap_between_bursts_high = 0.8
-time_down_low = 1.5
-time_down_high = 2.5
+time_down_low = 0.9
+time_down_high = 1.5
 settle = 0.35
 range_near = 5.0
 range_far = 10.0

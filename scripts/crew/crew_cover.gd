@@ -227,6 +227,8 @@ var _stalled := 0.0
 var _open_reload := false
 var _backing := false
 var _capsule: CapsuleShape3D
+## Seconds until the capsule comes down after a drop; 0, nothing pending.
+var _lower_in := 0.0
 var _shape: CollisionShape3D
 var _stand_height := 1.7
 var _stand_y := 0.85
@@ -320,6 +322,7 @@ func behind_own_cover() -> bool:
 
 
 func tick(delta: float) -> void:
+	settle_capsule(delta)
 	timer -= delta
 	clock += delta
 	think -= delta
@@ -1367,15 +1370,29 @@ func _crouch() -> void:
 	crouched = true
 	stance = next_stance()
 	if _capsule != null:
-		var top: float = CrewPose.BODY_TOP[stance]
-		_capsule.height = maxf(top, _capsule.radius * 2.0)
-		_shape.position.y = _capsule.height / 2.0
+		# The capsule comes down when the body has ([constant
+		# CrewPose.DROP_TIME]), not ahead of it: a bolt already on its way
+		# still finds the body it was fired at.
+		_lower_in = CrewPose.DROP_TIME
+
+
+## Counts down to the capsule coming down after a drop ([method tick]).
+func settle_capsule(delta: float) -> void:
+	if _lower_in <= 0.0:
+		return
+	_lower_in -= delta
+	if _lower_in > 0.0 or not crouched or _capsule == null:
+		return
+	var top: float = CrewPose.BODY_TOP[stance]
+	_capsule.height = maxf(top, _capsule.radius * 2.0)
+	_shape.position.y = _capsule.height / 2.0
 
 
 func _stand() -> void:
 	if not crouched:
 		return
 	crouched = false
+	_lower_in = 0.0
 	stance = CrewPose.Stance.STAND
 	if _capsule != null:
 		_capsule.height = _stand_height
