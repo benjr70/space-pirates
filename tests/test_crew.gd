@@ -124,6 +124,8 @@ func _initialize() -> void:
 	await _check_blocked_by_pirate()
 	await _check_muzzle_blocked()
 	await _check_cover_ring()
+	await _check_down_poses()
+	await _check_runs()
 	await _check_reloads()
 	await _check_top_up()
 	await _check_shotgun_reload()
@@ -2903,7 +2905,7 @@ func _check_cover_ring() -> void:
 				"mode": CrewCover.Mode.NONE, "since": 0.0, "after_peek": false, "downs": [], "peeks": 0,
 				"bursts": [], "burst_frame": guard.burst_frame, "shot_frame": -1, "shots": 0, "off_tile": 0,
 				"tall": 0, "low": true, "capped": {}, "reload_down": false, "reload_downs": [],
-				"first_reload": -1, "first_from_empty": false, "reloads": 0, "sounds_wrong": []}
+				"first_reload": -1, "first_from_empty": false, "reloads": 0, "sounds_wrong": [], "stances": {}}
 	var sounds := []  # [frame, player] of every sound this check sees start
 	for guard in guards:
 		guard.reload_started.connect(func(from_empty: bool) -> void:
@@ -2975,6 +2977,8 @@ func _check_cover_ring() -> void:
 				if mode == CrewCover.Mode.DOWN:
 					r.after_peek = r.mode in [CrewCover.Mode.SHOOT, CrewCover.Mode.BACK]
 					r.reload_down = guard.is_reloading()
+					if r.after_peek:
+						r.stances[guard.cover.stance] = true
 				if mode == CrewCover.Mode.SHOOT:
 					r.peeks += 1
 				r.mode = mode
@@ -3000,6 +3004,10 @@ func _check_cover_ring() -> void:
 		_expect(r.low and r.shots > 0 and r.off_tile == 0, "cover: a %s Guard behind a crate (low cover: %s) fired %d of %d shots off its cover tile"
 				% [r.name, r.low, r.off_tile, r.shots])
 		_expect(r.tall == 0, "cover: a %s Guard down behind a crate had its capsule above the crate's 1.1 m top on %d frames" % [r.name, r.tall])
+		# Its stance is picked again at every drop after a peek (ticket 22).
+		_expect(r.stances.has(CrewPose.Stance.SQUAT) and r.stances.has(CrewPose.Stance.KNEE),
+				"cover: a %s Guard dropping back after %d peeks was only ever down %s, want both a squat and one knee"
+				% [r.name, r.peeks, r.stances.keys().map(func(k: int) -> String: return CrewPose.Stance.keys()[k])])
 		# The last burst may still be running. A burst the magazine cut short
 		# (it ran dry) is only held to the Gunnery's longest.
 		var bursts: Array = []
@@ -3286,6 +3294,7 @@ func _check_full_cover() -> void:
 				or _flat(guard.global_position, ShipBuilder3D.tile_to_world(at)) > 0.5:
 			wrong.append("from %s, cover %s (low %s)" % [at, guard.cover.tile, guard.cover.low])
 	shots.child_entered_tree.connect(watch)
+	var feet := _watch_feet(guard)
 	guard.hear_position(him)
 	guard.set_physics_process(true)
 	var trail: Array = [guard.global_position]
@@ -3315,10 +3324,288 @@ func _check_full_cover() -> void:
 			% [tally.shots, wrong.size(), wrong.slice(0, 2)])
 	_expect(returns.size() >= 4 and returns.all(func(s: float) -> bool: return s <= 2.5),
 			"full cover: back on its cover tile %s s after its last shot, want four peeks each within 2.5 s" % [returns])
+	_unwatch(guard)
+	_check_planted_feet(feet)
 	guard.free()
 	_clear_shots()
 	player.health.max_health = 5
 	player.health.reset()
+
+
+## --- Guards' poses in a fight (crew-combat ticket 22) ---------------------
+
+## Drops behind low cover counted for the squat's share, and its band.
+const POSE_DROPS := 200
+const SQUAT_SHARE_LOW := 0.5
+const SQUAT_SHARE_HIGH := 0.7
+## Squatting, the top of the head is below this; on one knee above this.
+const SQUAT_HEAD_TOP := 1.05
+const KNEE_HEAD_TOP := 1.15
+## Squatting, the top of the body's collision is below this.
+const SQUAT_BODY_TOP := 1.05
+## The bolt fired level over the crate, metres up.
+const LEVEL_BOLT := 1.2
+## Running to low cover the hips are at least this much lower than running
+## to full cover.
+const RUN_LOWER := 0.2
+## A planted foot moves no more than this; a foot within PLANTED_RISE of
+## the lowest it stood in the check is planted, and one LIFTED above that
+## has stepped.
+const PLANTED_SLIDE := 0.15
+const PLANTED_RISE := 0.02
+const LIFTED := 0.04
+## The tile behind the ring's south crate (508, 13), facing the Pirate.
+const BEHIND_CRATE := Vector2i(508, 14)
+## Where the cover search is made for each run (beside the spot), and where
+## the Guard runs from: a far corner of the cover ring, and of the locker
+## Room.
+const RUN_NEAR := {"low": Vector2i(508, 15), "full": Vector2i(524, 8)}
+const RUN_STARTS := {"low": Vector2i(501, 16), "full": Vector2i(528, 9)}
+
+## Skeleton watchers to disconnect, by Guard.
+var _bone_watchers := {}
+
+
+## A bone of [param guard]'s rig in the world, as last posed (read in
+## `skeleton_updated`, after the pose and the gun have run).
+static func _bone_at(guard: Crew3D, bone: String) -> Vector3:
+	var sk := guard.pose.get_skeleton()
+	return (sk.global_transform * sk.get_bone_global_pose(sk.find_bone(bone))).origin
+
+
+func _watch_bones(guard: Crew3D, watch: Callable) -> void:
+	var sk := guard.pose.get_skeleton()
+	sk.skeleton_updated.connect(watch)
+	if not _bone_watchers.has(guard):
+		_bone_watchers[guard] = []
+	_bone_watchers[guard].append(watch)
+
+
+func _unwatch(guard: Crew3D) -> void:
+	if guard.pose == null:
+		return
+	var sk := guard.pose.get_skeleton()
+	for watch: Callable in _bone_watchers.get(guard, []):
+		if sk.skeleton_updated.is_connected(watch):
+			sk.skeleton_updated.disconnect(watch)
+	_bone_watchers.erase(guard)
+
+
+## Records [param guard]'s feet in the world on every frame it steps out from
+## full cover, stands there or steps back ([method CrewCover.stepping]):
+## {"steps": [[[foot L, foot R], ...] per step out], "moved": [how far its
+## body went on each]}.
+func _watch_feet(guard: Crew3D) -> Dictionary:
+	var feet := {"steps": [], "moved": [], "from": Vector3.INF, "on": false}
+	_watch_bones(guard, func() -> void:
+		var stepping := guard.cover.stepping()
+		if stepping and not feet.on:
+			feet.steps.append([])
+			feet.moved.append(0.0)
+			feet.from = guard.global_position
+		feet.on = stepping
+		if stepping:
+			feet.steps[-1].append([_bone_at(guard, "Foot.L"), _bone_at(guard, "Foot.R")])
+			feet.moved[-1] = maxf(feet.moved[-1], _flat(guard.global_position, feet.from)))
+	return feet
+
+
+## Stepping out and back, neither foot bone moves more than PLANTED_SLIDE
+## while it is the planted foot: on the floor (within PLANTED_RISE of the
+## lowest it stood), measured from where it was set down. Each foot must
+## also have lifted off the floor (it stepped), on step outs that moved the
+## body at least 0.7 m.
+func _check_planted_feet(feet: Dictionary) -> void:
+	var steps: Array = feet.steps
+	var worst := 0.0
+	var lifts := [0, 0]
+	var floor_y := [INF, INF]
+	for step: Array in steps:
+		for frame: Array in step:
+			for f in 2:
+				floor_y[f] = minf(floor_y[f], (frame[f] as Vector3).y)
+	for step: Array in steps:
+		for f in 2:
+			var set_at := Vector3.INF
+			var lifted := false
+			for frame: Array in step:
+				var at: Vector3 = frame[f]
+				if at.y <= floor_y[f] + PLANTED_RISE:
+					if set_at == Vector3.INF:
+						set_at = at
+					worst = maxf(worst, at.distance_to(set_at))
+				else:
+					set_at = Vector3.INF
+					if at.y > floor_y[f] + LIFTED:
+						lifted = true
+			if lifted:
+				lifts[f] += 1
+	print("  step out: %d step outs (body moved %s m), furthest a planted foot moved %.3f m, steps with each foot lifted %s"
+			% [steps.size(), feet.moved.map(func(m: float) -> String: return "%.2f" % m), worst, lifts])
+	_expect(steps.size() >= 4 and feet.moved.all(func(m: float) -> bool: return m >= 0.7),
+			"step out: %d step outs from full cover moving the body %s m, want 4 or more of at least 0.7 m" % [steps.size(), feet.moved])
+	_expect(worst <= PLANTED_SLIDE, "step out: a planted foot moved %.3f m stepping out and back, want at most %.2f m" % [worst, PLANTED_SLIDE])
+	_expect(lifts[0] >= steps.size() and lifts[1] >= steps.size(),
+			"step out: of %d step outs the left foot lifted on %d and the right on %d, want both on every one (feet that step)" % [steps.size(), lifts[0], lifts[1]])
+
+
+## Running to low cover the hips are at least RUN_LOWER lower than running to
+## full cover, on average over each run's frames (0.25 s into the run, over
+## 2 m/s). Each spot is the one the cover search picks from beside it (the
+## crate south of the cover ring's centre: low cover; the locker: full
+## cover), and the Guard runs to it from a far corner of the Room.
+func _check_runs() -> void:
+	var hips := {"low": [], "full": []}
+	var ended := {}
+	for kind: String in ["low", "full"]:
+		var rig := ring_layout if kind == "low" else full_layout
+		var him := ShipBuilder3D.tile_to_world(RING_CENTRE if kind == "low" else FULL_PIRATE)
+		var pirate := _own_pirate(him)
+		var guard := _rig_guard(GunRoll.weapon(GunRoll.ASSAULT_RIFLE), rig, RUN_NEAR[kind], him)
+		guard.target = pirate
+		for i in 2:
+			await physics_frame
+		guard.hear_position(him)
+		var found := guard.cover.find(0)
+		guard.global_position = ShipBuilder3D.tile_to_world(RUN_STARTS[kind])
+		guard._enter(Crew3D.State.COVER)
+		if not found.is_empty():
+			guard.cover._claim(found)
+		_watch_bones(guard, func() -> void:
+			var cover := guard.cover
+			if cover.mode == CrewCover.Mode.MOVE and cover.clock >= 0.25 and Vector2(guard.velocity.x, guard.velocity.z).length() >= 2.0:
+				hips[kind].append(_bone_at(guard, "Hips").y))
+		guard.set_physics_process(true)
+		await _seconds_until(8.0, func() -> bool: return guard.cover.mode == CrewCover.Mode.DOWN)
+		ended[kind] = [not found.is_empty() and guard.cover.mode == CrewCover.Mode.DOWN, found.get("low", null)]
+		guard.set_physics_process(false)
+		_unwatch(guard)
+		guard.free()
+		pirate.free()
+		_clear_shots()
+	var mean := func(a: Array) -> float: return a.reduce(func(x: float, y: float) -> float: return x + y, 0.0) / maxf(a.size(), 1.0)
+	var low_mean: float = mean.call(hips.low)
+	var full_mean: float = mean.call(hips.full)
+	print("  runs: hips %.3f m running to low cover (%d frames), %.3f m to full cover (%d frames)" % [low_mean, hips.low.size(), full_mean, hips.full.size()])
+	_expect(ended.low == [true, true] and ended.full == [true, false], "runs: [got down there, its spot low cover] %s, want low cover then full cover" % [ended])
+	_expect(hips.low.size() >= 20 and hips.full.size() >= 20 and full_mean - low_mean >= RUN_LOWER,
+			"runs: hips %.3f m running to low cover and %.3f m to full cover (%d and %d frames), want at least %.2f m lower"
+			% [low_mean, full_mean, hips.low.size(), hips.full.size(), RUN_LOWER])
+
+
+## Down behind the ring's south crate (1.1 m), an Assault Rifle Guard: over
+## POSE_DROPS drops after a peek between 50% and 70% are squats and the pose
+## changes between some two drops in a row, the capsule's top following each
+## stance; squatting, the top of its head zone is under 1.05 m and its
+## capsule's top under 1.05 m, and a bolt fired level at 1.2 m from the far
+## side strikes nothing of it; on one knee its head zone's top is over
+## 1.15 m and the same bolt strikes its head zone, a Headshot. In neither
+## stance does any bolt over the crate (level across its width, or down from
+## his eyes at every height of its body) strike its body.
+func _check_down_poses() -> void:
+	var centre := ShipBuilder3D.tile_to_world(RING_CENTRE)
+	var pirate := _own_pirate(centre)
+	var guard := _rig_guard(GunRoll.weapon(GunRoll.ASSAULT_RIFLE), ring_layout, BEHIND_CRATE, centre)
+	guard.target = pirate
+	guard.health.max_health = 100000
+	guard.health.reset()
+	for i in 2:
+		await physics_frame
+	var cover := guard.cover
+	cover.tile = BEHIND_CRATE
+	cover.spot = guard.global_position
+	cover.step = Vector3.INF
+	cover.low = true
+	cover.has_peek = true
+	var stances: Array = []
+	var tops_wrong: Array[String] = []
+	var shape: CollisionShape3D = guard.get_node("CollisionShape3D")
+	for i in POSE_DROPS:
+		# Up over the crate, then back down: a drop after a peek.
+		cover._stand()
+		cover._set_mode(CrewCover.Mode.SHOOT)
+		cover._duck()
+		stances.append(cover.stance)
+		var top: float = shape.position.y + (shape.shape as CapsuleShape3D).height / 2.0
+		if cover.mode != CrewCover.Mode.DOWN or not is_equal_approx(top, CrewPose.BODY_TOP.get(cover.stance, -1.0)):
+			tops_wrong.append("drop %d %s top %.2f" % [i, CrewPose.Stance.keys()[cover.stance], top])
+	var squats := stances.count(CrewPose.Stance.SQUAT)
+	var share := float(squats) / POSE_DROPS
+	var changed := false
+	for i in range(1, stances.size()):
+		changed = changed or stances[i] != stances[i - 1]
+	print("  down poses: %d of %d drops squats (%.0f%%), the rest on one knee" % [squats, POSE_DROPS, share * 100.0])
+	_expect(share >= SQUAT_SHARE_LOW and share <= SQUAT_SHARE_HIGH and squats + stances.count(CrewPose.Stance.KNEE) == POSE_DROPS,
+			"down poses: %d of %d drops behind low cover were squats (%.0f%%), want %.0f%% to %.0f%%, the rest one knee"
+			% [squats, POSE_DROPS, share * 100.0, SQUAT_SHARE_LOW * 100.0, SQUAT_SHARE_HIGH * 100.0])
+	_expect(changed, "down poses: the pose never changed between two drops in a row over %d drops" % POSE_DROPS)
+	_expect(tops_wrong.is_empty(), "down poses: the capsule's top did not follow the stance: %s" % [tops_wrong.slice(0, 3)])
+
+	for stance: CrewPose.Stance in [CrewPose.Stance.SQUAT, CrewPose.Stance.KNEE]:
+		var name: String = CrewPose.Stance.keys()[stance].to_lower()
+		cover._stand()
+		cover._stances = [stance] as Array[CrewPose.Stance]
+		cover._get_down(30.0)
+		for i in 30:
+			await physics_frame  # the pose blends in (0.15 s)
+		var zone := guard.head_zone
+		var radius := (zone.get_child(0).shape as SphereShape3D).radius * zone.global_transform.basis.get_scale().y
+		var head := zone.global_position
+		var head_top := head.y + radius
+		var body_top: float = shape.global_position.y + (shape.shape as CapsuleShape3D).height / 2.0
+		# The bolt: level at 1.2 m, from beyond the crate straight at the head.
+		var from := Vector3(head.x, LEVEL_BOLT, ShipBuilder3D.tile_to_world(RING_CENTRE).z + 2.0)
+		var level := await _bolt_hits(pirate, from, Vector3(head.x, LEVEL_BOLT, head.z + 2.0))
+		var on_guard := level.filter(func(h: Array) -> bool: return h[0] == guard)
+		print("  down poses, %s: head zone top %.3f m (centre %.3f), capsule top %.3f m, the level bolt at %.1f m struck %s"
+				% [name, head_top, head.y, body_top, LEVEL_BOLT, level.map(func(h: Array) -> String: return "%s%s" % [(h[0] as Node).name, " (head)" if h[1] else ""])])
+		if stance == CrewPose.Stance.SQUAT:
+			_expect(head_top < SQUAT_HEAD_TOP, "down poses: squatting, the top of the head is %.3f m, want below %.2f m" % [head_top, SQUAT_HEAD_TOP])
+			_expect(body_top < SQUAT_BODY_TOP, "down poses: squatting, the capsule's top is %.3f m, want below %.2f m" % [body_top, SQUAT_BODY_TOP])
+			_expect(on_guard.is_empty(), "down poses: squatting behind a 1.1 m crate, the level bolt at %.1f m struck it %s, want nothing" % [LEVEL_BOLT, on_guard])
+		else:
+			_expect(head_top > KNEE_HEAD_TOP, "down poses: on one knee, the top of the head is %.3f m, want above %.2f m" % [head_top, KNEE_HEAD_TOP])
+			_expect(on_guard.size() == 1 and on_guard[0][1], "down poses: on one knee behind a 1.1 m crate, the level bolt at %.1f m struck %s, want its head zone (a Headshot)"
+					% [LEVEL_BOLT, level])
+		# Never its body over the crate: level bolts across its width, and
+		# bolts down from his eyes at its body.
+		var body_hits: Array[String] = []
+		var eye := centre + Vector3.UP * Crew3D.EYE_HEIGHT
+		var shots: Array = []
+		for y: float in [1.2, 1.3, 1.45, 1.6]:
+			for side: float in [-0.3, -0.15, 0.15, 0.3]:
+				shots.append([Vector3(head.x + side, y, from.z), Vector3(head.x + side, y, head.z + 2.0)])
+		for y: float in [0.2, 0.4, 0.6, 0.8, 1.0]:
+			for side: float in [-0.25, 0.0, 0.25]:
+				var aim := guard.global_position + Vector3(side, y, 0.0)
+				shots.append([eye, eye + (aim - eye) * 2.0])
+		for shot: Array in shots:
+			for h: Array in await _bolt_hits(pirate, shot[0], shot[1]):
+				if h[0] == guard and not h[1]:
+					body_hits.append("%s to %s" % [shot[0], shot[1]])
+		_expect(body_hits.is_empty(), "down poses: %s behind a 1.1 m crate, %d of %d bolts over it struck its body: %s"
+				% [name, body_hits.size(), shots.size(), body_hits.slice(0, 3)])
+	guard.free()
+	pirate.free()
+	_clear_shots()
+
+
+## What one bolt of [param shooter]'s, fired from [param from] toward
+## [param to], struck: [[body, on its head], ...] (empty: nothing).
+func _bolt_hits(shooter: Node3D, from: Vector3, to: Vector3) -> Array:
+	var bolt: Projectile3D = load("res://scenes/projectile_3d.tscn").instantiate()
+	bolt.damage = 1
+	bolt.launch(from, to - from, shooter, shooter.get_team())
+	var hits: Array = []
+	bolt.hit.connect(func(body: Node3D, on_head: bool) -> void: hits.append([body, on_head]))
+	get_first_node_in_group(&"projectiles").add_child(bolt)
+	for i in ceili(from.distance_to(to) / bolt.speed / STEP) + 2:
+		await physics_frame
+		if not is_instance_valid(bolt) or bolt.is_queued_for_deletion():
+			break
+	if is_instance_valid(bolt):
+		bolt.free()
+	return hits
 
 
 ## In the crate grid: a Guard down in cover that the Pirate, moved, sees

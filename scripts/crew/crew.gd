@@ -89,6 +89,9 @@ const COWER_CALM := 15.0
 const UNSTICK_AFTER := 1.0
 const UNSTICK_MOVE := 0.3
 const SIDESTEP := 1.0
+## Out of the fight, blocked by a Guard holding its spot in one with no way
+## round, it gives that walk up and stands this many seconds.
+const BLOCKED_PAUSE := 1.5
 ## Stuck against another crew member (centres closer than GIVE_WAY_NEAR,
 ## it ahead): go round it if the floor allows; else, both walking, one gives
 ## way, stepping off the other's way and waiting there until the other has
@@ -207,6 +210,9 @@ var magazine: CrewMagazine
 ## A Guard's gun, seen in its hands, whose `Muzzle` its shots leave from;
 ## null for a Worker.
 var gun: CrewGun
+## A Guard's body in a fight: down, ducking, running low, stepping out
+## ([CrewPose]); null for a Worker.
+var pose: CrewPose
 ## The Guard a fleeing Worker is running to.
 var _flee_to: Crew3D
 ## The Alarm Panel a fleeing Worker is running to, instead of a Guard.
@@ -360,6 +366,8 @@ func _ready() -> void:
 	_new_burst()
 	_dress()
 	if not is_worker():
+		# The pose first: the gun is placed from the posed chest.
+		pose = CrewPose.fit(self)
 		gun = CrewGun.arm(self)
 	_anim = _find_animation_player(model)
 	if _anim != null:
@@ -1422,8 +1430,14 @@ func _get_past(other: Crew3D) -> void:
 		if not detour.is_empty():
 			_path = detour
 			_repath_timer = UNSTICK_AFTER
-		else:
-			other.make_way_for(self)
+		elif not other.make_way_for(self) and other.state in [State.FIGHT, State.COVER] \
+				and not state in [State.FIGHT, State.COVER]:
+			# No way round, and the one in the way holds its spot in a fight
+			# (down in cover, a Shotgun in ambush) and will not move: out of
+			# the fight itself, it gives this walk up and stands a moment
+			# before it walks anywhere again.
+			_path.clear()
+			_hold_timer = maxf(_hold_timer, BLOCKED_PAUSE)
 		return
 	if other._yield_to == self:
 		return  # it is stepping aside for this one
@@ -2032,7 +2046,14 @@ func _update_animation() -> void:
 	if state == State.DEAD:
 		return
 	var speed := Vector2(velocity.x, velocity.z).length()
-	if speed > WALK_ANIM_SPEED:
+	if cover != null and cover.stepping():
+		# Stepping out from full cover and back: its feet step on their own
+		# ([CrewPose]) under a still upper body.
+		if state == State.FIGHT:
+			_play_any(["CharacterArmature|Idle_Gun_Pointing", "CharacterArmature|Idle_Gun", "Idle_Gun", "Idle"])
+		else:
+			_play_any(["CharacterArmature|Idle", "Idle"])
+	elif speed > WALK_ANIM_SPEED:
 		_play_any(["CharacterArmature|Run", "CharacterArmature|Walk", "Run", "Walk"])
 	elif speed > 0.5:
 		_play_any(["CharacterArmature|Walk", "CharacterArmature|Run", "Walk", "Run"])
@@ -2059,6 +2080,8 @@ func _on_died(_from: Node) -> void:
 		head_zone.disable()
 	if gun != null:
 		gun.drop()
+	if pose != null:
+		pose.active = false
 	if not _play_any(["CharacterArmature|Death", "Death", "Die"]):
 		# No death clip: tip the model over so a corpse still reads as one.
 		create_tween().tween_property(model, "rotation:x", -PI / 2.0, 0.4)

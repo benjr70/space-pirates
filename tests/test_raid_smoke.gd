@@ -209,9 +209,11 @@ const SPOT_CLOSE := Vector2(1.5, 3.0)
 ## Rifle waiting for a true-aim place to start its sight line, a Shotgun
 ## holding fire with him beyond 8 m; crew-combat ticket 20; one hiding with
 ## no peek waiting its turn to move under covering fire, ticket 21) is left out:
-## that is the habit, not a missed peek; for the Rifle at most
-## PLACE_WAIT_HANDOVERS true-aim handovers, each doubled (it is queued
-## first for the next place to free). One trying
+## that is the habit, not a missed peek; for the Rifle's place wait (with a
+## peek) at most PLACE_WAIT_HANDOVERS true-aim handovers, each doubled (it
+## is queued first for the next place to free); its turn to move, hiding
+## with no peek, is not capped (crew-combat ticket 22 fixed the cap
+## catching that too). One trying
 ## to walk in a fight for FIGHT_STUCK_TIME without moving FIGHT_STUCK_MOVE
 ## (a second's standing still starts the count again) fails it too. These
 ## replace the old limit on time in COVER (crew-combat ticket 18), which a
@@ -753,7 +755,9 @@ func _stuck_in_fight(member: Crew3D) -> String:
 		_down_in_sight[member] = [t, cover.downs, cover.near_misses, cover.waited]
 	else:
 		var habit: float = cover.waited - _down_in_sight[member][3]
-		if cover.gun == CrewHabit.Gun.MARKSMAN_RIFLE:
+		if cover.gun == CrewHabit.Gun.MARKSMAN_RIFLE and cover.has_peek:
+			# Waiting for a place (it needs a peek to want one). Hiding with
+			# no peek, its wait is its turn to move, which is not capped.
 			habit = minf(habit, PLACE_WAIT_HANDOVERS * 2.0 * member.sandbox.true_aim_handover)
 		if t - _down_in_sight[member][0] - habit > cover.longest_down() + COVER_SLACK:
 			return "%s stayed down %.1f s (%.1f s of it waiting on its habit) with him in its sight, longer than %.2f + %.1f s (t=%.1f s)" % [what,

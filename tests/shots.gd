@@ -25,7 +25,12 @@ extends SceneTree
 ##   crew       one of each crew type side by side, front.png and side.png;
 ##              a Guard with each gun carried, walking and aimed
 ##              (guns_*.png), each gun's hands close up (hands_<gun>_<patrol|aim>.png)
-##              and the Marksman Rifle's sight line (sight_line.png).
+##              and the Marksman Rifle's sight line (sight_line.png); then
+##              Guards in a fight (crew-combat ticket 22): down behind crates
+##              squatting and on one knee, ducking a near miss, popped up,
+##              stepped out beside a wall, reloading (each gun, three moments)
+##              and running low and upright (down_*, duck_*, popup_*,
+##              stepout_*, reload_*, run_*.png).
 ##   hud        the in-Raid HUD with known values: hud.png, hud_busy.png.
 ##   menu       the main menu's screens (home, classes), the Loadout screen
 ##              (loadout: bare; loadout_slot: a fitted Assault Rifle with its
@@ -514,6 +519,10 @@ func _crew() -> void:
 		labels.append("hands_%s_patrol" % gun)
 		labels.append("hands_%s_aim" % gun)
 	labels.append("sight_line")
+	labels.append_array(FIGHT_SHOTS)
+	for gun in guns:
+		for moment in RELOAD_MOMENTS:
+			labels.append("reload_%s_%s" % [gun, moment])
 	_expect(labels)
 	var world := _test_room()
 	var crew: Array[Crew3D] = []
@@ -588,6 +597,174 @@ func _crew() -> void:
 	cam.look_at_from_position(marksman.global_position + Vector3(-1.0, 1.5, 3.4), marksman.global_position + Vector3(1.0, 1.2, 0))
 	print("shots: the Marksman Rifle Guard's sight line runs from its muzzle off to the right")
 	await _snap("sight_line")
+	line.free()
+	for guard in guards:
+		guard.free()
+	await _crew_fight(guns)
+
+
+## The fight shots in order (crew-combat ticket 22); the reload close ups
+## follow them, reload_<gun>_<moment>.
+const FIGHT_SHOTS := ["down_squat_front", "down_squat_above", "down_squat_close", "down_knee_front", "down_knee_above",
+		"down_knee_close", "duck_above", "popup_front", "popup_above", "stepout_above", "stepout_close", "run_side"]
+## A reload's moments for the close ups: the left hand at the well taking
+## the old magazine, at the belt, and seating the new one (for the Shotgun:
+## at the port, at the belt, and on its way back).
+const RELOAD_MOMENTS := ["well", "belt", "seat"]
+const RELOAD_AT := {"well": 0.12, "belt": 0.46, "seat": 0.80}
+const SHELL_AT := {"well": 0.02, "belt": 0.48, "seat": 0.80}
+
+
+## Guards in a fight, posed as [CrewCover] and [CrewPose] pose them: a row
+## of four, left to right Pistol, Assault Rifle, Shotgun, Marksman Rifle,
+## each behind a 1.1 m crate facing the camera (the Pirate's side).
+func _crew_fight(guns: Array) -> void:
+	var world := _test_room()
+	var guards: Array[Crew3D] = []
+	for i in guns.size():
+		var guard: Crew3D = load("res://scenes/crew_3d.tscn").instantiate()
+		guard.weapon = load("res://resources/weapons/%s.tres" % guns[i])
+		guard.position = Vector3(-2.4 + i * 1.6, 0.0, -1.2)
+		world.add_child(guard)
+		guard.set_physics_process(false)
+		guard.face_direction(Vector3.BACK)
+		guards.append(guard)
+		var crate: Node3D = load("res://scenes/props3d/prop_crate_3d.tscn").instantiate()
+		crate.position = Vector3(-2.4 + i * 1.6, 0.0, -0.2)
+		world.add_child(crate)
+	var cam := Camera3D.new()
+	world.add_child(cam)
+	cam.make_current()
+	var front := func() -> void:
+		cam.fov = 60.0
+		cam.look_at_from_position(Vector3(0, 1.5, 3.6), Vector3(0, 0.9, -1.0))
+	var above := func() -> void:
+		cam.fov = 60.0
+		cam.look_at_from_position(Vector3(2.9, 2.7, -3.6), Vector3(-0.6, 0.45, -0.7))
+	# From its right side, the others hidden.
+	var close := func(guard: Crew3D) -> void:
+		for other in guards:
+			other.visible = other == guard
+		cam.fov = 50.0
+		var at := guard.global_position
+		cam.look_at_from_position(at + Vector3(-1.8, 0.95, 0.1), at + Vector3(0, 0.6, 0.3))
+	# From its left, where the reloading hand is.
+	var left := func(guard: Crew3D) -> void:
+		for other in guards:
+			other.visible = other == guard
+		cam.fov = 45.0
+		var at := guard.global_position
+		cam.look_at_from_position(at + Vector3(1.7, 1.05, 0.15), at + Vector3(0, 0.55, 0.25))
+	var all := func() -> void:
+		for other in guards:
+			other.visible = true
+	print("shots: down_*, duck_*, popup_*: Pistol, Assault Rifle, Shotgun, Marksman Rifle behind 1.1 m crates; *_close is the Assault Rifle from its right")
+	for stance in [CrewPose.Stance.SQUAT, CrewPose.Stance.KNEE]:
+		var name: String = "squat" if stance == CrewPose.Stance.SQUAT else "knee"
+		await _pose_down(guards, stance)
+		front.call()
+		await _snap("down_%s_front" % name)
+		above.call()
+		await _snap("down_%s_above" % name)
+		close.call(guards[1])
+		await _snap("down_%s_close" % name)
+		all.call()
+	# A near miss: two squatting, two on one knee, each ducked lower.
+	for i in guards.size():
+		await _pose_down([guards[i]] as Array[Crew3D], CrewPose.Stance.SQUAT if i % 2 == 0 else CrewPose.Stance.KNEE, false)
+	for guard in guards:
+		guard.pose.flinch()
+	await create_timer(0.2).timeout
+	above.call()
+	print("shots: duck_above: squat, knee, squat, knee, each ducking a near miss")
+	await _snap("duck_above")
+	await _pose_down(guards, CrewPose.Stance.SQUAT, false)
+	for guard in guards:
+		guard.cover._stand()
+		guard.state = Crew3D.State.FIGHT
+		guard._update_animation()
+	await create_timer(0.5).timeout
+	front.call()
+	await _snap("popup_front")
+	above.call()
+	await _snap("popup_above")
+
+	# Reloading: each gun close up at three moments of its reload.
+	for i in guards.size():
+		var guard := guards[i]
+		await _pose_down([guard] as Array[Crew3D], CrewPose.Stance.SQUAT if i % 2 == 0 else CrewPose.Stance.KNEE)
+		guard.magazine.rounds = 0
+		guard.magazine.start()
+		await create_timer(0.3).timeout
+		left.call(guard)
+		for moment: String in RELOAD_MOMENTS:
+			var magazine := guard.magazine
+			if magazine.shell_by_shell():
+				magazine.left = guard.weapon.first_shell_time * magazine.factor() * (1.0 - SHELL_AT[moment])
+			else:
+				magazine.left = magazine.duration * (1.0 - RELOAD_AT[moment])
+			await _snap("reload_%s_%s" % [guns[i], moment])
+		guard.magazine.stop()
+		all.call()
+
+	# Stepped out from full cover: the Shotgun beside a wall it hides
+	# behind, out on its firing tile and aimed.
+	for guard in guards:
+		guard.visible = false
+	var shotgun := guards[2]
+	shotgun.visible = true
+	_box(world, Vector3(1.0, 2.2, 0.3), shotgun.global_position + Vector3(0, 1.1, 1.0), Color(0.5, 0.5, 0.55))
+	shotgun.cover._stand()
+	shotgun.cover.spot = shotgun.global_position
+	shotgun.global_position += Vector3(1.0, 0, 0)
+	shotgun.cover.step = shotgun.global_position
+	shotgun.cover.low = false
+	shotgun.cover.mode = CrewCover.Mode.SHOOT
+	shotgun.state = Crew3D.State.FIGHT
+	shotgun._update_animation()
+	await create_timer(0.5).timeout
+	above.call()
+	print("shots: stepout_*: the Shotgun stepped out right of a wall, aimed")
+	await _snap("stepout_above")
+	cam.fov = 45.0
+	cam.look_at_from_position(shotgun.global_position + Vector3(-0.4, 1.7, 3.0), shotgun.global_position + Vector3(-0.3, 1.0, 0.0))
+	await _snap("stepout_close")
+	shotgun.cover.mode = CrewCover.Mode.NONE
+	shotgun.visible = false
+
+	# Running to cover: low to low cover (left), upright to full cover.
+	var runners: Array[Crew3D] = [guards[1], guards[3]]
+	for k in runners.size():
+		var runner := runners[k]
+		runner.visible = true
+		runner.cover._stand()
+		runner.global_position = Vector3(-1.2 + k * 2.4, 0.0, 1.6)
+		runner.face_direction(Vector3.LEFT)
+		runner.state = Crew3D.State.COVER
+		runner.cover.mode = CrewCover.Mode.MOVE
+		runner.cover.low = k == 0
+		runner.velocity = Vector3.LEFT * 3.5
+		runner._update_animation()
+	await create_timer(0.6).timeout
+	cam.fov = 50.0
+	cam.look_at_from_position(Vector3(0, 1.1, 5.4), Vector3(0, 0.9, 1.6))
+	print("shots: run_side: the Assault Rifle running low (left), the Marksman Rifle upright (right)")
+	await _snap("run_side")
+
+
+## Each of [param guards] down behind its crate in [param stance], facing
+## the camera, the pose reached ([param settle]: waited out).
+func _pose_down(guards: Array[Crew3D], stance: CrewPose.Stance, settle := true) -> void:
+	for guard in guards:
+		guard.cover._stand()
+		guard.cover._stances = [stance] as Array[CrewPose.Stance]
+		guard.cover._crouch()
+		guard.cover.mode = CrewCover.Mode.DOWN
+		guard.state = Crew3D.State.COVER
+		guard.velocity = Vector3.ZERO
+		guard._update_animation()
+	if settle:
+		await create_timer(0.5).timeout
 
 
 ## Every Guard in [param guards] faced along [param facing], its gun carried

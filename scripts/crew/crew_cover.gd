@@ -111,10 +111,11 @@ const OPEN_PAUSE := 0.6
 ## Up with no shot and him unseen this long, half the time it stays down
 ## half as long again rather than bob up.
 const UNSEEN_STAY_DOWN := 2.0
-## Down, the body is sunk this far into the floor (a stand-in until the
-## poses ticket) and its capsule cut to this fraction of its height.
-const SINK := 0.8
-const CROUCH := 0.55
+## Down behind cover a Guard squats or kneels on one knee, picked again at
+## every drop ([method _crouch]) from a shuffled bag of this many squats and
+## knees, so three drops in five are squats and the order is never the same.
+const SQUATS := 3
+const KNEES := 2
 ## Down behind its cover with him unseen this long, seconds, it tops up a
 ## part-used magazine.
 const TOP_UP_UNSEEN := 3.0
@@ -181,6 +182,13 @@ var _fell_back := false
 ## Which side of the prop it fires past next while firing on his cover.
 var _edge_side := 1.0
 var crouched := false
+## How it is down: squatting or on one knee ([CrewPose.Stance]); STAND while
+## up. The capsule's top follows it ([constant CrewPose.BODY_TOP]).
+var stance: CrewPose.Stance = CrewPose.Stance.STAND
+## What is left of the bag the next stances are drawn from, and its own
+## draws, seeded off the body's, so picking a stance changes no other draw.
+var _stances: Array[CrewPose.Stance] = []
+var _stance_rng := RandomNumberGenerator.new()
 ## {tile: seconds left} it gave up walking to.
 var unreachable := {}
 ## How many times it has got down, and ducked or stayed down for a near
@@ -229,6 +237,7 @@ var _stand_y := 0.85
 func _init(body: Crew3D) -> void:
 	crew = body
 	gun = CrewHabit.gun_of(body.weapon)
+	_stance_rng.seed = hash([body._rng.seed, "stance"])
 	_shape = body.get_node_or_null("CollisionShape3D") as CollisionShape3D
 	if _shape != null and _shape.shape is CapsuleShape3D:
 		# Its own, so lowering it lowers no one else's.
@@ -296,6 +305,8 @@ func release() -> void:
 	ambushing = false
 	_open_reload = false
 	_backing = false
+	if mode in [Mode.OUT, Mode.BACK]:
+		crew._speed_scale = 1.0
 	mode = Mode.NONE
 
 
@@ -1233,6 +1244,8 @@ func near_miss(from: Vector3, along: Vector3) -> bool:
 	elif mode == Mode.SHOOT and spot != Vector3.INF:
 		_duck()
 		timer += NEAR_MISS_HOLD
+	if crouched and crew.pose != null:
+		crew.pose.flinch()  # ducked lower for a moment
 	return true
 
 
@@ -1344,26 +1357,52 @@ func _end_back_away() -> void:
 	crew._path.clear()
 
 
-# --- the stand-in crouch ----------------------------------------------------------
+# --- down and up ------------------------------------------------------------------
 
+## Down behind its cover: a squat or one knee, the next from the bag, its
+## capsule cut to that stance's top. The pose shows it ([CrewPose]).
 func _crouch() -> void:
 	if crouched:
 		return
 	crouched = true
-	crew.model.position.y = -SINK
+	stance = next_stance()
 	if _capsule != null:
-		_capsule.height = _stand_height * CROUCH
-		_shape.position.y = _stand_y * CROUCH
+		var top: float = CrewPose.BODY_TOP[stance]
+		_capsule.height = maxf(top, _capsule.radius * 2.0)
+		_shape.position.y = _capsule.height / 2.0
 
 
 func _stand() -> void:
 	if not crouched:
 		return
 	crouched = false
-	crew.model.position.y = 0.0
+	stance = CrewPose.Stance.STAND
 	if _capsule != null:
 		_capsule.height = _stand_height
 		_shape.position.y = _stand_y
+
+
+## The stance it gets down in next: drawn from a bag of SQUATS squats and
+## KNEES knees, shuffled, filled again when empty.
+func next_stance() -> CrewPose.Stance:
+	if _stances.is_empty():
+		for i in SQUATS:
+			_stances.append(CrewPose.Stance.SQUAT)
+		for i in KNEES:
+			_stances.append(CrewPose.Stance.KNEE)
+		for i in range(_stances.size() - 1, 0, -1):
+			var j := _stance_rng.randi_range(0, i)
+			var swap := _stances[i]
+			_stances[i] = _stances[j]
+			_stances[j] = swap
+	return _stances.pop_back()
+
+
+## Stepping out from full cover to its firing tile, up there, or stepping
+## back: its feet step ([CrewPose]) and it moves at [constant
+## CrewPose.STEP_SPEED] of its speed.
+func stepping() -> bool:
+	return mode in [Mode.OUT, Mode.SHOOT, Mode.BACK] and step != Vector3.INF and not low and spot != Vector3.INF
 
 
 ## The longest one stretch down can last with him in sight: its Gunnery's
@@ -1395,6 +1434,11 @@ func _set_mode(next: Mode) -> void:
 		# Got there (or has no spot to go to): no longer moving.
 		between = false
 		flank_end = false
+	if next in [Mode.OUT, Mode.BACK]:
+		# A step, not a run, so its feet keep up.
+		crew._speed_scale = CrewPose.STEP_SPEED
+	elif mode in [Mode.OUT, Mode.BACK]:
+		crew._speed_scale = 1.0
 	mode = next
 	clock = 0.0
 	_nudged = false

@@ -1,5 +1,5 @@
 class_name CrewGun
-extends SkeletonModifier3D
+extends CrewRigModifier
 ## A Guard's gun, seen in its hands (crew-combat ticket 16): its Weapon
 ## Profile's model, 1.15x, from the moment it spawns. The gun is placed
 ## first, from the chest, and the arms are then solved onto it, the wrists
@@ -18,6 +18,14 @@ extends SkeletonModifier3D
 ##   where the Guard aims, so its `Muzzle` marker is exactly where
 ##   [method muzzle_from] says: a shot leaves from it and the clear-shot test
 ##   sweeps from it.
+##
+## The carried hold changes with the body's pose ([CrewPose], ticket 22):
+## down behind cover the gun is held in close, muzzle up past the cover;
+## reloading, the gun is tipped toward the left hand, which leaves it, goes
+## to the magazine well, down to the belt and back up to the well with a
+## fresh magazine and back onto the fore-end, timed to the reload; for the
+## Shotgun from the belt to the loading port once for each shell. A Guard
+## reloading holds its gun in the carried hold, never aimed.
 ##
 ## Space: the rig's own (the Model node's), metres, +Z ahead of the body,
 ## +X to its left, on a rig fitted to 2 m.
@@ -44,6 +52,42 @@ const AIM_LONG := {"at": Vector3(-0.10, -0.10, 0.40), "dir": Vector3(0, 0, 1), "
 const SHOTGUN_BACK := 0.08
 const AIM_PISTOL := {"at": Vector3(-0.04, -0.02, 0.36), "dir": Vector3(0, 0, 1), "twist": 0.0,
 		"elbow_r": Vector3(-0.8, -1.0, 0.0), "elbow_l": Vector3(0.8, -1.0, 0.0), "left": 1.0}
+## Down behind cover (squat or knee): held in close, muzzle up and across
+## to the left, so the gun keeps out of the cover it hides behind (a tile's
+## prop face is 0.55 m ahead). The Pistol in both hands at the chest,
+## muzzle up.
+const DOWN_LONG := {"at": Vector3(-0.04, -0.26, 0.16), "dir": Vector3(0.6, 0.72, 0.25), "twist": 0.0,
+		"elbow_r": Vector3(-0.8, -1.0, -0.2), "elbow_l": Vector3(0.6, -1.0, 0.0), "left": 1.0}
+const DOWN_PISTOL := {"at": Vector3(-0.06, -0.24, 0.22), "dir": Vector3(0.15, 0.7, 0.7), "twist": 0.0,
+		"elbow_r": Vector3(-0.8, -1.0, 0.0), "elbow_l": Vector3(0.8, -1.0, 0.0), "left": 1.0}
+## Reloading: the gun tipped up and to the left, its well toward the left
+## hand.
+const RELOAD_LONG := {"at": Vector3(-0.02, -0.24, 0.18), "dir": Vector3(0.75, 0.5, 0.35), "twist": 0.0,
+		"elbow_r": Vector3(-0.8, -1.0, -0.2), "elbow_l": Vector3(0.8, -1.0, 0.0), "left": 1.0}
+const RELOAD_PISTOL := {"at": Vector3(-0.06, -0.22, 0.2), "dir": Vector3(0.3, 0.65, 0.7), "twist": 0.0,
+		"elbow_r": Vector3(-0.8, -1.0, 0.0), "elbow_l": Vector3(0.8, -1.0, 0.0), "left": 1.0}
+
+## Where the left hand takes a magazine from the well, or puts a shell in
+## the loading port, in the gun model's space as HOLDS: palm up under it.
+const WELLS := {
+	CrewHabit.Gun.PISTOL: [Vector3(0.0, -0.07, -0.16), Vector3(0.0, 0.0, -1.0), Vector3(0.0, 1.0, 0.0)],
+	CrewHabit.Gun.ASSAULT_RIFLE: [Vector3(0.0, -0.06, 0.062), Vector3(0.0, 0.0, -1.0), Vector3(0.0, 1.0, 0.0)],
+	CrewHabit.Gun.SHOTGUN: [Vector3(0.0, -0.02, 0.07), Vector3(0.0, 0.0, -1.0), Vector3(0.0, 1.0, 0.0)],
+	CrewHabit.Gun.MARKSMAN_RIFLE: [Vector3(0.0, -0.01, -0.19), Vector3(0.0, 0.0, -1.0), Vector3(0.0, 1.0, 0.0)],
+}
+## The pouch on the belt, from the hips bone in the rig's space: front left,
+## fingers down into it, palm to the body.
+const BELT := [Vector3(0.17, -0.02, 0.14), Vector3(1.0, 0.0, 0.0), Vector3(0.0, 0.0, -1.0)]
+## A magazine pulled clear of the well (on the way out and back in): this
+## far under the well in the rig's space.
+const WELL_CLEAR := Vector3(0.04, -0.13, 0.0)
+## The left hand's way through a magazine reload, [progress, place]:
+## off the fore-end to the well, the old magazine out, down to the belt,
+## the new one up and in, seated, back onto the fore-end. For the Shotgun,
+## each shell: from the port to the belt and back.
+const RELOAD_WAY := [[0.0, "fore"], [0.10, "well"], [0.20, "clear"], [0.40, "belt"], [0.50, "belt"],
+		[0.66, "clear"], [0.76, "well"], [0.86, "well"], [1.0, "fore"]]
+const SHELL_WAY := [[0.0, "well"], [0.40, "belt"], [0.55, "belt"], [1.0, "well"]]
 
 ## Where each hand closes on each gun, in the gun model's own space (+Z to
 ## the muzzle, +X its left, before SCALE): the middle of what it grips, the
@@ -81,8 +125,6 @@ const FINGERS := ["Index", "Middle", "Ring", "Pinky"]
 ## How far a clavicle may swing to bring a hand within reach, degrees.
 const CLAVICLE_REACH := 30.0
 
-## Whose gun.
-var crew: Crew3D
 ## The gun's scene, instanced from its Weapon Profile's `model`, under the
 ## body's Model node.
 var gun: Node3D
@@ -97,17 +139,17 @@ var aim_direction := Vector3.ZERO
 
 var _weapon: WeaponProfile
 var _muzzle_local := Transform3D.IDENTITY
-var _sk: Skeleton3D
-var _to_model := Transform3D.IDENTITY
-var _to_bones := Transform3D.IDENTITY
 ## Per side: the rest hand's frame (fingers, palm, across) and the wrist's
 ## rest basis, both in the rig's space, without scale.
 var _rest := {}
-## Bone indices by name.
-var _index := {}
 ## Per side: each finger and thumb bone's index with its local rotation at
 ## rest and closed round a grip, worked out once from the rest pose.
 var _curls := {}
+## The reload's way: the left wrist's last place on it, and the shell being
+## loaded's time and time left (Shotgun).
+var _way_at := Transform3D.IDENTITY
+var _shell_length := 0.0
+var _shell_left := 0.0
 
 
 ## A gun for [param body] (a Guard with a weapon), put on its rig. Null for
@@ -211,14 +253,7 @@ func _turn() -> float:
 ## hand closes round its hold (HOLDS): "grip" and "fore" as [Transform3D]s
 ## whose +Y runs along the fingers and +Z out of the palm.
 func hand_place(which: String) -> Transform3D:
-	var hold: Array = HOLDS[kind][which]
-	var across: Vector3 = (hold[1] as Vector3).normalized()
-	var palm: Vector3 = (hold[2] as Vector3)
-	palm = (palm - across * palm.dot(across)).normalized()
-	# A right hand's palm faces fingers x across; a left hand's across x fingers.
-	var fingers := across.cross(palm) if which == "grip" else palm.cross(across)
-	var wrist: Vector3 = hold[0] - fingers * FIST.x - palm * FIST.y - across * FIST.z
-	return gun.transform * Transform3D(Basis(fingers.cross(palm), fingers, palm), wrist)
+	return gun.transform * _place(HOLDS[kind][which], which == "grip")
 
 
 ## The same in the world.
@@ -226,9 +261,104 @@ func hand_place_global(which: String) -> Transform3D:
 	return crew.model.global_transform * hand_place(which)
 
 
+## The wrist's place for a hand closing on [param hold] ([point, across,
+## palm], as HOLDS), in the hold's own space; [param right] for a right
+## hand.
+static func _place(hold: Array, right: bool) -> Transform3D:
+	var across: Vector3 = (hold[1] as Vector3).normalized()
+	var palm: Vector3 = (hold[2] as Vector3)
+	palm = (palm - across * palm.dot(across)).normalized()
+	# A right hand's palm faces fingers x across; a left hand's across x fingers.
+	var fingers := across.cross(palm) if right else palm.cross(across)
+	var wrist: Vector3 = hold[0] - fingers * FIST.x - palm * FIST.y - across * FIST.z
+	return Transform3D(Basis(fingers.cross(palm), fingers, palm), wrist)
+
+
 ## Whether its left hand belongs on the gun in the hold it is in.
 func left_on() -> bool:
-	return lerpf(_hold(false).left, _hold(true).left, aim) > 0.5
+	return lerpf(_carry().left, _hold(true).left, aim) > 0.5
+
+
+## The carried hold as the body's pose has it now: down behind cover, and
+## reloading, blended over the plain carry.
+func _carry() -> Dictionary:
+	var hold := _hold(false)
+	var pose := crew.pose
+	if pose == null:
+		return hold
+	var pistol := kind == CrewHabit.Gun.PISTOL
+	hold = _mix_hold(hold, DOWN_PISTOL if pistol else DOWN_LONG, pose.down_weight())
+	return _mix_hold(hold, RELOAD_PISTOL if pistol else RELOAD_LONG, pose.reload_weight())
+
+
+static func _mix_hold(a: Dictionary, b: Dictionary, k: float) -> Dictionary:
+	if k <= 0.0:
+		return a
+	if k >= 1.0:
+		return b
+	var t := smoothstep(0.0, 1.0, k)
+	return {"at": (a.at as Vector3).lerp(b.at, t), "dir": (a.dir as Vector3).normalized().slerp((b.dir as Vector3).normalized(), t),
+			"twist": lerpf(a.twist, b.twist, t), "elbow_r": (a.elbow_r as Vector3).lerp(b.elbow_r, t),
+			"elbow_l": (a.elbow_l as Vector3).lerp(b.elbow_l, t), "left": lerpf(a.left, b.left, t)}
+
+
+## Where the left wrist is in a reload now, in the rig's space: along
+## RELOAD_WAY by the reload's progress, or SHELL_WAY by the shell's for
+## a Shotgun, blended from the fore-end by the reload's weight.
+func reload_place() -> Transform3D:
+	var fore := hand_place("fore")
+	var magazine := crew.magazine
+	var pose := crew.pose
+	if magazine == null or pose == null or pose.reload_weight() <= 0.0:
+		return fore
+	var way: Array = RELOAD_WAY
+	var progress := 0.0
+	if magazine.reloading:
+		if magazine.shell_by_shell():
+			way = SHELL_WAY
+			if magazine.left > _shell_left + 0.0001 or _shell_length <= 0.0:
+				_shell_length = magazine.left  # a new shell's time starts
+			progress = 1.0 - magazine.left / maxf(_shell_length, 0.001)
+		else:
+			progress = 1.0 - magazine.left / maxf(magazine.duration, 0.001)
+		_shell_left = magazine.left
+		_way_at = _along(way, clampf(progress, 0.0, 1.0), fore)
+	else:
+		_shell_length = 0.0
+	# Done or broken off: back to the fore-end as the weight falls.
+	return _lerp_place(fore, _way_at, smoothstep(0.0, 1.0, pose.reload_weight()))
+
+
+## The place [param progress] of the way along [param way].
+func _along(way: Array, progress: float, fore: Transform3D) -> Transform3D:
+	for i in range(1, way.size()):
+		if progress <= way[i][0] or i == way.size() - 1:
+			var a: Array = way[i - 1]
+			var b: Array = way[i]
+			var k := clampf((progress - a[0]) / maxf(b[0] - a[0], 0.0001), 0.0, 1.0)
+			return _lerp_place(_way_place(a[1], fore), _way_place(b[1], fore), smoothstep(0.0, 1.0, k))
+	return fore
+
+
+func _way_place(which: String, fore: Transform3D) -> Transform3D:
+	match which:
+		"well":
+			return gun.transform * _place(WELLS[kind], false)
+		"clear":
+			var well := gun.transform * _place(WELLS[kind], false)
+			well.origin += WELL_CLEAR
+			return well
+		"belt":
+			var belt := _place(BELT, false)
+			belt.origin += _bone("Hips").origin
+			return belt
+	return fore
+
+
+static func _lerp_place(a: Transform3D, b: Transform3D, k: float) -> Transform3D:
+	var qa := a.basis.orthonormalized().get_rotation_quaternion()
+	var qb := b.basis.orthonormalized().get_rotation_quaternion()
+	return Transform3D(Basis(qa.slerp(qb, k)), a.origin.lerp(b.origin, k))
 
 
 ## Hidden with its owner dead: nothing is left to pick up.
@@ -239,22 +369,19 @@ func drop() -> void:
 
 
 func _process_modification_with_delta(delta: float) -> void:
-	_sk = get_skeleton()
-	if _sk == null or crew == null or not is_instance_valid(crew) or gun == null:
+	if not _begin_frame() or gun == null:
 		return
 	if crew.weapon != _weapon and crew.weapon != null and crew.weapon.model != null:
 		_mount()
-	var want := 1.0 if crew.aiming() else 0.0
+	var want := 1.0 if crew.aiming() and not crew.is_reloading() else 0.0
 	aim = move_toward(aim, want, delta / BLEND)
 	if crew.shot_age() >= Crew3D.AIM_HOLD or aim_direction.length_squared() < 0.000001:
 		# No shot just now: the gun points where the body looks.
 		aim_direction = crew._aim
-	_to_model = crew.model.global_transform.affine_inverse() * _sk.global_transform
-	_to_bones = _to_model.affine_inverse()
 	if _rest.is_empty():
 		_learn_rest()
 
-	var carry := _hold(false)
+	var carry := _carry()
 	var aimed := _hold(true)
 	var chest := _bone("Chest").origin
 	var carried := Transform3D(_gun_basis(carry.dir), chest + _at(carry))
@@ -274,7 +401,9 @@ func _process_modification_with_delta(delta: float) -> void:
 	var elbow_r: Vector3 = (carry.elbow_r as Vector3).lerp(aimed.elbow_r, k)
 	var elbow_l: Vector3 = (carry.elbow_l as Vector3).lerp(aimed.elbow_l, k)
 	_hand("R", hand_place("grip"), 1.0, elbow_r)
-	_hand("L", hand_place("fore"), lerpf(carry.left, aimed.left, k), elbow_l)
+	var reload := crew.pose.reload_weight() if crew.pose != null else 0.0
+	var left := maxf(lerpf(carry.left, aimed.left, k), reload)
+	_hand("L", reload_place() if reload > 0.0 else hand_place("fore"), left, elbow_l)
 
 
 ## A basis blend that keeps the gun's scale.
@@ -388,72 +517,3 @@ func _reach(side: String, goal: Vector3) -> void:
 		clavicle.basis = Basis(axis.normalized(), deg_to_rad(3.0)) * clavicle.basis
 		_put("Shoulder." + side, clavicle)
 		swung += 3.0
-
-
-# --- bones, in the rig's space ----------------------------------------------------
-
-## A bone's index, looked up once.
-func _i(bone: String) -> int:
-	var found: Variant = _index.get(bone)
-	if found == null:
-		found = _sk.find_bone(bone)
-		_index[bone] = found
-	return found
-
-
-func _bone(bone: String) -> Transform3D:
-	return _to_model * _sk.get_bone_global_pose(_i(bone))
-
-
-func _rest_pose(bone: String) -> Transform3D:
-	return _to_model * _sk.get_bone_global_rest(_i(bone))
-
-
-func _put(bone: String, pose: Transform3D) -> void:
-	_sk.set_bone_global_pose(_i(bone), _to_bones * pose)
-
-
-func _rest_local(bone: String) -> void:
-	var i := _i(bone)
-	if i >= 0:
-		_sk.set_bone_pose_rotation(i, _sk.get_bone_rest(i).basis.get_rotation_quaternion())
-
-
-func _turn_bone(bone: String, axis: Vector3, angle: float) -> void:
-	if is_zero_approx(angle):
-		return
-	var pose := _bone(bone)
-	pose.basis = Basis(axis, angle) * pose.basis
-	_put(bone, pose)
-
-
-## Points a bone (its +Y) along [param direction], by the shortest turn.
-func _aim_bone(bone: String, direction: Vector3) -> void:
-	var pose := _bone(bone)
-	var now := pose.basis.y.normalized()
-	var want := direction.normalized()
-	if now.dot(want) > 0.9999:
-		return
-	if now.dot(want) < -0.9999:
-		pose.basis = Basis(pose.basis.x.normalized(), PI) * pose.basis
-	else:
-		pose.basis = Basis(Quaternion(now, want)) * pose.basis
-	_put(bone, pose)
-
-
-## Two bones solved so the second one's far end reaches [param target], the
-## joint between them pushed toward [param pole].
-func _two_bone(upper: String, lower: String, lower_length: float, target: Vector3, pole: Vector3) -> void:
-	var root := _bone(upper).origin
-	var upper_length := (_bone(lower).origin - root).length()
-	var to := target - root
-	var reach := clampf(to.length(), 0.01, upper_length + lower_length - 0.002)
-	var along := to.normalized()
-	var near := (upper_length * upper_length + reach * reach - lower_length * lower_length) / (2.0 * reach)
-	var out := sqrt(maxf(upper_length * upper_length - near * near, 0.0))
-	var side := pole - along * pole.dot(along)
-	if side.length_squared() < 0.0001:
-		side = Vector3.FORWARD - along * Vector3.FORWARD.dot(along)
-	var joint := root + along * near + side.normalized() * out
-	_aim_bone(upper, joint - root)
-	_aim_bone(lower, root + along * reach - _bone(lower).origin)

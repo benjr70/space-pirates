@@ -25,7 +25,9 @@ being built toward is `.scratch/crew-combat/spec.md`, after spec #52
 | `crew_magazine.gd` (`CrewMagazine`) | A Guard's magazine: rounds counted against its weapon's magazine size, and its reloads (empty, topping up, the Shotgun's shell by shell and its break-off), with their times and sounds. Every Guard holds one (`Crew3D.magazine`); `CrewCover` decides where and when a reload starts. |
 | `crew_habit.gd` (`CrewHabit`) | A habit per gun: which of the four guns a Guard carries (`gun_of`, by its weapon's file) and the habit numbers (the Shotgun's 4 m and 8 m, its ambush reach and rack timing; the Marksman Rifle's perch radius, line length and weight, 5 m, sight lock and hip fire). |
 | `crew_sight_line.gd` (`CrewSightLine`) | The Marksman Rifle's sight line: a thin red unshaded line from the rifle's muzzle to where it aims, made on first use under the Guard. |
-| `crew_gun.gd` (`CrewGun`) | A Guard's gun in its hands: its Weapon Profile's model, 1.15x, under the body's Model node from spawn; carried or aimed; the arms solved onto it, the wrists squared and the fingers closed round its grip and fore-end; where its `Muzzle` stands when aimed, for the shot and the clear-shot test. A `SkeletonModifier3D` on the rig's skeleton (`Crew3D.gun`); null for a Worker. |
+| `crew_gun.gd` (`CrewGun`) | A Guard's gun in its hands: its Weapon Profile's model, 1.15x, under the body's Model node from spawn; carried, down behind cover, reloading or aimed; the arms solved onto it, the wrists squared and the fingers closed round its grip and fore-end, and the left hand's way through a reload; where its `Muzzle` stands when aimed, for the shot and the clear-shot test. A skeleton modifier on the rig's skeleton (`Crew3D.gun`); null for a Worker. |
+| `crew_pose.gd` (`CrewPose`) | A Guard's body in a fight: down behind cover squatting or on one knee, ducking a near miss, running low to low cover, and stepping out from full cover on feet that step. A skeleton modifier run before the gun's (`Crew3D.pose`); null for a Worker. Its stance is chosen by `CrewCover` (`stance`), which also sets the capsule. |
+| `crew_rig_modifier.gd` (`CrewRigModifier`) | What the two crew skeleton modifiers share: bones read and written in the rig's own space, and the two-bone solve for an arm or a leg. |
 | `ship_alarm.gd` (`ShipAlarm`) | The ship-wide Alarm: raised once, red lights, every crew member told. Built per ship as `Ship/Alarm`. |
 | `alarm_panel.gd` (`AlarmPanel`) | The wall panels the Alarm is raised from, where they go, and breaking them. Built under `Ship/AlarmPanels`. |
 | `crew_noise.gd` (`CrewNoise`) | Hearing: noise events (footsteps, gunshots, doors), how far each reaches, and which Rooms it carries into. |
@@ -251,11 +253,10 @@ From `.scratch/crew-combat/issues/16-guards-carry-their-guns.md`
 scene (the Pirate's own gun model), 1.15x, from the moment it spawns; a
 Worker shows none. It is a skeleton modifier over whatever clip the body
 plays, as the look prototype (`prototype/crew-look`) made it: nothing is
-baked into clips, so every crew clip and the cover stand-in crouch carry
-it.
+baked into clips, so every crew clip and every pose of the body
+(`CrewPose`, below) carry it.
 
-- **Carried** (patrol, routine, walking and running, down behind cover
-  until ticket 22's poses): the Pistol hangs at the right thigh in the
+- **Carried** (patrol, routine, walking and running): the Pistol hangs at the right thigh in the
   right hand, the left arm free to its clip; a long gun is held low across
   the body, muzzle down and to the left, both hands on it. Placed from the
   chest bone as the clip moves it, so it rides Idle, Walk and Run.
@@ -286,8 +287,82 @@ it.
   (the shot sound rings there too). The Marksman Rifle's sight line starts
   at the same marker. The clear-shot test sweeps from that point (see A
   clear shot).
+- **Down behind cover** (blended in with the body's pose): a long gun held
+  in close, muzzle up and across to the left, so it keeps out of the prop
+  it hides behind (a cover tile's prop face is 0.55 m ahead); the Pistol in
+  both hands at the chest, muzzle up (`CrewGun.DOWN_LONG`, `DOWN_PISTOL`).
+- **Reloading** (crew-combat ticket 22; never aimed while reloading): the
+  gun tipped up and left (`RELOAD_LONG`, `RELOAD_PISTOL`) and the left hand
+  off it along a way timed to the reload's progress (`RELOAD_WAY`): to the
+  magazine well (`WELLS`, measured off each model's magazine), the old
+  magazine pulled clear, down to the pouch on the belt (`BELT`, off the
+  hips bone), up to the well with the new one, held there while it seats,
+  and back onto the fore-end. The Shotgun goes from its loading port to the
+  belt and back for every shell (`SHELL_WAY`, by the shell's own time). No
+  reload clip was used: the rig has none, and the library's
+  `Pistol_Reload` would need a retarget in Blender onto a different
+  skeleton (`issues/02`), so this is still made in code, along a smooth
+  way through seven places rather than the prototype's three. The magazine
+  itself does not leave the gun.
 - **Dead**: the gun is hidden and its modifier stops, so nothing is left to
   pick up.
+
+### A Guard's body in a fight
+
+From `.scratch/crew-combat/issues/22-guards-poses-in-a-fight.md`
+(`CrewPose`, `Crew3D.pose`; the stance is `CrewCover`'s). A skeleton
+modifier over whatever clip plays, run before the gun's, as the look
+prototype posed it: the hips (`Body` bone) lowered and moved back, the
+spine leaned over its three bones, the head turned, and each leg's two
+bones solved onto its foot. The numbers start from the prototype's
+(`prototype/crew-look`: `DOWN`, `DOWN_KNEE`, `DOWN_DEEP`, `RUN_LOW`); where
+they changed it is for a rule below.
+
+- **Down behind cover: a squat or one knee**, picked again at every drop
+  (every `CrewCover._get_down`: on reaching a spot, ducking back after a
+  peek over low cover, stepping back behind full cover), from a shuffled
+  bag of three squats and two knees (`CrewCover.SQUATS`, `KNEES`), so three
+  drops in five are squats and the order never repeats. The bag draws from
+  its own generator seeded off the body's (`_stance_rng`), so picking a
+  stance changes no other draw.
+  - **Squat** (`CrewPose.SQUAT`: hips down 0.76 m and back 0.17 m, the spine
+    leaned 56 degrees): the top of its head zone at 0.99 m, under a 1.1 m
+    crate; its capsule's top 0.82 m. The prototype's squat (0.72 m, 38
+    degrees) put the head's top at 1.14 m, over a crate, so it went lower;
+    the hips go back so the head stays clear of the crate's face.
+  - **One knee** (`KNEE`: hips down 0.54 m, the right foot back 0.5 m, toes
+    down, the knee just off the floor): the top of its head zone at 1.35 m
+    (centre 1.19 m), so it shows over a 1.1 m crate and a level shot at
+    1.2 m strikes it, a Headshot; its capsule's top 1.0 m.
+  - **The capsule follows the stance** (`CrewPose.BODY_TOP`, set by
+    `CrewCover._crouch`), the top of its back and shoulders in that pose:
+    under a crate's top either way, so the body cannot be hit over low
+    cover; above it, only the head zone. It changes at once as the Guard
+    goes down or stands; the drawn pose takes 0.15 s down and 0.2 s up
+    (the gun's own blend, so a popped up Guard is up as its gun is).
+  - **The head zone** rides the head bone, which the pose moves even on a
+    body the ship's reveal hides (only the legs and feet are left out
+    there), so a hidden Guard's head is where its stance puts it.
+- **Duck at a near miss**: down, it ducks lower for 0.5 s
+  (`SQUAT_DEEP`, `KNEE_DEEP`), 0.12 s in.
+- **Pop up** over low cover: stands (the body's clip, `Idle_Gun_Pointing`)
+  as the gun comes up to the aimed hold.
+- **Step out** from full cover and back (`CrewCover.stepping`: out to its
+  firing tile, up there, and back): its feet step. Each foot stays planted
+  where it stands in the world while the other steps (0.14 s, lifted 7 cm)
+  toward where the clip would put it, led by the body's speed; a foot
+  steps when it is 8 cm or 25 degrees from there. It walks out and back at
+  `CrewPose.STEP_SPEED` (0.45) of its speed so the steps keep up, and plays
+  its standing clip, not a run. Down again, the feet blend into the stance
+  over 0.15 s.
+- **Reloading**: the head turns down and to the gun; the arms are the
+  gun's (above).
+- **Runs**: running to low cover (`CrewCover.low`, walking to its spot) the
+  hips go down 0.3 m and it leans into it (`RUN_LOW`); to full cover, to a
+  hiding place, to an ambush or with nowhere to go it runs upright.
+- **Cost**: standing as the clip has it, the pose does nothing. About 2.3 s
+  of the `crew` suite's run is the pose (most of it Guards down in the
+  long fights); the gun's arm solve is about 9 s.
 
 ### Magazines and reloads
 
@@ -388,7 +463,13 @@ each leg a prop would block round it:
     member on routine working at a prop or waiting, or one with no routine
     stood still between wanders, steps off the walker's way
     as below and waits; one that was working then walks back to its spot
-    and works the Job again from the start. If both are
+    and works the Job again from the start. A Guard holding its spot in a
+    fight (down in cover, a Shotgun in ambush) never makes way: a walker
+    out of the fight blocked by one with no way round gives that walk up
+    and stands 1.5 s (`BLOCKED_PAUSE`) before it walks anywhere again
+    (crew-combat ticket 22: a searching Guard walked into a Shotgun in
+    ambush in a one-wide way and stood there pushing for the rest of the
+    fight). If both are
     walking, **only one of the pair acts**: the one that can (has a way
     round, or an open tile within 5 steps whose centre is 1 m or more off
     the other's way, reached without passing through a body:
@@ -551,9 +632,10 @@ its rules and numbers kept.
   half the time it stays down half a time down longer rather than bob.
   Bursts never start within 0.3 s of another crew member's fighting the
   same Pirate.
-- **Down**, the body is sunk 0.8 m into the floor and its capsule cut to
-  55 % (0.94 m), so low cover hides it and its head zone. This is the
-  prototype's stand-in until "Guards' poses in a fight".
+- **Down**, it squats or kneels on one knee, picked again at every drop,
+  its capsule cut to that stance's top (0.82 m or 1.0 m); squatting, low
+  cover hides its head zone too; on one knee the top of its head shows. See
+  A Guard's body in a fight.
 - **Leaving a spot** (checked while down):
   - **Flanked**: he can see it crouched for 0.4 s: it picks again (that
     holds for a Guard hiding with no shot too).
@@ -966,7 +1048,7 @@ and `crew.gd` (`SEARCH_AWARENESS`, `INVESTIGATE_SPEED`, `INVESTIGATE_LINGER`,
 `JOB_GIVE_UP`, `CORNERED_RANGE`, `HIDE_CHANCE`,
 `GUARD_REACH`, `COWER_CALM`, `PANEL_REACH`,
 `ON_EDGE_PAUSE`, `SWEEP_PAUSE`, `MUZZLE_BALL`,
-`MUZZLE_TARGET_GAP`, `MUZZLE_NEAR`, `OWN_COVER`, `FIRING_STEP`, `RELOAD_HEIGHT`, `UNSTICK_AFTER`,
+`MUZZLE_TARGET_GAP`, `MUZZLE_NEAR`, `OWN_COVER`, `FIRING_STEP`, `RELOAD_HEIGHT`, `UNSTICK_AFTER`, `BLOCKED_PAUSE`,
 `UNSTICK_MOVE`, `SIDESTEP`, `GIVE_WAY_NEAR`, `GIVE_WAY_PASSED`,
 `GIVE_WAY_WAIT`, `GIVE_WAY_INSIST`), `crew_paths.gd` (`CLEARANCE`, `SAMPLE`,
 `SNAP`, `BODY_GAP`, `MAKE_WAY_REACH`, `MAKE_WAY_CLEAR`), `crew_perception.gd` (`ON_EDGE_FACTOR`),
@@ -983,12 +1065,17 @@ and `crew.gd` (`SEARCH_AWARENESS`, `INVESTIGATE_SPEED`, `INVESTIGATE_LINGER`,
 `UNSEEN_ADVANCE`, `UNSEEN_SEARCH`, `NEAR_MISS`, `NEAR_MISS_HOLD`,
 `LOOK_HIDING`, `LOOK_OPEN`, `COVER_FIRE`, `COVER_WAIT`, `FLANK_SPOT_REACH`,
 `ARRIVE_DOWN`, `MOVE_GIVE_UP`,
-`UNREACHABLE_FOR`, `STEP_GIVE_UP`, `OPEN_PAUSE`, `SINK`, `CROUCH`,
+`UNREACHABLE_FOR`, `STEP_GIVE_UP`, `OPEN_PAUSE`, `SQUATS`, `KNEES`,
 `TOP_UP_UNSEEN`, `BREAK_OFF`, `BACK_AWAY`, `BACK_AWAY_SPEED`),
 `crew_habit.gd` (`SHOTGUN_CLOSE`, `SHOTGUN_HOLD_FIRE`, `AMBUSH_REACH`,
 `RACK_LEAD`, `RACK_EARLIEST`, `RACK_LATEST`, `PERCH_RADIUS`, `PERCH_LINE`,
 `W_LINE`, `PERCH_TRIED`, `PERCH_CLOSE`, `SIGHT_LOCK`, `HIP_CONE`,
 `HIP_SETTLE`), `crew_sight_line.gd` (`WIDTH`, `COLOUR`),
+`crew_pose.gd` (`SQUAT`, `KNEE`, `SQUAT_DEEP`, `KNEE_DEEP`, `RUN_LOW`, `STEP`,
+`BODY_TOP`, `DROP_TIME`, `RISE_TIME`, `FLINCH_IN`, `FLINCH`, `RELOAD_LOOK`,
+`STEP_TRIGGER`, `STEP_TURN`, `STEP_TIME`, `STEP_LIFT`, `STEP_SPEED`),
+`crew_gun.gd` (the holds, `HOLDS`, `WELLS`, `BELT`, `WELL_CLEAR`,
+`RELOAD_WAY`, `SHELL_WAY`),
 `crew_traces.gd` (`LOOK_EVERY`, `REACH`, `AWARENESS`, `AIM_HEIGHT`),
 `ship_alarm.gd` (`RED`, `PULSE_*`), `alarm_panel.gd` (`ROLES`, `SIZE`, `HEIGHT`),
 `crew_types.gd` (`GUARD_ROLES`, `WORKER_ROLES`), `HEARD_NOISE`, `HEARD_GUNSHOT`, `HEARD_CAP`) and
