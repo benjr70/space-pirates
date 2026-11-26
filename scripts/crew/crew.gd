@@ -28,7 +28,9 @@ signal shell_loaded
 signal reload_ended(broken: bool)
 
 ## Newer states go last so the older ones keep their numbers.
-enum State { PATROL, HUNT, FIGHT, COVER, SEARCH, DEAD, INVESTIGATE, FLEE, COWER }
+## COWER is a Worker hiding ([CrewHiding]); REPORT, a Worker come out of
+## hiding walking to raise the Alarm or a Guard.
+enum State { PATROL, HUNT, FIGHT, COVER, SEARCH, DEAD, INVESTIGATE, FLEE, COWER, REPORT }
 
 ## Called on every node in this group, with the crew member, each time one
 ## tips into spotted: the HUD's sting and markers listen here.
@@ -67,10 +69,12 @@ const CHAT_TIME := Vector2(3.0, 5.0)
 const CHAT_COOLDOWN := 40.0
 ## Seconds walking toward one Job before giving it up as unreachable.
 const JOB_GIVE_UP := 30.0
-## A Worker with the Pirate this close and in sight is cornered: it cowers
-## where it is rather than run.
+## A Worker with the Pirate this close and in sight is cornered
+## ([method _cornered]): read by the smoke run's bot; Surrender (crew-combat
+## ticket 24) is to decide what it does.
 const CORNERED_RANGE := 3.0
-## Chance a spotted Worker hides where it is rather than run for a Guard.
+## Chance a Worker spotting him with the Alarm down freezes and hides rather
+## than run to raise it.
 const HIDE_CHANCE := 0.25
 ## A fleeing Worker has reached its Guard this close, and raises it.
 const GUARD_REACH := 2.5
@@ -80,9 +84,6 @@ const PANEL_REACH := 0.9
 const ON_EDGE_PAUSE := 0.5
 ## Under the Alarm, a sweeping Guard's pause at each Room it checks.
 const SWEEP_PAUSE := 1.5
-## Seconds a hiding Worker stays put with nothing in sight before it
-## creeps back to its routine.
-const COWER_CALM := 15.0
 ## A crew member trying to walk that moves less than UNSTICK_MOVE metres in
 ## UNSTICK_AFTER seconds is stuck and works itself loose: re-routes, then
 ## steps SIDESTEP metres aside.
@@ -217,6 +218,11 @@ var pose: CrewPose
 var _flee_to: Crew3D
 ## The Alarm Panel a fleeing Worker is running to, instead of a Guard.
 var _flee_panel: AlarmPanel
+## A Worker's hiding ([CrewHiding]), which drives its COWER state; null for
+## a Guard.
+var hiding: CrewHiding
+## Set while [method _hide] enters COWER after a roll: freeze first.
+var _freeze_next := false
 var _alarm: ShipAlarm
 ## The physics frame this crew member last started a burst on, so no two
 ## start in step ([method CrewCombat.burst_blocked]).
@@ -277,8 +283,6 @@ var _trace: Node3D
 var _trace_timer := 0.0
 ## Traces this crew member gave up on reaching: it does not keep going back.
 var abandoned_traces: Array[Node3D] = []
-## A Worker running to raise the Alarm over a trace does not stop to hide.
-var _no_hiding := false
 ## Chance this Worker hides rather than runs; [constant HIDE_CHANCE] unless
 ## a test wants it certain.
 var hide_chance := HIDE_CHANCE
@@ -362,6 +366,8 @@ func _ready() -> void:
 	if not is_worker():
 		magazine = CrewMagazine.new(self)
 		cover = CrewCover.new(self)
+	else:
+		hiding = CrewHiding.new(self)
 	_gap_jitter = CrewCombat.jitter(_rng)
 	_new_burst()
 	_dress()
@@ -544,12 +550,14 @@ func take_damage(amount: int, from: Node = null) -> void:
 		_seen_ago = 0.0
 	if perception.alert():
 		_announce_spotted()
+	if hiding != null:
+		# A Worker shot and alive hides, with no roll, and never comes out.
+		hiding.wounded = true
+		_hide()
+		return
 	match state:
 		State.PATROL, State.SEARCH, State.INVESTIGATE:
 			_react_spotted()
-		State.FLEE:
-			if _cornered():
-				_enter(State.COWER)
 
 
 func _physics_process(delta: float) -> void:
@@ -588,7 +596,9 @@ func _physics_process(delta: float) -> void:
 		State.FLEE:
 			_tick_flee()
 		State.COWER:
-			_tick_cower()
+			_tick_cower(delta)
+		State.REPORT:
+			_tick_report()
 
 	var waiting := _waiting_to_pass(delta)
 	_steer(delta, waiting)
@@ -629,6 +639,8 @@ func _update_perception(delta: float) -> void:
 			_last_seen = target.global_position
 			_seen_ago = 0.0
 			_hunting_trace = false
+			if hiding != null:
+				hiding.noticed()
 			_exposed_for += delta
 			_share_timer -= delta
 			if not is_worker() and _share_timer <= 0.0:
@@ -667,6 +679,11 @@ func _break_sight() -> void:
 ## off their mates' footsteps and doors, not their gunfire. Returns whether
 ## it took any notice.
 func hear(at: Vector3, kind: CrewNoise.Kind, source: Node = null) -> bool:
+	if state == State.COWER and hiding != null and not source is Crew3D:
+		# A sound of him keeps a hiding Worker hidden ([CrewHiding]). (Workers'
+		# poses, crew-combat ticket 25, duck lower at a gunshot here.)
+		hiding.noticed()
+		return true
 	if state == State.DEAD or _in_combat():
 		return false
 	if kind != CrewNoise.Kind.GUNSHOT and source is Crew3D:
@@ -726,9 +743,8 @@ func _report(trace: Node3D) -> void:
 		# a crew member already suspicious of something else.
 		_enter(State.PATROL if is_worker() else State.SEARCH)
 	elif is_worker():
-		_no_hiding = true
+		# No roll to hide: straight for a panel, or a Guard.
 		_enter(State.FLEE)
-		_no_hiding = false
 	else:
 		perception.awareness = 1.0
 		_enter(State.HUNT)
@@ -745,17 +761,31 @@ func _in_combat() -> bool:
 	return state in [State.HUNT, State.FIGHT, State.COVER, State.FLEE, State.COWER]
 
 
-## Just spotted him: a Guard hunts him; a Worker runs, unless he is right
-## on top of it, when it cowers where it is.
+## Just spotted him: a Guard hunts him. A Worker, with the Alarm down,
+## runs for the nearest working Alarm Panel, else the nearest living Guard,
+## three times in four, and one time in four freezes 1 s and hides; with
+## neither panel nor Guard, or wounded, or with the Alarm up, it hides.
 func _react_spotted() -> void:
 	if not is_worker():
 		_enter(State.HUNT)
 		_share_timer = CrewCombat.SHARE_EVERY
 		CrewCombat.share(self, _last_seen)
-	elif _cornered():
-		_enter(State.COWER)
+	elif hiding.wounded or _alarm_raised() or (_nearest_panel() == null and _nearest_guard() == null):
+		_hide()
+	elif hiding.rolls_hide():
+		_hide(true)
 	else:
 		_enter(State.FLEE)
+
+
+## A Worker goes to hide (COWER), frozen 1 s first when [param freeze]; one
+## already hiding carries on.
+func _hide(freeze := false) -> void:
+	if state == State.COWER or state == State.DEAD:
+		return
+	_freeze_next = freeze
+	_enter(State.COWER)
+	_freeze_next = false
 
 
 ## The Pirate is in sight and within arm's reach of a Worker.
@@ -827,6 +857,8 @@ func _flat_distance(a: Vector3, b: Vector3) -> float:
 func _enter(next: State) -> void:
 	if cover != null and not next in [State.FIGHT, State.COVER]:
 		cover.release()
+	if hiding != null and next != State.COWER:
+		hiding.release()
 	state = next
 	_stop_giving_way()
 	_speed_scale = 1.0
@@ -860,19 +892,17 @@ func _enter(next: State) -> void:
 		State.FLEE:
 			_flee_panel = null
 			_flee_to = null
-			if not _no_hiding and _rng.randf() < hide_chance:
-				_enter(State.COWER)
-				return
 			_pick_flight()
 		State.COWER:
 			_flee_to = null
 			_flee_panel = null
-			_hold_timer = COWER_CALM
-			var spot := _find_cover_point()
-			if spot != Vector3.INF:
-				_repath_to(spot)
+			if hiding != null:
+				hiding.begin(_freeze_next)
 			else:
 				_path.clear()
+		State.REPORT:
+			_speed_scale = ROUTINE_SPEED
+			_pick_report()
 		State.SEARCH:
 			perception.on_edge = true
 			perception.awareness = minf(perception.awareness, SEARCH_AWARENESS)
@@ -909,7 +939,7 @@ func _glance() -> void:
 func _tick_routine() -> void:
 	if _alarm_raised():
 		if is_worker():
-			_enter(State.COWER)
+			_hide()
 		else:
 			_tick_sweep()
 		return
@@ -1192,19 +1222,18 @@ func _on_target_fired() -> void:
 	cover.near_miss(camera.global_position, -camera.global_basis.z)
 
 
-## A Worker running to the nearest Guard to raise it; it hides on arrival,
-## and cowers where it is if cornered on the way.
+## A Worker running for an Alarm Panel to raise it, or for the nearest
+## Guard to raise it; it hides on arrival. If its Guard dies on the way it
+## runs on to the next.
 func _tick_flee() -> void:
-	if _cornered():
-		_enter(State.COWER)
-		return
 	if _flee_panel != null:
 		if _flee_panel.broken or _alarm_raised():
 			# Shot out, or someone beat it there: somewhere else to run.
 			_pick_flight()
 		elif _flat_distance(global_position, _flee_panel.use_at) <= PANEL_REACH:
 			_raise_alarm()
-			_enter(State.COWER)
+			# (The Alarm itself sends it to hide: see on_alarm.)
+			_hide()
 		elif _repath_timer <= 0.0:
 			_repath_to(_flee_panel.use_at)
 		return
@@ -1212,28 +1241,79 @@ func _tick_flee() -> void:
 		# Its Guard is gone: on to the next one, without a second roll to hide.
 		_flee_to = _nearest_guard()
 		if _flee_to == null:
-			_enter(State.COWER)
+			_hide()
 		else:
 			_repath_to(_flee_to.global_position)
 		return
 	if _flat_distance(global_position, _flee_to.global_position) <= GUARD_REACH:
 		_raise(_flee_to)
-		_enter(State.COWER)
+		_hide()
 		return
 	if _repath_timer <= 0.0:
 		_repath_to(_flee_to.global_position)
 
 
-## Tucked behind cover, cornered or not, and once nothing has been seen for
-## a while creeps back to its routine.
-func _tick_cower() -> void:
-	if _can_see or _alarm_raised():
-		# Under the Alarm a Worker stays hidden for good.
-		_hold_timer = COWER_CALM
-	if _path.is_empty() and _hold_timer <= 0.0:
-		perception.awareness = CrewPerception.SUSPICIOUS * 0.5
-		perception.on_edge = true
+## Hiding ([CrewHiding]): frozen, running to its hiding place, or on it.
+## It comes out ([method _come_out]) only with the Alarm down, after
+## [constant CrewHiding.COME_OUT] seconds with no sight or sound of him, and
+## never once wounded.
+func _tick_cower(delta := -1.0) -> void:
+	if hiding == null:
+		return
+	hiding.tick(delta if delta >= 0.0 else get_physics_process_delta_time())
+
+
+## Out of hiding, On Edge: it walks to the nearest working Alarm Panel or
+## Guard to report him (REPORT); with neither it goes back to its routine.
+func _come_out() -> void:
+	perception.awareness = CrewPerception.SUSPICIOUS * 0.5
+	perception.on_edge = true
+	if _nearest_panel() == null and _nearest_guard() == null:
 		_enter(State.PATROL)
+	else:
+		_enter(State.REPORT)
+
+
+## Where a Worker come out of hiding walks to report him: the nearest
+## working Alarm Panel, else the nearest living Guard; with neither, back to
+## its routine.
+func _pick_report() -> void:
+	_flee_panel = _nearest_panel()
+	_flee_to = null if _flee_panel != null else _nearest_guard()
+	if _flee_panel != null:
+		_repath_to(_flee_panel.use_at)
+	elif _flee_to != null:
+		_repath_to(_flee_to.global_position)
+	else:
+		_enter(State.PATROL)
+
+
+## Walking On Edge to report him: at a working panel it raises the Alarm
+## (which sends it to hide), at a Guard it alerts it to where it last saw
+## him; then back to its routine. Spotting him again on the way, it reacts
+## as to any spotting.
+func _tick_report() -> void:
+	if _spotted():
+		_react_spotted()
+		return
+	if _flee_panel != null:
+		if _flee_panel.broken:
+			_pick_report()
+		elif _flat_distance(global_position, _flee_panel.use_at) <= PANEL_REACH:
+			_raise_alarm()
+			if state == State.REPORT:
+				_enter(State.PATROL)
+		elif _repath_timer <= 0.0:
+			_repath_to(_flee_panel.use_at)
+		return
+	if _flee_to == null or not is_instance_valid(_flee_to) or not _flee_to.is_alive():
+		_pick_report()
+		return
+	if _flat_distance(global_position, _flee_to.global_position) <= GUARD_REACH:
+		_raise(_flee_to)
+		_enter(State.PATROL)
+	elif _repath_timer <= 0.0:
+		_repath_to(_flee_to.global_position)
 
 
 ## Where a fleeing Worker runs: while the Alarm is down, the nearest working
@@ -1247,7 +1327,7 @@ func _pick_flight() -> void:
 		return
 	_flee_to = _nearest_guard()
 	if _flee_to == null:
-		_enter(State.COWER)
+		_hide()
 	else:
 		_repath_to(_flee_to.global_position)
 
@@ -1284,15 +1364,19 @@ func _raise_alarm() -> void:
 
 
 ## The ship's Alarm went up, the Pirate last known at [param at]: every
-## routine stops. A Guard not already fighting hunts there; a Worker not
-## already running or fighting hides. Everyone is On Edge from now on.
+## routine stops. A Guard not already fighting hunts there; every Worker
+## not already hiding runs to a hiding place, one running for a Guard or
+## walking to report included. Everyone is On Edge from now on.
 func on_alarm(at: Vector3) -> void:
 	if state == State.DEAD:
 		return
 	perception.on_edge = true
 	if is_worker():
-		if state in [State.PATROL, State.INVESTIGATE, State.SEARCH]:
-			_enter(State.COWER)
+		if state in [State.PATROL, State.INVESTIGATE, State.SEARCH, State.REPORT]:
+			# It has not seen him: it hides from where the Alarm says he is.
+			_last_seen = at
+		if state != State.COWER:
+			_hide()
 		return
 	if state in [State.PATROL, State.INVESTIGATE, State.SEARCH]:
 		_last_seen = at

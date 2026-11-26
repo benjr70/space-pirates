@@ -10,7 +10,8 @@ being built toward is `.scratch/crew-combat/spec.md`, after spec #52
 
 | File | What it owns |
 |---|---|
-| `crew.gd` (`Crew3D`) | The body: movement, health, animation, door handling, gunnery, a Worker's cover search, and the state machine that ties them together. |
+| `crew.gd` (`Crew3D`) | The body: movement, health, animation, door handling, gunnery, and the state machine that ties them together. |
+| `crew_hiding.gd` (`CrewHiding`) | One Worker's hiding: the 1 s freeze, the hide roll (from the ship's seed), picking a hiding place (a corner out of sight of the Room's doorways, far from him and the Guards' cover), the fair run there, staying put, giving its tile up to a Guard, and when it comes out. Every Worker holds one (`Crew3D.hiding`); it drives the Worker's COWER state. Null for a Guard. |
 | `head_zone.gd` (`HeadZone`) | The head: a 0.16 m ball on physics layer 4, riding the rig's `Head` bone through a `BoneAttachment3D`, so a bolt that strikes it is a Headshot. The capsule stays the body. |
 | `crew_perception.gd` (`CrewPerception`) | Awareness: the sight cone, how fast Awareness fills and drains, and its bands. Pure arithmetic, tested without physics. |
 | `crew_types.gd` (`CrewTypes`) | Guard or Worker, from the Post Room's Role. |
@@ -73,7 +74,14 @@ standing in a one-wide gap with a way round (passed within 15 s), a Worker
 working in a dead-end lane making way for one walking out (out within 11 s,
 the Worker back at its spot), two Workers sharing one work spot,
 bodies and other traces, routes into the pod, the Alarm and its panels, Headshots, and 60 simulated seconds of routines
-on a generated medium ship ending in the Alarm), plus the crew fight and
+on a generated medium ship ending in the Alarm; and Workers running and
+hiding: no Worker bolt in the whole suite, the hide roll over 400 spottings
+and its replay from the ship's seed, the freeze and a fair run to a corner,
+staying put with him 5 m off in its sight, giving its tile up to a Guard,
+the wounded hiding for good, coming out after 20 s to raise the Alarm or
+back to its routine with nothing to raise, the hiding sweep over 20 medium
+ships, and 60 s of a fight on a generated medium ship under the Alarm with
+every Worker in a corner by 25 s and none on a Guard's tile), plus the crew fight and
 each Guard's rolled gun in `tests/test_ship_3d.gd`, the gun roll's caps and
 shares in `tests/test_generator.gd`, and whole Raids in
 `tests/test_raid_smoke.gd`.
@@ -91,21 +99,9 @@ its Post Room's Role (`CrewTypes.for_role`):
 
 - **Guards** walk patrol loops (see Routines) and, once spotted, hunt and fight
   as described under States.
-- **Workers** walk work loops. Spotted, a Worker does not hunt. One time in
-  four it **cowers** behind cover where it is; otherwise it **flees**: to the
-  nearest working Alarm Panel while the Alarm is down (raising it on arrival,
-  see Alarm), else to the nearest living Guard, else it cowers. Reaching within
-  2.5 m of a Guard it **raises** it (the Guard gets the Pirate's last-seen
-  position, goes to Awareness 1 and hunts) and then cowers. If its Guard dies
-  on the way it runs on to the next, without a second roll to hide. A cowering Worker returns to its
-  routine after 15 s with nothing in sight, at Awareness 0.15.
-- A Worker is **unarmed**: no weapon and no Gunnery (`weapon` and
-  `gunnery` are null from spawn). **Cornered** (the Pirate in sight within
-  3 m), it cowers where it is (COWER) instead of running, and stays
-  cowering while he is in sight; shot while fleeing and cornered, the same.
-  A Worker that loses him hides (COWER) where a Guard would search. (The
-  Workers ticket of the crew-combat spec replaces cowering with running and
-  hiding.)
+- **Workers** walk work loops, are **unarmed** (no weapon and no Gunnery:
+  `weapon` and `gunnery` are null from spawn) and never fight. Spotted, a
+  Worker runs or hides (see "Workers: running and hiding" below).
 - Guards wear the dark Quaternius Soldier; Workers wear the Engineer, the
   Soldier's body and skeleton re-dressed in Blender in orange coveralls with
   reflective bands, an open helmet, a tool belt and air tanks
@@ -128,12 +124,15 @@ PATROL ──suspicious──▶ INVESTIGATE
                        nothing found ▶ PATROL
 ```
 
-That is a Guard. A Worker swaps HUNT for FLEE and SEARCH for COWER:
+That is a Guard. A Worker swaps HUNT for FLEE, and COWER is hiding:
 
 ```
-PATROL / INVESTIGATE ──spotted──▶ FLEE ──reached its Guard──▶ COWER ──15 s calm──▶ PATROL
-        │                          │                             ▲
-        └──spotted, cornered (≤3 m)┴──────cornered (≤3 m)────────┘
+PATROL / INVESTIGATE ──spotted, 3 in 4──▶ FLEE ──raised a panel or a Guard──▶ COWER (hiding)
+        │                                                                      ▲    │
+        ├──spotted, 1 in 4: freeze 1 s─────────────────────────────────────────┘    │ Alarm down, 20 s with no
+        ├──spotted with the Alarm up, wounded, or no panel and no Guard─────────────┘ │ sight or sound of him,
+        └──the Alarm──────────────────────────────────────────────▶ COWER            ▼ not wounded
+                                                       PATROL ◀──raised it── REPORT (On Edge, walking)
 ```
 
 - **PATROL**: on routine (see Routines below): walking its loop of Jobs at
@@ -569,8 +568,8 @@ clears it. Sealed Hatches never open, so are never traces.
 - Within 1.6 m it **reports** the trace, once: the trace is marked and no
   crew member reacts to it again. The finder goes On Edge and takes the
   trace's position as the last place the Pirate was. Then:
-  - **serious**: a **Worker** flees as if it had spotted him, without the
-    chance to hide: to an Alarm Panel while the Alarm is down, else to a Guard.
+  - **serious**: a **Worker** flees as if it had spotted him, with no roll
+    to hide: to an Alarm Panel while the Alarm is down, else to a Guard.
     A **Guard** hunts from there and shares the position with nearby Guards;
     for the boarding Hatch, the place it hunts is inside the Pirate's
     Boarding Pod.
@@ -925,6 +924,77 @@ How several Guards fight him as one (`CrewCover`, `CrewTeam`), from
   nearer him than the one it holds, once picks a spot at least 1 m further
   from him (`_fall_back`), and holds. It does not flee or surrender.
 
+## Workers: running and hiding
+
+Crew-combat ticket 23 (`.scratch/crew-combat/issues/23-unarmed-workers-run-and-hide.md`).
+`CrewHiding` holds the rules; Worker states are FLEE (running to raise the
+Alarm or a Guard), COWER (hiding) and REPORT (come out, walking to report).
+
+- **Spotting him, Alarm down** (`Crew3D._react_spotted`): three times in four
+  it **flees** to the nearest working Alarm Panel (raising the Alarm on
+  arrival, see Alarm), else to the nearest living Guard; reaching within
+  2.5 m of a Guard it **raises** it (the Guard gets the Pirate's last-seen
+  position, goes to Awareness 1 and hunts), then hides. If its Guard dies
+  on the way it runs on to the next, with no second roll. One time in four
+  (`HIDE_CHANCE`, 0.25) it **freezes** 1 s where it stands, then runs to a
+  hiding place. With no working panel and no living Guard it hides with no
+  roll. The roll draws from the Worker's own generator, seeded from the
+  ship's seed (`ShipLayout.gen_seed`) and its spawn tile, so a Retry of the
+  same ship rolls the same and no other draw moves; on a hand-built layout
+  with no seed it is seeded off the crew member's own.
+- **Spotting him with the Alarm up**, or wounded: it hides, no roll.
+- **The Alarm going up**: every Worker not already hiding runs to a hiding
+  place; one on its way to a Guard, or walking to report, switches.
+- **A hiding place** (`CrewHiding.find`): an open floor tile, never on an
+  Apron (the 2 tiles in front of a doorway, so it never blocks one), never a
+  tile a Guard holds as cover or another Worker hides on or runs to. Scored:
+  a corner or a wedge between wall and prop (a wall or prop on two or more
+  of its four sides) 100, so it takes one whenever one is in reach; out of
+  sight of every doorway of its Room (no clear line at 1.5 m from the tile
+  to the middle of each Door and Hatch, 0.55 m inside the Room) 30; far from
+  him, up to 20 at 14 m; within 2 m of a Guard's cover spot, less 20. The
+  doorway sight and the sides are worked out by ray once per Room and kept
+  on the layout. It looks in its **Post Room** first; of the best 8 tiles
+  there it takes the first whose run is fair; with none, the Rooms joined
+  to the Room it stands in (and that Room), furthest from him first. With
+  no fair run anywhere it **hides where it stands** (`no_way_out`) and
+  looks again each second.
+- **The run**: full speed, along the route it will walk (the door graph and
+  `CrewPaths`), which never comes nearer him than both its ends do, less
+  1 m (the Guards' fair-walk rule without the open-floor limit), sampled
+  every 0.5 m. Of the fair runs it prefers one that does not cross the line
+  between him and a Guard fighting him; it takes one that does only when no
+  other of the 8 avoids it. A run that has not arrived in 30 s gives that
+  tile up for the next.
+- **Hidden**: on its tile (within 0.5 m) it stands still, back to the wall,
+  facing into the Room, and turns to watch him while he is in sight. Found,
+  it stays put; a fight in its Room does not move it (stray shots can kill
+  it). A Guard claiming its tile (`CrewCover._claim` calls
+  `CrewHiding.guard_claimed`) sends it on to its next best at once.
+- **Coming out**: never with the Alarm up. With it down, after 20 s
+  (`COME_OUT`) with no sight (its all-round sight while in COWER) or sound
+  (his footsteps, shots and Doors; crew sounds do not count) of him, it
+  comes out On Edge at Awareness 0.15 and walks (routine speed) to the
+  nearest working panel, raising the Alarm, or the nearest living Guard,
+  raising it; then back to its routine (which under the Alarm means
+  hiding). With neither it goes back to its routine On Edge. A broken panel
+  on the way: the next panel, else a Guard. Spotting him on the way, it
+  reacts as to any spotting (a fresh roll). This replaced the 15 s silent
+  return: a witness left hiding costs the Pirate his Ghost.
+- **Wounded**: a Worker shot and alive always hides, with no roll, and
+  never comes out (`CrewHiding.wounded`).
+- **Cornered** (`Crew3D._cornered`: him in sight within 3 m) no longer
+  changes what a Worker does; the smoke run's bot still reads it, and
+  Surrender (ticket 24) is to use it.
+- **The look**: today's stance. A hiding Worker stands in the Idle clip
+  (the stand-in until Workers' poses, ticket 25); it runs in the Run clip.
+  For ticket 25: `CrewHiding.phase` (freezing, running, hidden, hiding where
+  it stands) and its `phase_changed` signal, `wounded`, and REPORT; a sound
+  of him reaching a hiding Worker arrives in `Crew3D.hear` (where it would
+  duck at a gunshot). For ticket 24: `CrewHiding.is_hidden()`, `spot` and
+  `no_way_out`; the hook for "he comes within 4 m, or his crosshair rests on
+  it" is marked at the end of `CrewHiding.tick`.
+
 ## Alarm
 
 **Alarm Panels** (`AlarmPanel.spots`): one in every Bridge and every Armory, on
@@ -932,26 +1002,29 @@ the wall beside the floor tile nearest the Room's centre that has wall straight
 behind it, is not a prop's tile, and is not beside a doorway or Hatch gap. The
 panel's screen glows orange; a crew member works it from the tile in front.
 
-**Raising**: a fleeing Worker that gets within 0.9 m of a working panel raises
-the **Alarm** (`ShipAlarm.raise`) with the Pirate's last-seen position, then
-cowers. Once raised it stays up for the rest of the Raid:
+**Raising**: a fleeing Worker, or one come out of hiding to report him
+(REPORT), that gets within 0.9 m of a working panel raises the **Alarm**
+(`ShipAlarm.raise`) with the Pirate's last-seen position, then hides. Once
+raised it stays up for the rest of the Raid:
 - every Room light turns red and pulses (55 %–100 %, ~0.5 Hz); working panels
   turn red; the HUD shows **ALARM RAISED**;
 - every crew member is told (`on_alarm`) and goes **On Edge**;
-- **routines stop**: Workers on routine, investigating or searching hide
-  (COWER) and never come out; Guards on routine, investigating or searching
+- **routines stop**: every Worker not already hiding runs to a hiding place
+  (COWER), one fleeing to a Guard or walking to report included, and never
+  comes out (a Worker that has not seen him hides from where the Alarm says
+  he is); Guards on routine, investigating or searching
   hunt the last-seen position, and once that goes cold they **sweep** the ship
   at full speed, Room to random Room, pausing 1.5 s in each, instead of their
-  patrol loop, giving up on a Room it has not reached in 30 s. Crew already
-  fighting or fleeing carry on.
+  patrol loop, giving up on a Room it has not reached in 30 s. Guards already
+  fighting carry on.
 
 **Breaking a panel**: the Pirate's shot breaks a panel (screen goes dark); crew
 shots do not. A broken panel raises nothing: a Worker running to it when it
 breaks re-picks the nearest working panel, then a Guard. Breaking one is a
 gunshot like any other, heard as far as the weapon's loudness (24 m).
 
-**On Edge**: a crew member that has lost the Pirate (entered SEARCH), crept
-back from hiding, or heard the Alarm is On Edge for the rest of the Raid: every
+**On Edge**: a crew member that has lost the Pirate (entered SEARCH), come
+out of hiding, or heard the Alarm is On Edge for the rest of the Raid: every
 spot time is **0.6×**, and a patrolling Guard pauses half as long at each stop.
 
 ## Routines
@@ -1046,7 +1119,7 @@ and `crew.gd` (`SEARCH_AWARENESS`, `INVESTIGATE_SPEED`, `INVESTIGATE_LINGER`,
 `GLANCE_DEGREES`, `TURN_RATE`, `INVESTIGATE_GIVE_UP`, `ROUTINE_SPEED`,
 `WALK_ANIM_SPEED`, `DOOR_CLOSE_AFTER`, `DOOR_FORGET`, `DOOR_ADOPT`, `CHAT_*`,
 `JOB_GIVE_UP`, `CORNERED_RANGE`, `HIDE_CHANCE`,
-`GUARD_REACH`, `COWER_CALM`, `PANEL_REACH`,
+`GUARD_REACH`, `PANEL_REACH`,
 `ON_EDGE_PAUSE`, `SWEEP_PAUSE`, `MUZZLE_BALL`,
 `MUZZLE_TARGET_GAP`, `MUZZLE_NEAR`, `OWN_COVER`, `FIRING_STEP`, `RELOAD_HEIGHT`, `UNSTICK_AFTER`, `BLOCKED_PAUSE`,
 `UNSTICK_MOVE`, `SIDESTEP`, `GIVE_WAY_NEAR`, `GIVE_WAY_PASSED`,
@@ -1076,6 +1149,9 @@ and `crew.gd` (`SEARCH_AWARENESS`, `INVESTIGATE_SPEED`, `INVESTIGATE_LINGER`,
 `STEP_TRIGGER`, `STEP_TURN`, `STEP_TIME`, `STEP_LIFT`, `STEP_SPEED`),
 `crew_gun.gd` (the holds, `HOLDS`, `WELLS`, `BELT`, `WELL_CLEAR`,
 `RELOAD_WAY`, `SHELL_WAY`),
+`crew_hiding.gd` (`FREEZE`, `COME_OUT`, the score's `W_*`, `FAR_FULL`,
+`GUARD_NEAR`, `DOORWAY_EYE`, `DOORWAY_IN`, `NEARER_SLACK`, `WALK_SAMPLE`,
+`TRIED`, `ON_TILE`, `RUN_GIVE_UP`, `LOOK_AGAIN`),
 `crew_traces.gd` (`LOOK_EVERY`, `REACH`, `AWARENESS`, `AIM_HEIGHT`),
 `ship_alarm.gd` (`RED`, `PULSE_*`), `alarm_panel.gd` (`ROLES`, `SIZE`, `HEIGHT`),
 `crew_types.gd` (`GUARD_ROLES`, `WORKER_ROLES`), `HEARD_NOISE`, `HEARD_GUNSHOT`, `HEARD_CAP`) and
@@ -1093,7 +1169,9 @@ weights, multipliers and caps are constants in `scripts/ship/gun_roll.gd`
 
 The crew's Awareness feeds the Pirate's XP (`RaidLedger`):
 - A crew member records, as it falls, whether it **died unaware**: not in
-  combat (HUNT, FIGHT, COVER, FLEE, COWER) and not spotted. A kill on one is
+  combat (HUNT, FIGHT, COVER, FLEE, COWER) and not spotted. A Worker come out
+  of hiding and walking to report (REPORT) is not in combat, at Awareness
+  0.15: killed then, it died unaware. A kill on one is
   worth **150 XP** against 100, and its toast reads "+150 XP unaware". A shot
   that only wounds spots the Pirate, so the kill that follows is a normal one.
 - A kill counts through the Pirate's hit report, which waits a step and a

@@ -42,7 +42,7 @@ extends SceneTree
 ## - **Quiet**: Assault Rifle out, crouch-walks in, shuts the boarding Hatch behind
 ##   him, loots one Container, comes back, extracts. He fires only at crew
 ##   that have noticed him (suspicious, or HUNT, FIGHT, COVER, a Worker
-##   fleeing to raise the Alarm, or one cowering cornered at his elbow),
+##   fleeing to raise the Alarm, or one hiding cornered at his elbow),
 ##   standing to do it. Plays for a Ghost
 ##   Extraction.
 ## - **Loud**: Assault Rifle out, walks to the first occupied Room and fires there,
@@ -888,7 +888,7 @@ func _on_shot(node: Node) -> void:
 ## Crouched all the way: in, Hatch shut behind him, one Container, back
 ## out, extract. He fires only at crew that have noticed him (suspicious of
 ## him, a Guard fighting or hunting him, a Worker running for a panel or
-## cowering cornered),
+## hiding cornered),
 ## standing up to do it. A Ghost Extraction is what it plays for; seen into
 ## an Alarm or shot down is a legitimate ending, counted against the floor.
 func _quiet() -> bool:
@@ -1418,7 +1418,7 @@ func _chest(member: Crew3D) -> Vector3:
 ## muzzle to the chest, within SIGHT, not given up on; a fleeing Worker
 ## first, then nearest first. With
 ## [param threats_only], only crew already after him: a Guard hunting or
-## fighting him, a Worker fleeing to raise the Alarm or cowering cornered,
+## fighting him, a Worker fleeing to raise the Alarm or hiding cornered,
 ## or anyone suspicious of him (_onto_him).
 func _targets(threats_only: bool) -> Array[Crew3D]:
 	var out: Array[Crew3D] = []
@@ -1468,8 +1468,8 @@ func _barrel_blocked() -> Crew3D:
 
 ## A crew member after him (THREAT_STATES), or one that has noticed him
 ## (suspicious, coming to look): shot before it spots him, it never
-## fires back and never runs for an Alarm Panel. A Worker cowering is
-## harmless and left be, unless it cowers cornered (him in its sight
+## fires back and never runs for an Alarm Panel. A Worker hiding (COWER,
+## crew-combat ticket 23) is harmless and left be, unless it hides cornered (him in its sight
 ## within Crew3D.CORNERED_RANGE): stood at his elbow it can wall off his
 ## way out (seen on the way to the home door, 0.7 m off, in a gate after
 ## crew-combat ticket 15), and before that ticket a cornered Worker fought

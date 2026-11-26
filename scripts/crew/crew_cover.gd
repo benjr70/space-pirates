@@ -628,6 +628,8 @@ func _claim(found: Dictionary, ambush := false, flank := false) -> void:
 	exposed = 0.0
 	ambushing = ambush
 	door_at = found.get("door", Vector3.INF)
+	# Guards come first: a Worker hiding on this tile moves on ([CrewHiding]).
+	CrewHiding.guard_claimed(crew, tile)
 	_stand()
 	# Already on it (a walk ends within its arrive radius, so a spot that
 	# near is still walked onto: its lines were judged from the centre).

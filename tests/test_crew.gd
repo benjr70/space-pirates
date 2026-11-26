@@ -57,10 +57,16 @@ var ambush_layout: ShipLayout
 ## Its Door, opened only while the ambush check runs: noise carries
 ## through any open Door joining Rooms of those indices, whatever the rig.
 var ambush_door: Door3D
+## Bolts fired in the whole suite by Workers, and by Guards (which shows the
+## count works), crew-combat ticket 23.
+var worker_bolts := 0
+var guard_bolts := 0
 
 
 func _initialize() -> void:
 	run_seed = SuiteSeed.pick("crew")
+	# Every bolt fired in the suite, by who fired it: no Worker ever fires.
+	node_added.connect(_count_bolt)
 	_check_pure()
 	world = Node3D.new()
 	root.add_child(world)
@@ -168,6 +174,10 @@ func _initialize() -> void:
 	_check_types()
 	_check_guns_carried()
 	await _check_cover_fight_on_ship()
+	await _check_hiding_sweep()
+	await _check_workers_in_fight()
+	await _check_hiding_rig()
+	_check_no_worker_shots()
 	await _silence()
 	_report()
 	quit(1 if failures.size() > 0 else 0)
@@ -677,8 +687,10 @@ func _has_fired(crew: Crew3D) -> bool:
 
 
 ## A Worker that spots the Pirate 8 m off runs for the Guard behind it and
-## does not shoot; cornered within 3 m it carries no weapon, never fires in
-## 30 s and cowers. Workers wear the Engineer, Guards the Soldier.
+## does not shoot; cornered within 3 m, with no panel and no Guard to run
+## to, it carries no weapon, never fires in 30 s and hides (COWER; it hid
+## where it stood before crew-combat ticket 23). Workers wear the Engineer,
+## Guards the Soldier.
 func _check_worker() -> void:
 	var guard := _crew(CrewTypes.Type.GUARD)
 	guard.global_position = Vector3(1.5, 0.0, 23.0)
@@ -718,7 +730,7 @@ func _check_worker() -> void:
 	var away := Vector3.FORWARD * 2.5
 	cornered.set_physics_process(true)
 	for i in roundi(CORNERED_SECONDS / STEP):
-		# He stays on top of it, 2.5 m off, wherever it cowers to.
+		# He stays on top of it, 2.5 m off, wherever it hides.
 		player.global_position = cornered.global_position + away
 		await physics_frame
 		if cornered._cornered():
@@ -729,7 +741,7 @@ func _check_worker() -> void:
 	_expect(cornered_frames * 10 >= frames * 9,
 			"cornered: the Worker had him in sight within 3 m on only %d of %d frames" % [cornered_frames, frames])
 	_expect(bolts == 0 and not _has_fired(cornered), "cornered: a Worker fired %d bolts in %.0f s within 3 m" % [bolts, CORNERED_SECONDS])
-	_expect(cornered.state == Crew3D.State.COWER, "cornered: a Worker is in state %d after %.0f s, not cowering" % [cornered.state, CORNERED_SECONDS])
+	_expect(cornered.state == Crew3D.State.COWER, "cornered: a Worker is in state %d after %.0f s, not hiding" % [cornered.state, CORNERED_SECONDS])
 	_expect(cornered.weapon == null, "cornered: a Worker picked up %s" % cornered.weapon)
 	cornered.free()
 	for shot in get_first_node_in_group(&"projectiles").get_children():
@@ -4919,3 +4931,502 @@ func _check_last_guard() -> void:
 		guard.free()
 	pirate.free()
 	_clear_shots()
+
+
+# --- Workers run and hide (crew-combat ticket 23) -----------------------------
+
+## Medium ships the hiding sweep picks hiding places on, seeds 1 to this.
+const HIDING_SWEEP := 20
+## Of the sweep's picks whose Room offers a corner out of sight of every
+## doorway, at least this share take one.
+const HIDDEN_SHARE := 0.8
+## Under the Alarm, every living Worker is near a corner within this.
+const HIDE_WITHIN := 25.0
+const TUCKED_NEAR := 0.5
+## Over this many spottings, between these shares of Workers hide.
+const SPOTTINGS := 400
+const HIDE_SHARE := Vector2(0.2, 0.3)
+## A wounded Worker is on its hiding tile within this, and still on it
+## this much later.
+const WOUNDED_HIDES := 15.0
+const WOUNDED_STAYS := 60.0
+## A hidden Worker leaves its tile this long after last noticing him,
+## within this.
+const LEAVE_AFTER := 20.0
+const LEAVE_TOLERANCE := 1.0
+## The Pirate in a hidden Worker's sight this far off, this long.
+const FOUND_AT := 5.0
+const FOUND_FOR := 10.0
+## The hiding rig: Room A 12 x 12 at x 4000, Room B 6 x 12 east of it
+## through a two-wide Door at (4012, 5); a wall of lockers at x 4004 from
+## y 7 to 11 makes a pocket in A's south-west the Door cannot see into.
+## Its own seed, so its Workers' rolls are the same on every run.
+const HIDE_X0 := 4000
+const HIDE_SEED := 5150
+var hide_layout: ShipLayout
+var hide_ship: Node3D
+
+
+func _count_bolt(node: Node) -> void:
+	if not node is Projectile3D:
+		return
+	var by := (node as Projectile3D).shooter as Crew3D
+	if by == null:
+		return
+	if by.is_worker():
+		worker_bolts += 1
+	else:
+		guard_bolts += 1
+
+
+## No Worker fired a bolt in any check of the suite; Guards did, so the
+## count was listening.
+func _check_no_worker_shots() -> void:
+	_expect(guard_bolts > 0 and worker_bolts == 0, "Workers fired %d bolts in the crew suite (Guards %d)" % [worker_bolts, guard_bolts])
+
+
+## A new world holding only the projectiles node and the Pirate, parked far
+## off, unkillable and still.
+func _fresh_world() -> void:
+	world.free()
+	world = Node3D.new()
+	root.add_child(world)
+	var shots := Node3D.new()
+	shots.add_to_group(&"projectiles")
+	world.add_child(shots)
+	player = load("res://scenes/player_3d.tscn").instantiate()
+	world.add_child(player)
+	player.set_physics_process(false)
+	player.health.max_health = 100000
+	player.health.reset()
+	player.state = player.State.WALK
+	player.global_position = Vector3(-500, 0, -500)
+
+
+## The open tile of [param room] nearest its centre, as a world point.
+func _middle_tile(ship_layout: ShipLayout, room: int, astar: AStarGrid2D) -> Vector3:
+	var middle := ShipBuilder3D.room_center_world(ship_layout.rooms[room])
+	var best := middle
+	var best_far := INF
+	for tile: Vector2i in ship_layout.rooms[room].tiles():
+		var at := ShipBuilder3D.tile_to_world(tile)
+		if _open_tile(astar, tile) and _flat(at, middle) < best_far:
+			best = at
+			best_far = _flat(at, middle)
+	return best
+
+
+## Within TUCKED_NEAR of the centre of a tile with a wall or a prop on two
+## or more sides.
+func _near_tucked(ship_layout: ShipLayout, at: Vector3) -> bool:
+	var t := ShipBuilder3D.world_to_tile(at)
+	for dx in [-1, 0, 1]:
+		for dy in [-1, 0, 1]:
+			var centre := ShipBuilder3D.tile_to_world(t + Vector2i(dx, dy))
+			if _flat(centre, at) <= TUCKED_NEAR and CrewHiding.tucked(ship_layout, centre):
+				return true
+	return false
+
+
+## On medium ships seeds 1 to 20, every Worker at its spawn picks a hiding
+## place from the Pirate at the middle of the boarding Hatch's Room. Prints
+## the share of hiding tiles with no clear line at 1.5 m to any doorway of
+## their Room (the ticket's 80% line, which the generated Rooms cannot give:
+## see the ticket's Comments), and asserts the preference behind it: where
+## the Room offers a corner out of sight of every doorway, at least 80% of
+## picks take one.
+func _check_hiding_sweep() -> void:
+	var picks := 0
+	var unseen := 0
+	var offered := 0
+	var offered_unseen := 0
+	var none := 0
+	var untucked := 0
+	for ship_seed in range(1, HIDING_SWEEP + 1):
+		_fresh_world()
+		var ship_layout := ShipGenerator.generate(&"medium", ship_seed)
+		var ship := Node3D.new()
+		ship.name = "Ship"
+		world.add_child(ship)
+		ShipBuilder3D.build(ship_layout, ship)
+		var workers: Array[Crew3D] = []
+		for member: Crew3D in ship.get_node("Crew").get_children():
+			if member.is_worker():
+				member.set_physics_process(false)
+				member.target = player
+				workers.append(member)
+			else:
+				member.free()
+		await physics_frame
+		await physics_frame
+		var astar := CrewPaths.grid(ship_layout)
+		var him := _middle_tile(ship_layout, ship_layout.hatches[0].room, astar)
+		for worker in workers:
+			worker._last_seen = him
+			var found := worker.hiding.find()
+			if found.is_empty():
+				none += 1
+				continue
+			picks += 1
+			var entries := CrewHiding.tiles_of(worker, ship_layout.room_at(found.tile))
+			var entry: Dictionary = entries.filter(func(e: Dictionary) -> bool: return e.tile == found.tile)[0]
+			if entry.unseen:
+				unseen += 1
+			if entry.sides < 2:
+				untucked += 1
+			if entries.any(func(e: Dictionary) -> bool: return e.unseen and e.sides >= 2):
+				offered += 1
+				if entry.unseen:
+					offered_unseen += 1
+	print("  hiding sweep (medium seeds 1-%d): %d of %d hiding tiles out of sight of every doorway (%.0f%%); %d of %d where the Room offers such a corner; %d Workers with no place, %d tiles not a corner"
+			% [HIDING_SWEEP, unseen, picks, 100.0 * unseen / maxi(picks, 1), offered_unseen, offered, none, untucked])
+	_expect(picks >= HIDING_SWEEP and offered > 0 and offered_unseen >= offered * HIDDEN_SHARE,
+			"hiding sweep: of %d picks where the Room offers a corner out of sight of its doorways, only %d took one" % [offered, offered_unseen])
+
+
+## A generated medium ship with all its crew, the Pirate (unkillable, still)
+## at the middle of the Post Room of the most Workers and the Alarm raised
+## there: Guards fight him for 60 s and every Worker hides. Every living
+## Worker is within 0.5 m of a tile with a wall or a prop on two sides at
+## 25 s, and no Worker's hiding tile is ever a tile a Guard has claimed.
+func _check_workers_in_fight() -> void:
+	_fresh_world()
+	var ship_seed := randi_range(1, 1_000_000)
+	var ship_layout := ShipGenerator.generate(&"medium", ship_seed)
+	var ship := Node3D.new()
+	ship.name = "Ship"
+	world.add_child(ship)
+	ShipBuilder3D.build(ship_layout, ship)
+	var tag := "Workers in a fight (medium seed %d)" % ship_seed
+	var crew: Array[Crew3D] = []
+	var workers: Array[Crew3D] = []
+	var per_room := {}
+	for member: Crew3D in ship.get_node("Crew").get_children():
+		member.target = player
+		crew.append(member)
+		if member.is_worker():
+			workers.append(member)
+			per_room[member.home_room] = per_room.get(member.home_room, 0) + 1
+	_expect(not workers.is_empty(), "%s: no Workers aboard" % tag)
+	if workers.is_empty():
+		return
+	var room: int = per_room.keys()[0]
+	for r: int in per_room:
+		if per_room[r] > per_room[room] or (per_room[r] == per_room[room]
+				and ship_layout.rooms[r].tiles().size() > ship_layout.rooms[room].tiles().size()):
+			room = r
+	var him := _middle_tile(ship_layout, room, CrewPaths.grid(ship_layout))
+	player.global_position = him
+	for i in 2:
+		await physics_frame
+	var alarm: ShipAlarm = ship.get_node("Alarm")
+	alarm.raise(him)
+	var on_claimed: Array[String] = []
+	var untucked: Array[String] = []
+	var claims := 0
+	var t := 0.0
+	for frame in roundi(SHIP_FIGHT / STEP):
+		await physics_frame
+		t += STEP
+		var claimed := {}
+		for member in crew:
+			if is_instance_valid(member) and member.is_alive() and member.cover != null and member.cover.tile != Vector2i.MAX:
+				claimed[member.cover.tile] = true
+		claims += claimed.size()
+		for worker in workers:
+			if not is_instance_valid(worker) or not worker.is_alive():
+				continue
+			var held := worker.hiding.tile
+			if held != Vector2i.MAX and claimed.has(held) and on_claimed.size() < 3:
+				on_claimed.append("%s, %s (t=%.1f s)" % [held, CrewHiding.PHASE_NAMES[worker.hiding.phase], t])
+			if frame == roundi(HIDE_WITHIN / STEP) - 1 and not _near_tucked(ship_layout, worker.global_position):
+				untucked.append("a Worker of Room %d in state %d, %s, at %s" % [worker.home_room, worker.state,
+						CrewHiding.PHASE_NAMES[worker.hiding.phase], ShipBuilder3D.world_to_tile(worker.global_position)])
+	for member in crew:
+		if is_instance_valid(member):
+			member.set_physics_process(false)
+	print("  %s: %d Workers, Guards' claims over the fight %d tile-frames" % [tag, workers.size(), claims])
+	_expect(claims > 0, "%s: no Guard ever claimed cover: there was no fight" % tag)
+	_expect(untucked.is_empty(), "%s: at %.0f s, Workers not within %.1f m of a corner: %s" % [tag, HIDE_WITHIN, TUCKED_NEAR, untucked])
+	_expect(on_claimed.is_empty(), "%s: a Worker's hiding tile was a Guard's cover: %s" % [tag, on_claimed])
+	for shot in get_first_node_in_group(&"projectiles").get_children():
+		shot.free()
+
+
+func _build_hide_rig() -> void:
+	hide_layout = ShipLayout.new()
+	hide_layout.gen_seed = HIDE_SEED
+	var a := RoomData.new()
+	a.rects = [Rect2i(HIDE_X0, 0, 12, 12)]
+	for y in range(7, 12):
+		a.props.append({"type": &"locker", "tile": Vector2i(HIDE_X0 + 4, y)})
+	var b := RoomData.new()
+	b.rects = [Rect2i(HIDE_X0 + 13, 0, 6, 12)]
+	hide_layout.rooms = [a, b]
+	var door := DoorData.new()
+	door.room_a = 0
+	door.room_b = 1
+	door.tile = Vector2i(HIDE_X0 + 12, 5)
+	door.horizontal = false
+	hide_layout.doors = [door]
+	hide_ship = Node3D.new()
+	hide_ship.name = "HideShip"
+	world.add_child(hide_ship)
+	ShipBuilder3D.build(hide_layout, hide_ship)
+
+
+## A working Alarm Panel in Room B's east wall.
+func _hide_panel() -> AlarmPanel:
+	var panel := AlarmPanel.new()
+	panel.setup(1, Vector2i(HIDE_X0 + 18, 1), Vector2i.RIGHT)
+	hide_ship.add_child(panel)
+	return panel
+
+
+## A Worker posted in Room A of the hiding rig at [param tile], still.
+func _hide_worker(tile: Vector2i) -> Crew3D:
+	var worker: Crew3D = load("res://scenes/crew_3d.tscn").instantiate()
+	worker.crew_type = CrewTypes.Type.WORKER
+	worker.target = player
+	worker.layout = hide_layout
+	worker.home_room = 0
+	worker.position = ShipBuilder3D.tile_to_world(tile)
+	world.add_child(worker)
+	worker.face_direction(Vector3.FORWARD)
+	worker.set_physics_process(false)
+	worker.routine = null
+	worker._hold_timer = 10.0
+	worker._glance_timer = 10.0
+	return worker
+
+
+func _hide_at(x: int, y: int) -> Vector3:
+	return ShipBuilder3D.tile_to_world(Vector2i(HIDE_X0 + x, y))
+
+
+## Seconds of physics until [param worker] is on its hiding tile, or INF
+## after [param limit].
+func _until_hidden(worker: Crew3D, limit: float) -> float:
+	var t := 0.0
+	while t < limit:
+		await physics_frame
+		t += STEP
+		if worker.hiding.phase == CrewHiding.Phase.HIDDEN and _flat(worker.global_position, worker.hiding.spot) <= CrewHiding.ON_TILE:
+			return t
+	return INF
+
+
+## The Workers' rig: the hide roll, the run, staying put when found, the
+## wounded, and coming out with and without a panel to raise.
+func _check_hiding_rig() -> void:
+	_fresh_world()
+	_build_hide_rig()
+	for i in 2:
+		await physics_frame
+	var alarm: ShipAlarm = hide_ship.get_node("Alarm")
+	var panel := _hide_panel()
+	await physics_frame
+	_check_hide_roll(panel)
+	await _check_hide_run()
+	await _check_wounded_hides(alarm)
+	panel.take_damage(1, player)
+	await _check_out_with_nothing(alarm)
+	panel.free()
+	await _check_out_to_panel(alarm)
+
+
+## 400 spottings with the Alarm down and a panel in reach, 100 by each of
+## four Workers: between 20% and 30% freeze to hide, the rest run for the
+## panel. Rolled from the ship's seed: a Worker spawned again on the same
+## tile of the same ship rolls the same.
+func _check_hide_roll(panel: AlarmPanel) -> void:
+	var hides := 0
+	var runs := 0
+	var other: Array[String] = []
+	var first: Array[bool] = []
+	var tiles: Array[Vector2i] = [Vector2i(HIDE_X0 + 6, 2), Vector2i(HIDE_X0 + 8, 9), Vector2i(HIDE_X0 + 15, 3), Vector2i(HIDE_X0 + 16, 9)]
+	for k in tiles.size():
+		var worker := _hide_worker(tiles[k])
+		for i in SPOTTINGS / tiles.size():
+			worker._enter(Crew3D.State.PATROL)
+			worker._react_spotted()
+			var hid := worker.state == Crew3D.State.COWER and worker.hiding.phase == CrewHiding.Phase.FREEZE
+			if hid:
+				hides += 1
+			elif worker.state == Crew3D.State.FLEE and worker._flee_panel == panel:
+				runs += 1
+			elif other.size() < 3:
+				other.append("state %d" % worker.state)
+			if k == 0:
+				first.append(hid)
+		worker.free()
+	var again := _hide_worker(tiles[0])
+	var same := true
+	for i in first.size():
+		again._enter(Crew3D.State.PATROL)
+		again._react_spotted()
+		same = same and (again.state == Crew3D.State.COWER) == first[i]
+	again.free()
+	print("  hide roll: %d of %d spottings hid, %d ran for the panel" % [hides, SPOTTINGS, runs])
+	_expect(hides + runs == SPOTTINGS and other.is_empty(), "hide roll: spottings neither hid nor ran for the panel: %s" % [other])
+	_expect(hides >= SPOTTINGS * HIDE_SHARE.x and hides <= SPOTTINGS * HIDE_SHARE.y,
+			"hide roll: %d of %d spottings hid, want %.0f%% to %.0f%%" % [hides, SPOTTINGS, HIDE_SHARE.x * 100.0, HIDE_SHARE.y * 100.0])
+	_expect(same, "hide roll: a Worker spawned again on the same tile of the same ship rolled differently")
+
+
+## A Worker that rolled to hide, the Pirate 4.1 m off: it freezes, runs to
+## a corner never nearer him than both ends of its run less 1 m, and then,
+## with him standing 5 m off in its sight for 10 s, does not leave its tile.
+func _check_hide_run() -> void:
+	var worker := _hide_worker(Vector2i(HIDE_X0 + 6, 4))
+	worker.hide_chance = 1.0
+	var him := _hide_at(10, 3)
+	player.global_position = him
+	worker._last_seen = him
+	worker._react_spotted()
+	_expect(worker.state == Crew3D.State.COWER and worker.hiding.phase == CrewHiding.Phase.FREEZE,
+			"hide run: a Worker that rolled to hide is in state %d, %s, not frozen" % [worker.state, CrewHiding.PHASE_NAMES[worker.hiding.phase]])
+	var start := worker.global_position
+	var nearest := INF
+	var froze := 0.0
+	worker.set_physics_process(true)
+	var t := 0.0
+	while t < 15.0 and worker.hiding.phase != CrewHiding.Phase.HIDDEN:
+		await physics_frame
+		t += STEP
+		if worker.hiding.phase == CrewHiding.Phase.FREEZE:
+			froze += STEP
+		nearest = minf(nearest, _flat(worker.global_position, him))
+	var spot := worker.hiding.spot
+	var least := minf(_flat(start, him), _flat(spot, him)) - 1.0
+	print("  hide run: froze %.2f s, hid on %s after %.1f s, nearest him %.2f m (ends %.2f and %.2f m)"
+			% [froze, worker.hiding.tile, t, nearest, _flat(start, him), _flat(spot, him)])
+	_expect(worker.hiding.phase == CrewHiding.Phase.HIDDEN, "hide run: not hidden after 15 s (%s)" % CrewHiding.PHASE_NAMES[worker.hiding.phase])
+	_expect(absf(froze - CrewHiding.FREEZE) <= 2.0 * STEP, "hide run: froze %.2f s, not %.1f" % [froze, CrewHiding.FREEZE])
+	_expect(nearest >= least, "hide run: came %.2f m from him, nearer than both ends less 1 m (%.2f)" % [nearest, least])
+	_expect(CrewHiding.tucked(hide_layout, spot), "hide run: its hiding tile %s is not a corner" % worker.hiding.tile)
+	# Found: him 5 m off in its sight for 10 s.
+	var found_at := Vector3.INF
+	for k in 16:
+		var along := Vector3.FORWARD.rotated(Vector3.UP, TAU * k / 16.0)
+		var at := spot + along * FOUND_AT
+		if not _open_tile(CrewPaths.grid(hide_layout), ShipBuilder3D.world_to_tile(at)):
+			continue
+		if not worker._blocked(spot + Vector3.UP * Crew3D.EYE_HEIGHT, at + Vector3.UP * Crew3D.EYE_HEIGHT):
+			found_at = at
+			break
+	_expect(found_at != Vector3.INF, "hide run: no open floor 5 m from the hiding tile in its sight")
+	if found_at != Vector3.INF:
+		player.global_position = found_at
+		var left := 0.0
+		var seen := 0
+		var frames := roundi(FOUND_FOR / STEP)
+		for i in frames:
+			await physics_frame
+			if worker._can_see:
+				seen += 1
+			left = maxf(left, _flat(worker.global_position, spot))
+		_expect(seen * 10 >= frames * 9, "found: the Worker had him in sight on only %d of %d frames" % [seen, frames])
+		_expect(left <= CrewHiding.ON_TILE and worker.state == Crew3D.State.COWER,
+				"found: with him 5 m off for 10 s the Worker moved %.2f m off its tile (state %d)" % [left, worker.state])
+	# Guards come first: a Guard claiming its tile sends it on to its next best.
+	var held := worker.hiding.tile
+	var guard := _armed(load("res://resources/weapons/pistol.tres"))
+	guard.layout = hide_layout
+	guard.global_position = _hide_at(9, 9)
+	guard.cover._claim({"tile": held, "at": ShipBuilder3D.tile_to_world(held), "step": Vector3.INF,
+			"low": false, "peek": false, "score": 0.0})
+	_expect(worker.hiding.tile != held and worker.hiding.phase == CrewHiding.Phase.RUN,
+			"hide run: a Guard claimed its tile %s and the Worker is %s for %s" % [held, CrewHiding.PHASE_NAMES[worker.hiding.phase], worker.hiding.tile])
+	var moved := await _until_hidden(worker, 10.0)
+	_expect(moved < INF and worker.hiding.tile != held and CrewHiding.tucked(hide_layout, worker.hiding.spot),
+			"hide run: after a Guard took its tile the Worker is %s on %s" % [CrewHiding.PHASE_NAMES[worker.hiding.phase], worker.hiding.tile])
+	guard.free()
+	worker.free()
+	player.global_position = Vector3(-500, 0, -500)
+
+
+## A Worker hit for less than its Health, a working panel in reach and the
+## Alarm down: on a hiding tile within 15 s and still on it 60 s later.
+func _check_wounded_hides(alarm: ShipAlarm) -> void:
+	var worker := _hide_worker(Vector2i(HIDE_X0 + 8, 8))
+	player.global_position = _hide_at(9, 2)
+	worker.set_physics_process(true)
+	worker.take_damage(1, player)
+	player.global_position = Vector3(-500, 0, -500)
+	_expect(worker.is_alive() and worker.hiding.wounded, "wounded: a Worker hit for 1 is not alive and wounded")
+	var hid := await _until_hidden(worker, WOUNDED_HIDES)
+	_expect(hid <= WOUNDED_HIDES, "wounded: not on a hiding tile within %.0f s (%s, state %d)" % [WOUNDED_HIDES,
+			CrewHiding.PHASE_NAMES[worker.hiding.phase], worker.state])
+	var spot := worker.hiding.spot
+	var left := 0.0
+	for i in roundi(WOUNDED_STAYS / STEP):
+		await physics_frame
+		left = maxf(left, _flat(worker.global_position, spot))
+	_expect(left <= CrewHiding.ON_TILE and worker.state == Crew3D.State.COWER and not alarm.is_raised,
+			"wounded: %.0f s later it moved %.2f m off its tile (state %d, Alarm %s)" % [WOUNDED_STAYS, left, worker.state, alarm.is_raised])
+	worker.free()
+
+
+## Every panel broken and no Guard alive: a hidden Worker comes out after
+## 20 s quiet, back on its routine and On Edge, the Alarm still down.
+func _check_out_with_nothing(alarm: ShipAlarm) -> void:
+	var worker := _hide_worker(Vector2i(HIDE_X0 + 8, 8))
+	worker.routine = CrewRoutine.plan(hide_layout, 0, RandomNumberGenerator.new(), false)
+	var him := _hide_at(9, 2)
+	player.global_position = him
+	worker._last_seen = him
+	worker._react_spotted()
+	worker.set_physics_process(true)
+	var hid := await _until_hidden(worker, 15.0)
+	_expect(hid < INF, "out, nothing to raise: the Worker never hid (state %d)" % worker.state)
+	player.global_position = Vector3(-500, 0, -500)
+	for i in roundi((LEAVE_AFTER + 3.0) / STEP):
+		await physics_frame
+	_expect(worker.state == Crew3D.State.PATROL and worker.perception.on_edge and not alarm.is_raised,
+			"out, nothing to raise: state %d, On Edge %s, Alarm %s; want back on its routine, On Edge, Alarm down"
+			% [worker.state, worker.perception.on_edge, alarm.is_raised])
+	worker.free()
+
+
+## A hidden Worker, the Alarm down and the Pirate gone: it leaves its tile
+## 20 s after it last noticed him, within 1 s, and raises the Alarm at the
+## working panel.
+func _check_out_to_panel(alarm: ShipAlarm) -> void:
+	var panel := _hide_panel()
+	await physics_frame
+	var worker := _hide_worker(Vector2i(HIDE_X0 + 8, 8))
+	worker.routine = CrewRoutine.plan(hide_layout, 0, RandomNumberGenerator.new(), false)
+	worker.hide_chance = 1.0
+	var him := _hide_at(9, 2)
+	player.global_position = him
+	worker._last_seen = him
+	worker._react_spotted()
+	worker.set_physics_process(true)
+	# Its own eyes say when it last noticed him: the last frame it had him in
+	# sight (he makes no sound, standing still).
+	var t := 0.0
+	var noticed := -INF
+	var hidden_at := INF
+	var spot := Vector3.INF
+	var left := INF
+	while t < 120.0 and not alarm.is_raised:
+		await physics_frame
+		t += STEP
+		if worker._can_see and left == INF:
+			noticed = t
+		if hidden_at == INF and worker.hiding.phase == CrewHiding.Phase.HIDDEN:
+			hidden_at = t
+			spot = worker.hiding.spot
+		if hidden_at < INF and t >= hidden_at + 0.5:
+			player.global_position = Vector3(-500, 0, -500)
+		if hidden_at < INF and left == INF and _flat(worker.global_position, spot) > CrewHiding.ON_TILE:
+			left = t
+	_expect(hidden_at <= 15.0, "out to a panel: the Worker never hid in 15 s (state %d)" % worker.state)
+	print("  out to a panel: last noticed him at %.2f s, left its tile at %.2f s, Alarm raised at %.1f s" % [noticed, left, t])
+	_expect(absf(left - noticed - LEAVE_AFTER) <= LEAVE_TOLERANCE,
+			"out to a panel: left its tile %.2f s after last noticing him, want %.0f s within %.0f" % [left - noticed, LEAVE_AFTER, LEAVE_TOLERANCE])
+	_expect(alarm.is_raised and _flat(worker.global_position, panel.use_at) < 1.5,
+			"out to a panel: the Alarm %s, the Worker %.1f m from the panel" % ["raised" if alarm.is_raised else "not raised", _flat(worker.global_position, panel.use_at)])
+	worker.free()
+	panel.free()
