@@ -10,7 +10,7 @@ being built toward is `.scratch/crew-combat/spec.md`, after spec #52
 
 | File | What it owns |
 |---|---|
-| `crew.gd` (`Crew3D`) | The body: movement, health, animation, door handling, gunnery, cover search, and the state machine that ties them together. |
+| `crew.gd` (`Crew3D`) | The body: movement, health, animation, door handling, gunnery, a Worker's cover search, and the state machine that ties them together. |
 | `head_zone.gd` (`HeadZone`) | The head: a 0.16 m ball on physics layer 4, riding the rig's `Head` bone through a `BoneAttachment3D`, so a bolt that strikes it is a Headshot. The capsule stays the body. |
 | `crew_perception.gd` (`CrewPerception`) | Awareness: the sight cone, how fast Awareness fills and drains, and its bands. Pure arithmetic, tested without physics. |
 | `crew_types.gd` (`CrewTypes`) | Guard or Worker, from the Post Room's Role. |
@@ -19,6 +19,7 @@ being built toward is `.scratch/crew-combat/spec.md`, after spec #52
 | `crew_routine.gd` (`CrewRoutine`) | Routines: a crew member's Post and its loop of Jobs, planned from the layout's props and Rooms. Pure planning; the body walks it. |
 | `crew_traces.gd` (`CrewTraces`) | What the Pirate leaves behind that crew find: bodies, the open boarding Hatch, emptied Containers, Doors left open. |
 | `crew_combat.gd` (`CrewCombat`) | Guard teamwork: sharing the Pirate's position, aim that tightens, staggered bursts, flank routes. |
+| `crew_cover.gd` (`CrewCover`) | One Guard's fight from cover: finding and claiming a spot, the fair walk there, holding it, peeking in its gun's rhythm, leaving it, and fighting with no cover in reach. Every Guard holds one (`Crew3D.cover`); it drives the Guard's FIGHT and COVER states. |
 | `ship_alarm.gd` (`ShipAlarm`) | The ship-wide Alarm: raised once, red lights, every crew member told. Built per ship as `Ship/Alarm`. |
 | `alarm_panel.gd` (`AlarmPanel`) | The wall panels the Alarm is raised from, where they go, and breaking them. Built under `Ship/AlarmPanels`. |
 | `crew_noise.gd` (`CrewNoise`) | Hearing: noise events (footsteps, gunshots, doors), how far each reaches, and which Rooms it carries into. |
@@ -29,8 +30,13 @@ Scene: `scenes/crew_3d.tscn`. Tests: `tests/test_crew.gd` (Awareness, the walk
 to look, being shot, the sting, hearing, Workers fleeing and cornered, crew
 types, On Edge, Guards sharing his position, aim tightening, each weapon's
 Gunnery and a Guard firing each gun, staggered bursts,
-flanking, cover it cannot reach, facing a body in its way, holding fire when
-its muzzle line is blocked, walking round props and round a body in its way,
+flanking, a cover spot it cannot reach, facing a body in its way, holding
+fire when its muzzle line is blocked, fighting from cover (the ring of four
+Guards, one per gun: hidden within 6 s by a fair walk, firing from low
+cover, 20 peeks of each gun's rhythm; full cover from a locker; flanked and
+closed on in a grid of crates; no cover in an empty Room; and 60 s of three
+Guards on a generated medium ship with no one stuck, no shared tile and no
+tile beside a Breaker), walking round props and round a body in its way,
 two crew head-on in a two-wide doorway (both arrive within 12 s), one
 standing in a one-wide gap with a way round (passed within 15 s), a Worker
 working in a dead-end lane making way for one walking out (out within 11 s,
@@ -78,16 +84,17 @@ its Post Room's Role (`CrewTypes.for_role`):
 ## States
 
 ```
-PATROL ──suspicious──▶ INVESTIGATE ──spotted──▶ HUNT ◀──────────┐
-  │  ▲                    │                       │              │
-  │  └──Awareness faded───┘                 in range + seen      │
-  └──────────spotted──────────────────────────▶ FIGHT ──burst spent──▶ COVER
-                                                  │                    │
-                                     3 s out of sight            reloaded
-                                                  ▼                    │
-                                               SEARCH ◀────────────────┘ (3 s out of sight)
-                                                  │
-                                       nothing found ▶ PATROL
+PATROL ──suspicious──▶ INVESTIGATE
+  │  ▲                    │
+  │  └──Awareness faded───┘
+  │                       │ spotted
+  └──────spotted──────────┴──▶ HUNT ──within 18 m of where he was seen, not flanking──▶ COVER ◀──▶ FIGHT
+                                │                                                     (CrewCover drives both)
+                       3 s out of sight                                                    │
+                                ▼                                                 14 s without seeing him
+                             SEARCH ◀──────────────────────────────────────────────────────┘
+                                │
+                       nothing found ▶ PATROL
 ```
 
 That is a Guard. A Worker swaps HUNT for FLEE and SEARCH for COWER:
@@ -110,26 +117,28 @@ PATROL / INVESTIGATE ──spotted──▶ FLEE ──reached its Guard──�
   Goes back to PATROL once Awareness has drained below suspicious and either it
   has arrived and the linger is over, or 10 s have passed with nothing in view
   (the spot may be inside a prop). Back on PATROL it picks up the Job it was on.
-- **HUNT / FIGHT / COVER / SEARCH**: the combat loop. HUNT paths to the
-  last-seen position (or flanks, see Guard combat); FIGHT fires bursts inside
-  10.6 m (`ENGAGE_RANGE`, the same for every gun) after a 0.05–0.35 s beat; a spent burst goes to
-  COVER to pause and hold; 3 s out of sight sends any of them to SEARCH,
-  which walks to the last-seen spot and waits 2.5 s. See Guns below for the
-  numbers; cover hold is 1.2 s before jitter.
-- **A clear shot**: FIGHT fires only while its muzzle line is clear as well
-  as its eye line. The muzzle line is a ball 0.1 m across (a bolt's overlap
-  sphere is 0.09 m) swept from the body's axis at muzzle height (1.3 m) to
-  0.4 m short of the Pirate's torso, plus the two edges of its current
-  spread for the first 1.5 m, so a crate he crouches behind, or a prop at
-  its own shoulder that the barrel pokes past, stops it firing. It then holds
-  fire and steps out: to the nearest tile at least 1 m away, in range, whose
-  muzzle line is clear, walking all the way there before it fires again;
-  with no such tile it closes on him.
-- **Cover it cannot reach**: a crew member that has run for its cover point
-  for 3 s without getting there (the way blocked by the Pirate, another body
-  or a prop) holds where it is instead, and leaves COVER as soon as its hold
-  and pause are done, at most 3 s after ducking.
-- **DEAD**: collision off, death clip or tip-over.
+- **HUNT**: runs to his last-seen position by the door graph (or flanks, see
+  Guard combat). Once that position is within 18 m (`CrewCover.TAKE_OVER`)
+  and it is not flanking, it fights from cover instead. A flanker that sees
+  him within 10.6 m (`ENGAGE_RANGE`, until "A habit per gun") turns to fight
+  him the same way. 3 s with him out of sight sends a hunter to SEARCH. A
+  Guard hunting where a trace says he was (a body, the open boarding Hatch,
+  or told so by the Guard that found it) keeps hunting the old way, into his
+  Boarding Pod if that is where the trace leads, until it sees him.
+- **COVER / FIGHT**: the cover fight (see Guard combat). COVER while it walks
+  to a spot, is down behind it or steps back to it; FIGHT while it is up,
+  stepping out to fire, or fighting in the open. 14 s without seeing him
+  sends it to SEARCH, which walks to the last-seen spot and waits 2.5 s.
+- **A clear shot**: a Guard fires only while its muzzle line is clear as
+  well as its eye line. The muzzle line is a ball 0.1 m across (a bolt's
+  overlap sphere is 0.09 m) swept from the body's axis at muzzle height
+  (1.3 m) to 0.4 m short of the Pirate's torso, plus the two edges of its
+  current spread for the first 1.5 m, so a crate he crouches behind, or a
+  prop at its own shoulder that the barrel pokes past, stops it firing. Up
+  in cover with no clear shot it waits 1.2 s and ducks; in the open it
+  walks to the nearest tile at least 1 m away, within 10.6 m of him, whose
+  muzzle line is clear.
+- **DEAD**: collision off, death clip or tip-over; its cover spot is freed.
 
 ### Guns: one of four weapons and its Gunnery
 
@@ -140,8 +149,9 @@ shot takes its damage, projectile speed and lifetime, every pellet (a
 Shotgun shot throws all 12, each inside the cone on its own), the time
 between shots in a burst, its shot sound, its action sound (the Shotgun's
 pump) and its loudness. Crew ignore its magazine, reloads, bloom, Aim Down
-Sights, recoil and Viewmodel: they fire a burst and pause, and never count
-rounds. How a Guard handles its gun is that gun's **Gunnery**
+Sights, recoil and Viewmodel: they fire their bursts from cover and go
+down, and never count rounds (the time down stands in for a reload until
+"Crew magazines and reloads"). How a Guard handles its gun is that gun's **Gunnery**
 (`Crew3D.gunnery`, `resources/gunnery/<weapon>.tres`, `Gunnery.for_weapon`):
 
 | | Pistol | Assault Rifle | Shotgun | Marksman Rifle |
@@ -157,10 +167,11 @@ rounds. How a Guard handles its gun is that gun's **Gunnery**
 | hold before shifting, s | 4 | 8 | 4 | never moves up (-1) |
 | reload factor | 1.5 | 1.5 | 1.5 | 1.5 |
 
-Read today: the aim error (the cone, see Guard combat), shots per burst (a
-fresh draw for every burst) and time down (a fresh draw after every spent
-burst, the time it keeps down in COVER before the next). The rest are filled
-in for the cover, fair fire, reload and habit tickets of
+Read today: the aim error (the cone, see Guard combat), and the rhythm and
+range band of the cover fight: shots per burst, bursts per peek, gap
+between bursts, settle, time down, range band near and far (see Guard
+combat). Opening spread, closing time, lead, hold before shifting and
+reload factor are filled in for the fair fire, habit and reload tickets of
 `.scratch/crew-combat/spec.md`. All are read at the moment of use, so a
 Sandbox sheet edit reaches crew already in the Raid.
 
@@ -348,6 +359,71 @@ him in.
 
 ## Guard combat
 
+A fighting Guard whose last-seen spot for the Pirate is within 18 m fights
+from cover (`CrewCover`); further off, and while flanking, the hunt carries
+it (see States). Ported from the accepted prototype
+(`prototype/guards-in-cover`, `.scratch/crew-combat/issues/05-guards-in-cover.md`),
+its rules and numbers kept.
+
+- **A cover spot** is an open tile of the walking grid (`CrewPaths`) with a
+  wall or a prop on one of its four sides, from which a crouched body
+  (0.9 m) is hidden from his last-seen position, both from his torso and
+  from his eyes (so he would not see it there and count it flanked), and
+  which has a way to shoot. Found from sight rays when needed; nothing is
+  authored. A tile beside a Breaker is never crew cover.
+  - **Low cover**: its muzzle line from standing there is clear (it can fire
+    over it). It pops up to shoot.
+  - **Full cover**: it steps out to the nearest of the eight tiles round it
+    that it can walk to straight and whose muzzle line is clear, fires, and
+    steps back.
+- **Picking.** Filter: within 8 m of it as the crow flies and 12 m by its
+  walk (`WALK_REACH`), in its Room, his Room or one joined to either,
+  hidden, unclaimed, with a peek. Score: near it 20 (falling to 0 at 8 m),
+  low cover 40 (full 20), inside its Gunnery's range band 20 (falling to 0
+  4 m outside), minus 20 if another Guard or its spot is within 2 m. One
+  Guard per spot: claimed on choosing, freed on leaving or dying. Of the
+  best six it takes the first whose walk is fair and passes no closer than
+  0.6 m to another crew member standing still (it would stall against the
+  body).
+- **A fair walk** (its planned route sampled every 0.5 m) never comes nearer
+  his last-seen spot than both its ends do, less 1 m, and crosses no more
+  than 2.5 m of floor whose torso height he can see.
+- **Getting there**: it runs, and stands on the spot (a last step if its
+  walk ended short). Walking 3 s without moving 0.5 m it gives up the spot,
+  passes it over for 10 s and thinks again.
+- **Rhythm**: down, then up: a settle, its bursts, down again. Per gun from
+  its Gunnery: shots per burst (a fresh draw each burst), bursts per peek,
+  the gap between bursts, the settle and the time down. Every time (settle,
+  gap, time down) varies by ±30 %. Up with no shot it waits 1.2 s and ducks.
+  On first reaching a spot it is down 0.3 s. Up with him unseen over 2 s,
+  half the time it stays down half a time down longer rather than bob.
+  Bursts never start within 0.3 s of another crew member's.
+- **Down**, the body is sunk 0.8 m into the floor and its capsule cut to
+  55 % (0.94 m), so low cover hides it and its head zone. This is the
+  prototype's stand-in until "Guards' poses in a fight".
+- **Leaving a spot** (checked while down):
+  - **Flanked**: he can see it crouched for 0.4 s: it picks again (that
+    holds for a Guard hiding with no shot too).
+  - **Too close**: he is in sight within 3 m: it picks a spot at least 1 m
+    further from him.
+  - **No shot**: two peeks running with nothing to shoot: it picks again.
+  - **Out of band**: held 6 s with its spot outside its range band, it
+    looks for a spot at least 1 m nearer or further, taking it only if it
+    scores 20 % better. (The per-gun holds come with "A habit per gun".)
+  - **Unseen 5 s**: it moves to a spot at least 1 m nearer where he was
+    last seen. **Unseen 14 s**: it searches.
+  - Only one Guard moves up or back (out of band, unseen) at a time; the
+    mover holds the place 4 s.
+- **Near misses**: a shot of his whose line (from his camera) passes within
+  1.2 m of it keeps it down 0.8 s longer (never past its longest time down
+  plus 0.8 s), or sends it down if up.
+- **No cover in reach**: it falls back to the best tile within 14 m (and
+  21 m by its walk) where he cannot see it standing, with no fair-walk
+  rule, and looks for real cover each second. Once he can see it there
+  (it can see him) it no longer hides and picks again. With nowhere to hide either
+  it fights where it stands: its first burst after a settle, then bursts
+  with pauses of 0.6 of a time down, stepping to a clear shot when it has
+  none, and looking for cover every 1.5 s.
 - **Sharing**: a Guard that spots the Pirate, and once a second while it keeps
   him in sight, tells every living Guard in its own Room and the Rooms a Door
   joins to it (open or shut: radios) where he is (`CrewCombat.share`). A Guard
@@ -356,22 +432,18 @@ him in.
   ignores it.
 - **Aim**: spread is `base × 1.5` on first sight, closing linearly to
   `base × 0.5` after 3 s of continuous sight, and back to 1.5× the moment the
-  Pirate breaks line of sight. A Guard's first shots mostly warn; staying
-  exposed is what gets him hit. Base is its gun's base cone plus its
+  Pirate breaks line of sight. Base is its gun's base cone plus its
   Gunnery's aim error. (The fair fire ticket replaces this curve with the
   Gunnery's opening spread and closing time.)
-- **Rhythm**: each Guard draws its own multipliers (0.75–1.35×) at spawn on
-  its gun's time between shots and its cover hold; each burst's length is a
-  fresh draw from its Gunnery's shots per burst, and the time down after it
-  a fresh draw from its time down. No crew member starts a burst within 18
-  physics frames (0.3 s) of another's; it waits.
+- **Shots**: each Guard draws its own multiplier (0.75–1.35×) at spawn on its
+  gun's time between shots.
 - **Pin and flank**: a Guard entering HUNT while another Guard is already
   fighting (FIGHT or COVER), and no Guard is already flanking, tries to go
   round: the Door into the Pirate's Room furthest from the pinning Guard, if
   that is not the Door its own straight route would use anyway, reached by a
   route that avoids the Pirate's Room, then through the Door and one metre in.
-  It fights as soon as it has him in range and sight, and drops the flank on
-  arrival or after 20 s.
+  It turns to fight as soon as it has him within 10.6 m and in sight, and
+  drops the flank on arrival or after 20 s.
 
 ## Alarm
 
@@ -420,7 +492,9 @@ begins at a random point in its loop, after a random 0–5 s pause.
   spot in that Room.
 - Crew walk routine at **50 %** speed (Walk clip below 2.4 m/s, Run above).
 - A work Job whose spot turns out blocked is skipped; one not reached within 30 s
-  is given up for the next.
+  is given up for the next. A crew member whose walk ends further than its
+  arrive radius from the spot (pushed off it by a body passing in a lane)
+  walks on to the spot before it works.
 - **One crew member per work spot**: a prop has one spot, and a work Job
   whose spot another crew member is walking to or working at is skipped
   for the next, so nobody works pressed against someone already there (and
@@ -493,13 +567,20 @@ and `crew.gd` (`SEARCH_AWARENESS`, `INVESTIGATE_SPEED`, `INVESTIGATE_LINGER`,
 `WALK_ANIM_SPEED`, `DOOR_CLOSE_AFTER`, `DOOR_FORGET`, `DOOR_ADOPT`, `CHAT_*`,
 `JOB_GIVE_UP`, `CORNERED_RANGE`, `ENGAGE_RANGE`, `HIDE_CHANCE`,
 `GUARD_REACH`, `COWER_CALM`, `PANEL_REACH`,
-`ON_EDGE_PAUSE`, `SWEEP_PAUSE`, `COVER_GIVE_UP`, `MUZZLE_BALL`,
+`ON_EDGE_PAUSE`, `SWEEP_PAUSE`, `MUZZLE_BALL`,
 `MUZZLE_TARGET_GAP`, `MUZZLE_NEAR`, `FIRING_STEP`, `UNSTICK_AFTER`,
 `UNSTICK_MOVE`, `SIDESTEP`, `GIVE_WAY_NEAR`, `GIVE_WAY_PASSED`,
 `GIVE_WAY_WAIT`, `GIVE_WAY_INSIST`), `crew_paths.gd` (`CLEARANCE`, `SAMPLE`,
 `SNAP`, `BODY_GAP`, `MAKE_WAY_REACH`, `MAKE_WAY_CLEAR`), `crew_perception.gd` (`ON_EDGE_FACTOR`),
 `crew_combat.gd` (`OPEN_SPREAD`, `TIGHT_SPREAD`, `TIGHTEN_TIME`,
 `BURST_STAGGER_FRAMES`, `SHARE_EVERY`, `FLANK_GIVE_UP`, `JITTER`),
+`crew_cover.gd` (`TAKE_OVER`, `SEARCH_RADIUS`, `FALL_BACK_RADIUS`,
+`WALK_REACH`, `OPEN_RUN`, `NEARER_SLACK`, `TRIED`, the score's `W_*`,
+`FULL_SHARE`, `BAND_FALLOFF`, `SPACING`, `JITTER`, `WAIT_UP`, `BLIND_PEEKS`,
+`FLANKED_AFTER`, `TOO_CLOSE`, `HOLD_BEFORE_SHIFTING`, `BETTER`,
+`UNSEEN_ADVANCE`, `UNSEEN_SEARCH`, `NEAR_MISS`, `NEAR_MISS_HOLD`,
+`LOOK_HIDING`, `LOOK_OPEN`, `MOVER_TIME`, `ARRIVE_DOWN`, `MOVE_GIVE_UP`,
+`UNREACHABLE_FOR`, `STEP_GIVE_UP`, `OPEN_PAUSE`, `SINK`, `CROUCH`),
 `crew_traces.gd` (`LOOK_EVERY`, `REACH`, `AWARENESS`, `AIM_HEIGHT`),
 `ship_alarm.gd` (`RED`, `PULSE_*`), `alarm_panel.gd` (`ROLES`, `SIZE`, `HEIGHT`),
 `crew_types.gd` (`GUARD_ROLES`, `WORKER_ROLES`), `HEARD_NOISE`, `HEARD_GUNSHOT`, `HEARD_CAP`) and

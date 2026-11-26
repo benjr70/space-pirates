@@ -3,7 +3,8 @@ extends RefCounted
 ## How Guards fight as a team: sharing where the Pirate is with Guards
 ## nearby, aim that tightens the longer he stays exposed, bursts that never
 ## start in step, and one Guard flanking through another Door while
-## another pins him. The crew body asks; this works it out.
+## another pins him. The crew body asks; this works it out. How each Guard
+## fights from cover is [CrewCover].
 ## See `CREW_AI.md`.
 
 ## A Guard's spread on first sight of the Pirate, and once he has been in
@@ -43,8 +44,9 @@ static func burst_blocked(crew: Crew3D) -> bool:
 
 ## Tells every living Guard in [param crew]'s Room and the Rooms next to it
 ## (by any Door, open or shut: they have radios) where the Pirate is. A
-## Guard not already fighting starts hunting there. Returns how many heard.
-static func share(crew: Crew3D, at: Vector3) -> int:
+## Guard not already fighting starts hunting there. [param from_trace]:
+## only where a trace says he was. Returns how many heard.
+static func share(crew: Crew3D, at: Vector3, from_trace := false) -> int:
 	if crew.layout == null:
 		return 0
 	var near := rooms_near(crew.layout, CrewNoise.rooms_at(crew.layout, crew.global_position))
@@ -56,7 +58,7 @@ static func share(crew: Crew3D, at: Vector3) -> int:
 		var theirs := CrewNoise.rooms_at(crew.layout, other.global_position)
 		if not theirs.any(func(room: int) -> bool: return room in near):
 			continue
-		other.hear_position(at)
+		other.hear_position(at, from_trace)
 		told += 1
 	return told
 

@@ -88,6 +88,11 @@ func mark_at(crew: Crew3D, camera: Camera3D) -> Vector2:
 	if not _in_clear_line(camera, crew):
 		return Vector2.INF
 	var screen := get_viewport_rect().size
+	if is_zero_approx((camera.global_transform.affine_inverse() * head).z):
+		# On the camera's own plane there is no point on screen: a hair
+		# behind it is pinned like anything else behind.
+		head += camera.global_basis.z * 0.01
+		behind = true
 	var at := camera.unproject_position(head)
 	if behind:
 		# Mirror across the centre and pin to the bottom edge.

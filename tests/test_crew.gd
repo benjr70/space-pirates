@@ -41,6 +41,11 @@ var pocket_layout: ShipLayout
 ## The generated medium ship's crew, kept for the type checks.
 var routine_crew: Array[Crew3D] = []
 var routine_layout: ShipLayout
+## The cover rigs (_build_cover_rigs): the ring of four crates round the
+## Pirate, the Room with one locker, and the Room with a grid of crates.
+var ring_layout: ShipLayout
+var full_layout: ShipLayout
+var crates_layout: ShipLayout
 
 
 func _initialize() -> void:
@@ -63,6 +68,7 @@ func _initialize() -> void:
 	_build_cluttered()
 	_build_lane()
 	_build_pocket()
+	_build_cover_rigs()
 	var shots := Node3D.new()
 	shots.add_to_group(&"projectiles")
 	world.add_child(shots)
@@ -98,6 +104,10 @@ func _initialize() -> void:
 	await _check_cover_blocked()
 	await _check_blocked_by_pirate()
 	await _check_muzzle_blocked()
+	await _check_cover_ring()
+	await _check_full_cover()
+	await _check_flanked_and_closed_on()
+	await _check_open_fight()
 	await _check_round_props()
 	await _check_unstick()
 	await _check_head_on_doorway()
@@ -118,6 +128,8 @@ func _initialize() -> void:
 	await _check_pirate_has_no_head()
 	await _check_routines()
 	_check_types()
+	await _check_cover_fight_on_ship()
+	await _silence()
 	_report()
 	quit(1 if failures.size() > 0 else 0)
 
@@ -622,7 +634,7 @@ func _check_routines() -> void:
 ## A shot leaves the magazine: a bolt at 2.5 m lands and is gone before it
 ## could be counted.
 func _has_fired(crew: Crew3D) -> bool:
-	return crew._shots_left < crew.burst_length or crew._reload_timer > 0.0
+	return crew._shots_left < crew.burst_length or not crew.last_pellets.is_empty()
 
 
 ## A Worker that spots the Pirate 8 m off runs for the Guard behind it and
@@ -915,12 +927,15 @@ func _check_gunnery() -> void:
 			"gunnery: a crew shot after editing the Pistol did not follow it")
 	pistol.damage = 25
 	pistol.projectile_speed = 80.0
-	while guard._shots_left > 0:
-		guard._fire()
+	# Time down after a peek: the Gunnery's, drawn, varied by 30% either way.
 	var pistol_gunnery: Gunnery = guard.gunnery
-	_expect(guard._reload_timer >= pistol_gunnery.time_down_low - 0.001 and guard._reload_timer <= pistol_gunnery.time_down_high + 0.001,
-			"gunnery: a spent burst stays down %.2f s, not the Pistol Gunnery's %.1f to %.1f s"
-			% [guard._reload_timer, pistol_gunnery.time_down_low, pistol_gunnery.time_down_high])
+	var downs: Array[float] = []
+	for n in 200:
+		downs.append(CrewCover.down_time(pistol_gunnery, guard._rng))
+	_expect(downs.min() >= pistol_gunnery.time_down_low * 0.7 - 0.001 and downs.max() <= pistol_gunnery.time_down_high * 1.3 + 0.001
+			and downs.min() < pistol_gunnery.time_down_low and downs.max() > pistol_gunnery.time_down_high,
+			"gunnery: 200 times down run %.2f to %.2f s, want the Pistol Gunnery's %.1f to %.1f s varied by 30%% either way"
+			% [downs.min(), downs.max(), pistol_gunnery.time_down_low, pistol_gunnery.time_down_high])
 	pistol_gunnery.aim_error_degrees = 2.0
 	_expect(is_equal_approx(guard.base_cone_degrees(), 3.0), "gunnery: dialling the Pistol Gunnery's aim error did not reach its cone")
 	pistol_gunnery.aim_error_degrees = 7.5
@@ -1050,30 +1065,52 @@ func _stray_crate(at: Vector3) -> Node3D:
 	return crate
 
 
-## A Guard ducking for cover whose way there is blocked (a crate across
-## it), with the Pirate still in view, gives up on getting there and leaves
-## COVER within Crew3D.COVER_GIVE_UP plus a tick, rather than holding it
-## forever.
+## A Guard running for a cover spot it cannot reach (boxed in by crates the
+## walking grid knows nothing of) gives up on that spot within
+## CrewCover.MOVE_GIVE_UP plus a tick and does not set off for it again for
+## the next 3 s, rather than walking at it forever.
 func _check_cover_blocked() -> void:
 	player.health.max_health = 100000
 	player.health.reset()
-	var guard := _crew()
-	var crate := _stray_crate(CREW_AT + Vector3.FORWARD * 1.2)
-	_place(6.0)
+	var centre := ShipBuilder3D.tile_to_world(RING_CENTRE)
+	player.global_position = centre
+	player.state = player.State.WALK
+	var guard := _armed(load("res://resources/weapons/pistol.tres"))
+	guard.layout = ring_layout
+	guard.global_position = ShipBuilder3D.tile_to_world(RING_STARTS[0])
+	guard.face_direction(centre - guard.global_position)
+	var crates: Array[Node3D] = []
+	for side in [Vector3.LEFT, Vector3.RIGHT, Vector3.BACK]:
+		crates.append(_stray_crate(guard.global_position + side))
 	for i in 2:
 		await physics_frame
-	guard.perception.awareness = 1.0
-	guard._last_seen = player.global_position
-	guard._enter(Crew3D.State.COVER)
-	# Behind the crate, straight through it.
-	guard._path.assign([CREW_AT + Vector3.FORWARD * 2.4])
+	guard.hear_position(centre)
 	guard.set_physics_process(true)
-	var took := await _seconds_until(6.0, func() -> bool: return guard.state != Crew3D.State.COVER)
+	var spot := Vector2i.MAX
+	var set_off := -1.0
+	var gave_up := -1.0
+	var again := false
+	var t := 0.0
+	while t < 12.0:
+		await physics_frame
+		t += STEP
+		var walking_to := guard.cover.tile if guard.cover.mode == CrewCover.Mode.MOVE else Vector2i.MAX
+		if set_off < 0.0 and walking_to != Vector2i.MAX:
+			set_off = t
+			spot = walking_to
+		elif set_off >= 0.0 and gave_up < 0.0 and walking_to != spot:
+			gave_up = t
+		elif gave_up >= 0.0 and walking_to == spot:
+			again = true
+		if gave_up >= 0.0 and t > gave_up + 3.0:
+			break
 	guard.set_physics_process(false)
-	_expect(took >= 0.0 and took <= Crew3D.COVER_GIVE_UP + 0.1 and guard.state == Crew3D.State.FIGHT,
-			"cover: a Guard whose way to cover is blocked left COVER after %.2f s (state %d), want FIGHT within %.1f s" % [took, guard.state, Crew3D.COVER_GIVE_UP + 0.1])
+	_expect(set_off >= 0.0 and gave_up >= 0.0 and gave_up - set_off <= CrewCover.MOVE_GIVE_UP + 0.1 and not again,
+			"cover: a Guard boxed in set off for %s at %.2f s and gave it up at %.2f s (want within %.1f s), setting off for it again: %s"
+			% [spot, set_off, gave_up, CrewCover.MOVE_GIVE_UP + 0.1, again])
 	guard.free()
-	crate.free()
+	for crate in crates:
+		crate.free()
 	player.health.max_health = 5
 	player.health.reset()
 	for shot in get_first_node_in_group(&"projectiles").get_children():
@@ -1105,12 +1142,18 @@ func _check_blocked_by_pirate() -> void:
 ## cover its bolts would hit: once with him stood just behind a crate (the
 ## line from muzzle to torso dips into it), once with a locker at its
 ## shoulder that its barrel pokes past by less than a bolt's width (a bolt
-## born touching it strikes it). In 6 s it puts no bolt into the cover from
-## where it stood, steps more than 0.5 m off, and hits him.
+## born touching it strikes it). In MUZZLE_SECONDS it puts no bolt into the
+## cover from where it stood, steps more than 0.5 m off, fires only with its
+## muzzle line clear, and puts bolts past the cover (into him, or the wall
+## behind him when they miss).
 func _check_muzzle_blocked() -> void:
 	for rig in [["crate", Vector3(0.0, 0.0, -5.3)], ["locker", Vector3(0.52, 0.0, -0.65)]]:
 		await _muzzle_rig(rig[0], CREW_AT + rig[1])
 
+
+## Seconds the muzzle rigs run: the Guard now fights from cover and fires
+## only when up, a few shots a peek.
+const MUZZLE_SECONDS := 12.0
 
 func _muzzle_rig(prop: String, at: Vector3) -> void:
 	player.health.max_health = 100000
@@ -1124,10 +1167,13 @@ func _muzzle_rig(prop: String, at: Vector3) -> void:
 		await physics_frame
 	var eyes_clear := not guard._blocked(guard.global_position + Vector3.UP * Crew3D.EYE_HEIGHT,
 			player.global_position + Vector3.UP * Crew3D.EYE_HEIGHT)
-	var tally := {"prop": 0, "from_spot": 0, "pirate": 0, "other": 0}
+	var tally := {"prop": 0, "from_spot": 0, "pirate": 0, "other": 0, "fired": 0, "blind": 0}
 	var shots: Node = get_first_node_in_group(&"projectiles")
 	var watch := func(node: Node) -> void:
 		if node is Projectile3D:
+			tally.fired += 1
+			if guard._muzzle_blocked():
+				tally.blind += 1
 			(node as Projectile3D).hit.connect(func(body: Node3D, _head: bool) -> void:
 				tally["prop" if body == cover else "pirate" if body == player else "other"] += 1
 				if body == cover and guard.global_position.distance_to(CREW_AT) < 0.5:
@@ -1138,14 +1184,15 @@ func _muzzle_rig(prop: String, at: Vector3) -> void:
 	guard._enter(Crew3D.State.FIGHT)
 	guard.set_physics_process(true)
 	var moved := 0.0
-	for i in 360:
+	for i in roundi(MUZZLE_SECONDS / STEP):
 		await physics_frame
 		moved = maxf(moved, guard.global_position.distance_to(CREW_AT))
 	guard.set_physics_process(false)
 	shots.child_entered_tree.disconnect(watch)
 	_expect(eyes_clear, "muzzle (%s): the rig is wrong, the eye line is blocked" % prop)
-	_expect(tally.from_spot == 0 and tally.pirate > 0 and moved > 0.5,
-			"muzzle (%s): a Guard whose muzzle line clips cover put %d bolts into it from where it stood (%d in all) and %d into the Pirate, stepping at most %.1f m off in 6 s" % [prop, tally.from_spot, tally.prop, tally.pirate, moved])
+	_expect(tally.from_spot == 0 and tally.blind == 0 and tally.pirate + tally.other > 0 and moved > 0.5,
+			"muzzle (%s): a Guard whose muzzle line clips cover put %d bolts into it from where it stood (%d in all), fired %d of %d with its muzzle line blocked, and %d past it (%d into the Pirate), stepping at most %.1f m off in %.0f s"
+			% [prop, tally.from_spot, tally.prop, tally.blind, tally.fired, tally.pirate + tally.other, tally.pirate, moved, MUZZLE_SECONDS])
 	guard.free()
 	cover.free()
 	player.health.max_health = 5
@@ -1980,3 +2027,578 @@ func _check_died_unaware() -> void:
 	_expect(quiet.died_unaware and not loud.died_unaware, "stealth: died_unaware is %s for an unaware kill, %s for a spotted one" % [quiet.died_unaware, loud.died_unaware])
 	quiet.free()
 	loud.free()
+
+
+# --- cover (crew-combat ticket 18) ---------------------------------------------
+
+## The ring: one Room 17 tiles square at x 500-516, y 0-16, the Pirate on
+## its centre tile, a crate 5 tiles off him each way, and a Guard's start
+## on the wall 8 tiles off him beyond each crate.
+const RING_CENTRE := Vector2i(508, 8)
+const RING_CRATES: Array[Vector2i] = [Vector2i(508, 3), Vector2i(508, 13), Vector2i(503, 8), Vector2i(513, 8)]
+const RING_STARTS: Array[Vector2i] = [Vector2i(508, 0), Vector2i(508, 16), Vector2i(500, 8), Vector2i(516, 8)]
+## The locker Room: 9 by 10 tiles at x 520-528, the Pirate at (524, 1), a
+## locker (full height) at (524, 6), the Guard's start at (524, 9).
+const FULL_PIRATE := Vector2i(524, 1)
+const FULL_START := Vector2i(524, 9)
+## The crate grid: 15 tiles square at x 540-554, a crate every fourth tile
+## each way from (543, 3).
+const CRATES_PIRATE := Vector2i(547, 1)
+const CRATES_START := Vector2i(547, 13)
+## Peeks watched per gun for the rhythm.
+const RHYTHM_PEEKS := 20
+## How far a walk's samples are apart, and the tolerance on its numbers.
+const WALK_SAMPLE := 0.5
+## Seconds of the three-Guard fight on a generated ship, and the stuck
+## rule: trying to walk this long without moving STUCK_MOVE.
+const SHIP_FIGHT := 60.0
+const STUCK_TIME := 5.0
+const STUCK_MOVE := 0.3
+
+
+func _build_cover_rigs() -> void:
+	var ring_props: Array[Dictionary] = []
+	for at in RING_CRATES:
+		ring_props.append({"type": &"crate", "tile": at})
+	ring_layout = _rig_room("RingShip", Rect2i(500, 0, 17, 17), ring_props)
+	full_layout = _rig_room("FullShip", Rect2i(520, 0, 9, 10), [{"type": &"locker", "tile": Vector2i(524, 6)}])
+	var grid_props: Array[Dictionary] = []
+	for x in [543, 547, 551]:
+		for y in [3, 7, 11]:
+			grid_props.append({"type": &"crate", "tile": Vector2i(x, y)})
+	crates_layout = _rig_room("CratesShip", Rect2i(540, 0, 15, 15), grid_props)
+
+
+func _rig_room(ship_name: String, rect: Rect2i, props: Array[Dictionary]) -> ShipLayout:
+	var rig := ShipLayout.new()
+	var room := RoomData.new()
+	room.rects = [rect]
+	room.props = props
+	rig.rooms = [room]
+	var ship := Node3D.new()
+	ship.name = ship_name
+	world.add_child(ship)
+	ShipBuilder3D.build(rig, ship)
+	return rig
+
+
+## A Guard carrying [param gun] on [param rig] at [param tile], facing
+## [param look].
+func _rig_guard(gun: WeaponProfile, rig: ShipLayout, tile: Vector2i, look: Vector3) -> Crew3D:
+	var guard := _armed(gun)
+	guard.layout = rig
+	guard.global_position = ShipBuilder3D.tile_to_world(tile)
+	guard.face_direction(look - guard.global_position)
+	return guard
+
+
+## A tile of the walking grid a body can stand on.
+func _open_tile(astar: AStarGrid2D, tile: Vector2i) -> bool:
+	return astar.is_in_boundsv(tile) and not astar.is_point_solid(tile)
+
+
+func _flat(a: Vector3, b: Vector3) -> float:
+	return Vector2(a.x - b.x, a.z - b.z).length()
+
+
+## A tile from which a crouched body is hidden from [param him]: the ray at
+## 0.9 m from its centre to his torso is blocked.
+func _hidden_tile(guard: Crew3D, tile: Vector2i, him: Vector3) -> bool:
+	return guard._blocked(ShipBuilder3D.tile_to_world(tile) + Vector3.UP * Crew3D.COVER_HEIGHT,
+			him + Vector3.UP * Crew3D.TORSO_HEIGHT)
+
+
+## The walk [param trail] (positions, first to last) against the fair-walk
+## rule, sampled every WALK_SAMPLE m along its length: no more than 2.5 m of
+## it with a clear line from the torso to the eyes of the Pirate at
+## [param him], and no sample nearer him than both ends less 1 m, each
+## within WALK_SAMPLE. Empty when fair, else what was wrong.
+func _walk_unfair(guard: Crew3D, trail: Array, him: Vector3) -> String:
+	if trail.size() < 2:
+		return ""
+	var eye := him + Vector3.UP * Crew3D.EYE_HEIGHT
+	var least := minf(_flat(trail[0], him), _flat(trail[-1], him)) - 1.0
+	var samples: Array[Vector3] = [trail[0]]
+	var carried := 0.0
+	for i in range(1, trail.size()):
+		var a: Vector3 = trail[i - 1]
+		var b: Vector3 = trail[i]
+		var leg := _flat(a, b)
+		var along := WALK_SAMPLE - carried
+		while along <= leg:
+			samples.append(a.lerp(b, along / leg))
+			along += WALK_SAMPLE
+		carried = leg - (along - WALK_SAMPLE)
+	var seen := 0.0
+	var nearest := INF
+	for sample in samples:
+		nearest = minf(nearest, _flat(sample, him))
+		if not guard._blocked(sample + Vector3.UP * Crew3D.TORSO_HEIGHT, eye):
+			seen += WALK_SAMPLE
+	if seen > CrewCover.OPEN_RUN + WALK_SAMPLE:
+		return "%.1f m of a %d-sample walk in his view (want at most %.1f + %.1f)" % [seen, samples.size(), CrewCover.OPEN_RUN, WALK_SAMPLE]
+	if nearest < least - WALK_SAMPLE:
+		return "came within %.1f m of him, the nearer end %.1f m (want no nearer than it less 1 m, within %.1f)" % [nearest, least + 1.0, WALK_SAMPLE]
+	return ""
+
+
+## The ring: four Guards, one per gun, each 8 m from the Pirate with a crate
+## between, told where he is at once. Each is within 0.5 m of a tile hidden
+## from his torso at 0.9 m within 6 s, by a fair walk; down, its capsule is
+## below the crate's top; it fires from its cover tile (low cover); and over
+## 20 peeks its shots per burst and seconds down fall inside its Gunnery's
+## ranges widened by 30%.
+func _check_cover_ring() -> void:
+	player.health.max_health = 100000
+	player.health.reset()
+	var centre := ShipBuilder3D.tile_to_world(RING_CENTRE)
+	player.global_position = centre
+	player.state = player.State.WALK
+	var guards: Array[Crew3D] = []
+	var rec := {}
+	for i in 4:
+		var guard := _rig_guard(GunRoll.weapon(i), ring_layout, RING_STARTS[i], centre)
+		guards.append(guard)
+		rec[guard] = {"name": Gunnery.NAMES[i], "trail": [guard.global_position], "arrived": -1.0, "hidden": -1.0,
+				"mode": CrewCover.Mode.NONE, "since": 0.0, "after_peek": false, "downs": [], "peeks": 0,
+				"bursts": [], "burst_frame": guard.burst_frame, "shot_frame": -1, "shots": 0, "off_tile": 0,
+				"tall": 0, "low": true}
+	for i in 2:
+		await physics_frame
+	var shots: Node = get_first_node_in_group(&"projectiles")
+	var watch := func(node: Node) -> void:
+		var bolt := node as Projectile3D
+		if bolt == null or not rec.has(bolt.shooter):
+			return
+		var shooter: Crew3D = bolt.shooter
+		var r: Dictionary = rec[shooter]
+		var frame := Engine.get_physics_frames()
+		if r.shot_frame == frame:
+			return  # another pellet of the same shot
+		r.shot_frame = frame
+		r.shots += 1
+		if shooter.burst_frame != r.burst_frame:
+			r.burst_frame = shooter.burst_frame
+			r.bursts.append(0)
+		if not r.bursts.is_empty():
+			r.bursts[-1] += 1
+		if shooter.cover.spot == Vector3.INF or _flat(shooter.global_position, shooter.cover.spot) > 0.5:
+			r.off_tile += 1
+	shots.child_entered_tree.connect(watch)
+	for guard in guards:
+		guard.hear_position(centre)
+		guard.set_physics_process(true)
+	var t := 0.0
+	while t < 150.0:
+		await physics_frame
+		t += STEP
+		var done := true
+		for guard in guards:
+			var r: Dictionary = rec[guard]
+			var mode: CrewCover.Mode = guard.cover.mode
+			if r.arrived < 0.0:
+				r.trail.append(guard.global_position)
+				if mode == CrewCover.Mode.DOWN:
+					r.arrived = t
+					r.low = guard.cover.low
+			var tile := ShipBuilder3D.world_to_tile(guard.global_position)
+			if r.hidden < 0.0 and _flat(guard.global_position, ShipBuilder3D.tile_to_world(tile)) <= 0.5 \
+					and _hidden_tile(guard, tile, centre):
+				r.hidden = t
+			if mode != r.mode:
+				if r.mode == CrewCover.Mode.DOWN and r.after_peek:
+					r.downs.append(t - r.since)
+				if mode == CrewCover.Mode.DOWN:
+					r.after_peek = r.mode in [CrewCover.Mode.SHOOT, CrewCover.Mode.BACK]
+				if mode == CrewCover.Mode.SHOOT:
+					r.peeks += 1
+				r.mode = mode
+				r.since = t
+			if mode == CrewCover.Mode.DOWN:
+				var shape: CollisionShape3D = guard.get_node("CollisionShape3D")
+				if shape.position.y + (shape.shape as CapsuleShape3D).height / 2.0 > 1.1:
+					r.tall += 1
+			if r.downs.size() < RHYTHM_PEEKS or r.bursts.size() <= RHYTHM_PEEKS:
+				done = false
+		if done:
+			break
+	shots.child_entered_tree.disconnect(watch)
+	for i in 4:
+		var guard := guards[i]
+		guard.set_physics_process(false)
+		var r: Dictionary = rec[guard]
+		var gunnery: Gunnery = guard.gunnery
+		_expect(r.hidden >= 0.0 and r.hidden <= 6.0, "cover: a %s Guard told of the Pirate 8 m off past a crate was within 0.5 m of a hidden tile after %.2f s, want within 6 s"
+				% [r.name, r.hidden])
+		var unfair := _walk_unfair(guard, r.trail, centre)
+		_expect(r.arrived >= 0.0 and unfair == "", "cover: a %s Guard's walk to cover (arrived at %.2f s): %s" % [r.name, r.arrived, unfair])
+		_expect(r.low and r.shots > 0 and r.off_tile == 0, "cover: a %s Guard behind a crate (low cover: %s) fired %d of %d shots off its cover tile"
+				% [r.name, r.low, r.off_tile, r.shots])
+		_expect(r.tall == 0, "cover: a %s Guard down behind a crate had its capsule above the crate's 1.1 m top on %d frames" % [r.name, r.tall])
+		# The last burst may still be running.
+		var bursts: Array = r.bursts.slice(0, r.bursts.size() - 1)
+		var shots_low: float = gunnery.shots_per_burst_low * 0.7
+		var shots_high: float = gunnery.shots_per_burst_high * 1.3
+		_expect(bursts.size() >= RHYTHM_PEEKS and bursts.all(func(n: int) -> bool: return n >= shots_low and n <= shots_high),
+				"cover: a %s Guard's %d bursts ran %s shots, want %d or more each %.1f to %.1f" % [r.name, bursts.size(), _counts(bursts), RHYTHM_PEEKS, shots_low, shots_high])
+		var down_low: float = gunnery.time_down_low * 0.7 - STEP
+		var down_high: float = gunnery.time_down_high * 1.3 + STEP
+		var downs: Array = r.downs
+		_expect(downs.size() >= RHYTHM_PEEKS and r.peeks >= RHYTHM_PEEKS and downs.all(func(d: float) -> bool: return d >= down_low and d <= down_high),
+				"cover: a %s Guard's %d peeks were down %.2f to %.2f s, want %d or more each %.2f to %.2f s"
+				% [r.name, downs.size(), downs.min() if downs.size() > 0 else -1.0, downs.max() if downs.size() > 0 else -1.0, RHYTHM_PEEKS, down_low, down_high])
+		guard.free()
+	_clear_shots()
+	player.health.max_health = 5
+	player.health.reset()
+
+
+## {shots in a burst: how many bursts}, for a failure line.
+func _counts(values: Array) -> Dictionary:
+	var out := {}
+	for v in values:
+		out[v] = out.get(v, 0) + 1
+	return out
+
+
+## Every sound stopped and given time to leave the mixer, so nothing a
+## Guard's gun was still playing is held at exit (as test_pirate.gd does).
+func _silence() -> void:
+	for node in root.find_children("*", "", true, false):
+		if node is AudioStreamPlayer or node is AudioStreamPlayer3D:
+			node.stop()
+	OS.delay_msec(300)
+	await process_frame
+	await process_frame
+
+
+func _clear_shots() -> void:
+	for shot in get_first_node_in_group(&"projectiles").get_children():
+		shot.free()
+
+
+## Behind full cover (a locker it cannot fire over) a Guard fires from a
+## neighbouring tile and is back on its cover tile within 2.5 s of its last
+## shot, over four peeks that fired, having walked there fairly.
+func _check_full_cover() -> void:
+	player.health.max_health = 100000
+	player.health.reset()
+	var him := ShipBuilder3D.tile_to_world(FULL_PIRATE)
+	player.global_position = him
+	player.state = player.State.WALK
+	var guard := _rig_guard(load("res://resources/weapons/pistol.tres"), full_layout, FULL_START, him)
+	for i in 2:
+		await physics_frame
+	var shots: Node = get_first_node_in_group(&"projectiles")
+	var wrong: Array[String] = []
+	var tally := {"shots": 0, "last": -1.0, "frame": -1, "t": 0.0, "this_peek": false}
+	var watch := func(node: Node) -> void:
+		var bolt := node as Projectile3D
+		if bolt == null or bolt.shooter != guard or tally.frame == Engine.get_physics_frames():
+			return
+		tally.frame = Engine.get_physics_frames()
+		tally.shots += 1
+		tally.last = tally.t
+		tally.this_peek = true
+		var at := ShipBuilder3D.world_to_tile(guard.global_position)
+		var off: Vector2i = at - guard.cover.tile
+		if guard.cover.low or at == guard.cover.tile or maxi(absi(off.x), absi(off.y)) != 1 \
+				or _flat(guard.global_position, ShipBuilder3D.tile_to_world(at)) > 0.5:
+			wrong.append("from %s, cover %s (low %s)" % [at, guard.cover.tile, guard.cover.low])
+	shots.child_entered_tree.connect(watch)
+	guard.hear_position(him)
+	guard.set_physics_process(true)
+	var trail: Array = [guard.global_position]
+	var arrived := false
+	var away := false
+	var returns: Array[float] = []
+	while tally.t < 40.0 and returns.size() < 4:
+		await physics_frame
+		tally.t += STEP
+		if not arrived:
+			trail.append(guard.global_position)
+			arrived = guard.cover.mode == CrewCover.Mode.DOWN
+		if guard.cover.spot == Vector3.INF:
+			continue
+		var out := _flat(guard.global_position, guard.cover.spot) > 0.5
+		# A peek with nothing to shoot (it ducks after 1.2 s) has no last shot.
+		if away and not out and tally.this_peek:
+			returns.append(tally.t - tally.last)
+		if not out:
+			tally.this_peek = false
+		away = out
+	shots.child_entered_tree.disconnect(watch)
+	guard.set_physics_process(false)
+	var unfair := _walk_unfair(guard, trail, him)
+	_expect(arrived and unfair == "", "full cover: the Guard's walk to cover: %s" % unfair)
+	_expect(tally.shots > 0 and wrong.is_empty(), "full cover: of %d shots, %d were not from a tile beside its cover tile, e.g. %s"
+			% [tally.shots, wrong.size(), wrong.slice(0, 2)])
+	_expect(returns.size() >= 4 and returns.all(func(s: float) -> bool: return s <= 2.5),
+			"full cover: back on its cover tile %s s after its last shot, want four peeks each within 2.5 s" % [returns])
+	guard.free()
+	_clear_shots()
+	player.health.max_health = 5
+	player.health.reset()
+
+
+## In the crate grid: a Guard down in cover that the Pirate, moved, sees
+## crouched has left that tile for another hidden from him within 2 s (and
+## walks there fairly); one he then stands 2.5 m from, in its sight, picks
+## its next spot at least 1 m further from him.
+func _check_flanked_and_closed_on() -> void:
+	player.health.max_health = 100000
+	player.health.reset()
+	var him := ShipBuilder3D.tile_to_world(CRATES_PIRATE)
+	player.global_position = him
+	player.state = player.State.WALK
+	var guard := _rig_guard(load("res://resources/weapons/pistol.tres"), crates_layout, CRATES_START, him)
+	for i in 2:
+		await physics_frame
+	guard.hear_position(him)
+	guard.set_physics_process(true)
+	var down := await _seconds_until(8.0, func() -> bool: return guard.cover.mode == CrewCover.Mode.DOWN)
+	_expect(down >= 0.0, "flanked: the Guard never got down in the crate grid (mode %s)" % CrewCover.MODE_NAMES[guard.cover.mode])
+	var old: Vector2i = guard.cover.tile
+
+	# Somewhere he sees it crouched, 4 to 8 m off, on open floor, with
+	# somewhere else in reach for it to go.
+	var astar := CrewPaths.grid(crates_layout)
+	var crouched := guard.global_position + Vector3.UP * Crew3D.COVER_HEIGHT
+	var flank := Vector3.INF
+	for tile: Vector2i in crates_layout.rooms[0].tiles():
+		var at := ShipBuilder3D.tile_to_world(tile)
+		var far := _flat(at, guard.global_position)
+		if not _open_tile(astar, tile) or far < 4.0 or far > 8.0:
+			continue
+		if not guard._blocked(crouched, at + Vector3.UP * Crew3D.EYE_HEIGHT) and _has_cover_from(guard, at, 0):
+			flank = at
+			break
+	_expect(flank != Vector3.INF, "flanked: the rig has no tile that sees the Guard crouched at %s" % old)
+	if down >= 0.0 and flank != Vector3.INF:
+		player.global_position = flank
+		var trail: Array = [guard.global_position]
+		var left := -1.0
+		var t := 0.0
+		while t < 6.0:
+			await physics_frame
+			t += STEP
+			trail.append(guard.global_position)
+			var now: Vector2i = guard.cover.tile
+			if left < 0.0 and now != Vector2i.MAX and now != old and _hidden_tile(guard, now, flank) \
+					and _flat(guard.global_position, ShipBuilder3D.tile_to_world(old)) > 0.5:
+				left = t
+			if left >= 0.0 and guard.cover.mode == CrewCover.Mode.DOWN:
+				break
+		_expect(left >= 0.0 and left <= 2.0, "flanked: seen crouched from %s, the Guard left %s for a hidden tile after %.2f s (now %s, mode %s), want within 2 s"
+				% [ShipBuilder3D.world_to_tile(flank), old, left, guard.cover.tile, CrewCover.MODE_NAMES[guard.cover.mode]])
+		var unfair := _walk_unfair(guard, trail, flank)
+		_expect(guard.cover.mode == CrewCover.Mode.DOWN and unfair == "", "flanked: the walk to its next spot (mode %s): %s"
+				% [CrewCover.MODE_NAMES[guard.cover.mode], unfair])
+		him = flank
+
+	# Too close: him 2.5 m off in its sight, while it is down.
+	await _seconds_until(6.0, func() -> bool: return guard.cover.mode == CrewCover.Mode.DOWN)
+	var eye := guard.global_position + Vector3.UP * Crew3D.EYE_HEIGHT
+	var close := Vector3.INF
+	for k in 16:
+		var at := guard.global_position + Vector3.FORWARD.rotated(Vector3.UP, TAU * k / 16.0) * 2.5
+		at.y = 0.0
+		if not _open_tile(astar, ShipBuilder3D.world_to_tile(at)) or guard._blocked(eye, at + Vector3.UP * Crew3D.EYE_HEIGHT):
+			continue
+		# Not crowding a crate: a body there would stand inside it.
+		if not CrewPaths.clear(astar, at, at) or not _has_cover_from(guard, at, -1):
+			continue
+		close = at
+		break
+	_expect(close != Vector3.INF, "too close: no open floor 2.5 m from the Guard in its sight")
+	if close != Vector3.INF and guard.cover.mode == CrewCover.Mode.DOWN:
+		var before: Vector2i = guard.cover.tile
+		var from := _flat(guard.global_position, close)
+		player.global_position = close
+		var moved := await _seconds_until(1.0, func() -> bool: return guard.cover.tile != before)
+		var next := guard.cover.spot
+		_expect(moved >= 0.0 and next != Vector3.INF and _flat(next, close) >= from + 1.0,
+				"too close: with him %.1f m off in its sight the Guard's next spot is %s, %.1f m from him (mode %s), want at least %.1f m"
+				% [from, guard.cover.tile, _flat(next, close) if next != Vector3.INF else -1.0, CrewCover.MODE_NAMES[guard.cover.mode], from + 1.0])
+	guard.set_physics_process(false)
+	guard.free()
+	_clear_shots()
+	player.health.max_health = 5
+	player.health.reset()
+
+
+## Whether [param guard] would find a spot (CrewCover.find, [param want])
+## with the Pirate seen at [param at]: so a rig puts him where there is
+## somewhere for it to go.
+func _has_cover_from(guard: Crew3D, at: Vector3, want: int) -> bool:
+	var seen := guard._last_seen
+	guard._last_seen = at
+	var found := guard.cover.find(want)
+	guard._last_seen = seen
+	return not found.is_empty()
+
+
+## In the empty test Room (no prop, no corner out of his sight) a Guard told
+## of the Pirate 8 m off fires at him from where it stands within 3 s, and
+## never closes to under 4 m in 6 s.
+func _check_open_fight() -> void:
+	player.health.max_health = 100000
+	player.health.reset()
+	var guard := _crew()
+	_place(8.0)
+	for i in 2:
+		await physics_frame
+	guard.hear_position(player.global_position)
+	guard.set_physics_process(true)
+	var first := -1.0
+	var moved_by := 0.0
+	var nearest := INF
+	var t := 0.0
+	while t < 6.0:
+		await physics_frame
+		t += STEP
+		nearest = minf(nearest, _flat(guard.global_position, player.global_position))
+		if first < 0.0 and _has_fired(guard):
+			first = t
+			moved_by = _flat(guard.global_position, CREW_AT)
+	guard.set_physics_process(false)
+	_expect(first >= 0.0 and first <= 3.0 and moved_by < 0.5 and guard.cover.mode == CrewCover.Mode.OPEN,
+			"open fight: with no cover a Guard first fired after %.2f s, %.1f m from where it stood (mode %s), want within 3 s where it stands"
+			% [first, moved_by, CrewCover.MODE_NAMES[guard.cover.mode]])
+	_expect(nearest >= 4.0, "open fight: with no cover a Guard closed to %.1f m of him, want never under 4 m" % nearest)
+	guard.free()
+	_clear_shots()
+	player.health.max_health = 5
+	player.health.reset()
+
+
+## Sixty simulated seconds of three Guards (rolled guns) fighting the Pirate
+## in the largest Room of a generated medium ship, the Pirate moved to a
+## fresh spot every 10 s: no Guard is stuck (trying to walk without moving
+## 0.3 m for 5 s), no two ever claim one tile, and no claimed tile is beside
+## a Breaker.
+func _check_cover_fight_on_ship() -> void:
+	world.free()
+	world = Node3D.new()
+	root.add_child(world)
+	var ship_seed := randi_range(1, 1_000_000)
+	var ship_layout := ShipGenerator.generate(&"medium", ship_seed)
+	var ship := Node3D.new()
+	ship.name = "Ship"
+	world.add_child(ship)
+	ShipBuilder3D.build(ship_layout, ship)
+	for member in ship.get_node("Crew").get_children():
+		member.free()
+	var shots := Node3D.new()
+	shots.add_to_group(&"projectiles")
+	world.add_child(shots)
+	player = load("res://scenes/player_3d.tscn").instantiate()
+	world.add_child(player)
+	player.set_physics_process(false)
+	player.health.max_health = 100000
+	player.health.reset()
+	player.state = player.State.WALK
+
+	var tag := "ship fight (medium seed %d)" % ship_seed
+	var astar := CrewPaths.grid(ship_layout)
+	var room := -1
+	for i in ship_layout.rooms.size():
+		if ship_layout.rooms[i].role != &"corridor" and (room < 0 or ship_layout.rooms[i].tiles().size() > ship_layout.rooms[room].tiles().size()):
+			room = i
+	var open: Array[Vector3] = []
+	for tile: Vector2i in ship_layout.rooms[room].tiles():
+		if _open_tile(astar, tile):
+			open.append(ShipBuilder3D.tile_to_world(tile))
+	var middle := ShipBuilder3D.room_center_world(ship_layout.rooms[room])
+	open.sort_custom(func(a: Vector3, b: Vector3) -> bool: return _flat(a, middle) < _flat(b, middle))
+	var him := open[0]
+	player.global_position = him
+	var near: Array[Vector3] = []
+	for r in CrewCombat.rooms_near(ship_layout, [room]):
+		for tile: Vector2i in ship_layout.rooms[r].tiles():
+			var at := ShipBuilder3D.tile_to_world(tile)
+			if _open_tile(astar, tile) and _flat(at, him) >= 5.0 and _flat(at, him) <= 10.0:
+				near.append(at)
+	var guards: Array[Crew3D] = []
+	var crew_scene: PackedScene = load("res://scenes/crew_3d.tscn")
+	while guards.size() < 3 and not near.is_empty():
+		var at: Vector3 = near.pop_at(randi_range(0, near.size() - 1))
+		if guards.any(func(g: Crew3D) -> bool: return _flat(g.global_position, at) < 2.0):
+			continue
+		var guard: Crew3D = crew_scene.instantiate()
+		guard.crew_type = CrewTypes.Type.GUARD
+		guard.weapon = GunRoll.weapon(randi_range(0, 3))
+		guard.gunnery = Gunnery.for_weapon(guard.weapon)
+		guard.target = player
+		guard.layout = ship_layout
+		guard.home_room = room
+		guard.position = at
+		ship.get_node("Crew").add_child(guard)
+		guard.face_direction(him - at)
+		guards.append(guard)
+	_expect(guards.size() == 3, "%s: only %d Guards placed" % [tag, guards.size()])
+	var breakers := {}
+	for r in ship_layout.rooms.size():
+		breakers.merge(guards[0]._breaker_tiles(r))
+	for i in 2:
+		await physics_frame
+	for guard in guards:
+		guard.hear_position(him)
+	var watch := {}
+	for guard in guards:
+		watch[guard] = {"anchor": guard.global_position, "walking": 0.0, "still": 0.0}
+	var stuck: Array[String] = []
+	var shared: Array[String] = []
+	var by_breaker: Array[String] = []
+	var went_down := {}
+	var t := 0.0
+	var frames := roundi(SHIP_FIGHT / STEP)
+	for frame in frames:
+		await physics_frame
+		t += STEP
+		if frame > 0 and frame % 600 == 0:
+			# A fresh spot for him, clear of every Guard.
+			for _try in 20:
+				var at: Vector3 = open[randi_range(0, open.size() - 1)]
+				if guards.all(func(g: Crew3D) -> bool: return _flat(g.global_position, at) >= 3.0):
+					player.global_position = at
+					break
+		var claimed := {}
+		for guard in guards:
+			var w: Dictionary = watch[guard]
+			if guard.cover.mode == CrewCover.Mode.DOWN:
+				went_down[guard] = true
+			if _flat(guard.global_position, w.anchor) > STUCK_MOVE:
+				w.anchor = guard.global_position
+				w.walking = 0.0
+				w.still = 0.0
+			elif guard.is_walking():
+				w.walking += STEP
+				w.still = 0.0
+				if w.walking >= STUCK_TIME and stuck.size() < 3:
+					stuck.append("a %s Guard in mode %s at %s (t=%.1f s)" % [guard.weapon.resource_path.get_file(),
+							CrewCover.MODE_NAMES[guard.cover.mode], ShipBuilder3D.world_to_tile(guard.global_position), t])
+					w.walking = -INF
+			else:
+				w.still += STEP
+				if w.still >= 1.0:
+					w.walking = 0.0
+					w.anchor = guard.global_position
+			var tile: Vector2i = guard.cover.tile
+			if tile == Vector2i.MAX:
+				continue
+			if claimed.has(tile) and shared.size() < 3:
+				shared.append("%s (t=%.1f s)" % [tile, t])
+			claimed[tile] = true
+			if breakers.has(tile) and by_breaker.size() < 3:
+				by_breaker.append("%s (t=%.1f s)" % [tile, t])
+	for guard in guards:
+		guard.set_physics_process(false)
+	_expect(went_down.size() >= 2, "%s: only %d of 3 Guards ever got down in cover" % [tag, went_down.size()])
+	_expect(stuck.is_empty(), "%s: Guards stuck, trying to walk without moving %.1f m for %.0f s: %s" % [tag, STUCK_MOVE, STUCK_TIME, stuck])
+	_expect(shared.is_empty(), "%s: two Guards claimed one tile: %s" % [tag, shared])
+	_expect(by_breaker.is_empty(), "%s: a Guard claimed a tile beside a Breaker: %s" % [tag, by_breaker])
+	for guard in guards:
+		guard.free()
+	for shot in shots.get_children():
+		shot.free()

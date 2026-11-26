@@ -128,14 +128,17 @@ summary line and the total at the end, so a later run shows drift:
 | `layouts` | `tests/test_layouts.gd` | 252 | 1 s |
 | `ship_3d` | `tests/test_ship_3d.gd` | 3681 | 9–10 s |
 | `pirate` | `tests/test_pirate.gd` | 597 | 3–4 s |
-| `crew` | `tests/test_crew.gd` | 107 | 11–13 s |
+| `crew` | `tests/test_crew.gd` | 297 | 20–23 s |
 | `attachments` | `tests/test_attachments.gd` | 1674 | 6 s |
 | `raid_smoke` | `tests/test_raid_smoke.gd` | about 920 | 75–105 s |
 | full gate | `tests/run_all.sh` | | 145–176 s |
 
 The `generator` row was re-measured on 2026-11-25 after the gun roll checks
 (ticket `.scratch/crew-combat/issues/15-gunnery-per-weapon-and-the-gun-roll.md`),
-which generate 100 more large ships for the gun shares. The `crew`, `raid_smoke` and full gate rows were re-measured later on
+which generate 100 more large ships for the gun shares. The `crew` row was
+re-measured on 2026-11-25 over eight passing runs after the cover checks
+(ticket `.scratch/crew-combat/issues/18-guards-find-hold-and-peek-from-cover.md`),
+which add about 9 s of simulated fights. The `crew`, `raid_smoke` and full gate rows were re-measured later on
 2026-11-22 over twenty passing full gates after the crew give-way fix
 (ticket `.scratch/raid-smoke-bugs/issues/06-crew-block-each-other.md`),
 some of them while a second worktree ran Godot on the same machine, which
@@ -162,10 +165,14 @@ given through `Raid.arm` as a Raid from the menu gives it. Every Raid is played 
 
 - **Invariants, strict on every Raid:** no engine error; the Pirate never
   leaves the Hull or drops below the floor; no crew member walking to a Job
-  goes 40 s without moving 1 m; no crew member holds COVER past
-  its own limit, the longest of `COVER_GIVE_UP` (3 s), its cover hold and its
-  Gunnery's time-down ceiling, plus 0.5 s (3.5 s for a Pistol, Assault
-  Rifle or Shotgun Guard, 4.5 s for a Marksman Rifle; before time down it was a flat 3.5 s, longest seen 3.0 s) or puts 4 shots (a Shotgun's 12 pellets count as one) in a
+  goes 40 s without moving 1 m; no Guard fighting from cover stays down
+  with the Pirate in its sight longer than its longest time down
+  (`CrewCover.longest_down`: its Gunnery's time-down ceiling plus 30 %, plus
+  the 0.8 s near-miss hold) plus 0.5 s since it got down or last ducked a
+  near miss, or tries to walk 5 s without moving 0.3 m (a second standing
+  still starts the count again); these replaced the old limit on time in
+  COVER (crew-combat ticket 18), since a dug-in Guard now rightly holds a
+  spot as long as the fight lasts; none puts 4 shots (a Shotgun's 12 pellets count as one) in a
   row into the ship within 2 m of its own muzzle (longest streak seen 2);
   the HUD offers a Door's prompt only with the Pirate in a Door's reach,
   and shows the Alarm banner exactly while the Alarm is raised; at a
@@ -200,6 +207,15 @@ muzzle-line check disabled on both seeds but by one or two Raids each; it
 does not catch the blocked-crew facing fix disabled, which `crew`
 (`_check_blocked_by_pirate`) does. `crew` also catches the cover and muzzle
 mutations (`_check_cover_blocked`, `_check_muzzle_blocked`).
+
+Mutation proof for the cover fight's invariants (2026-11-25, ticket 18):
+a Guard that never peeks (`CrewCover._start_peek` always staying down)
+fails the smoke run on `class=small seed=101` ("stayed down 3.9 s with him
+in its sight, longer than 3.40 + 0.5 s"); a Guard that never gives up a
+spot it cannot reach passes the smoke run (seed 202: no Guard was boxed
+out of its spot) and fails `crew` (`_check_cover_blocked`). The bot aims
+under the top of a crew member's body as it is now (`_chest`), so a Guard
+down behind cover is not a target it fires over forever.
 
 Game bug it used to fail on (fixed 2026-11-22, ticket
 `.scratch/raid-smoke-bugs/issues/06-crew-block-each-other.md`): two crew
@@ -241,7 +257,7 @@ reading the checks that use it.
 
 | Code | Suites | What asserts on it |
 | ---- | ------ | ------------------ |
-| `scripts/crew/` | `crew`; `ship_3d`, `pirate`, `raid_smoke` in part | `crew`: Awareness, hearing, routines (`CrewRoutine`), Guards and Workers (`CrewTypes`; a cornered Worker unarmed, never firing in 30 s and cowering), each weapon's `Gunnery` file and a Guard firing each gun (pellets, projectile, bursts, time down),  the Alarm and Alarm panels, combat (cover it cannot reach, holding fire with the muzzle line blocked), steering round props and bodies (`CrewPaths`), two crew blocking each other (one gives way), one crew member per work spot, bodies and traces (`CrewTraces`). `ship_3d`: crew spawn, shooting and death on a built ship. `pirate`: crew models and the crew shot. `raid_smoke`: whole Raids against the crew: a Guard killing a Pirate who stands in view, no crew member stuck on its way to a Job, none held in COVER past its own limit (3 s, its hold or its Gunnery's time-down ceiling, whichever is longest, plus 0.5 s) or emptying bolts into cover at its muzzle, the HUD's spotted stings matching the crew that tipped into spotted, kills matching the crew down, and across the sweep enough Quiet Raids unseen into a Ghost Extraction |
+| `scripts/crew/` | `crew`; `ship_3d`, `pirate`, `raid_smoke` in part | `crew`: Awareness, hearing, routines (`CrewRoutine`), Guards and Workers (`CrewTypes`; a cornered Worker unarmed, never firing in 30 s and cowering), each weapon's `Gunnery` file and a Guard firing each gun (pellets, projectile, bursts, time down),  the Alarm and Alarm panels, combat (a cover spot it cannot reach, holding fire with the muzzle line blocked), fighting from cover (`CrewCover`: `_check_cover_ring` hidden within 6 s by a fair walk, low cover fired from, the capsule lowered, 20 peeks of each gun's shots per burst and time down; `_check_full_cover`; `_check_flanked_and_closed_on`; `_check_open_fight`; `_check_cover_fight_on_ship`, 60 s of three Guards on a generated medium ship with none stuck, no shared tile, none beside a Breaker), steering round props and bodies (`CrewPaths`), two crew blocking each other (one gives way), one crew member per work spot, bodies and traces (`CrewTraces`). `ship_3d`: crew spawn, shooting and death on a built ship. `pirate`: crew models and the crew shot. `raid_smoke`: whole Raids against the crew: a Guard killing a Pirate who stands in view, no crew member stuck on its way to a Job, no Guard fighting from cover stuck down with him in sight past its longest time down or stuck walking, none emptying bolts into cover at its muzzle, the HUD's spotted stings matching the crew that tipped into spotted, kills matching the crew down, and across the sweep enough Quiet Raids unseen into a Ghost Extraction |
 | `scripts/data/` | `layouts`, `ship_3d`, `generator` | `RoomDataChecks` (in `layouts` and `ship_3d`): Room rects, fight core, floor rule, Corridor width, display name. `generator`: every `ShipLayout` it emits through `ShipInvariants` |
 | `scripts/gen/` | `generator`; `ship_3d` in part | `generator`: the sweep, distributions, determinism and `ShipInvariants` (with its self-test) over everything `ShipGenerator` calls. `ship_3d`: generated ships built in 3D, `ShipNamer` prefixes, `Interiors` props in the built sample. `generator` also checks `ShipDumper` (`_check_dumper`: glyph set, one listing line per Room and Door). **Uncovered:** `dump_ship.gd` (command-line wrapper, debug output only; loaded by `static`, run by hand in ticket `.scratch/agent-verification/issues/10-ship-dumper-checks.md`) |
 | `scripts/layouts/` | `layouts`, `ship_3d` | `PlayerShipLayout` is the built sample both suites walk |

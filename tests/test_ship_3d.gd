@@ -5,6 +5,10 @@ extends SceneTree
 ##   flatpak run org.godotengine.Godot --headless --path . --script res://tests/test_ship_3d.gd
 
 const UP := Vector3.UP
+## Frames the crew phase waits for the gunman's first hit. It fights from
+## cover (crew-combat ticket 18): it may hide or walk to a spot before it
+## peeks, so the hit comes later than the old 4 s rush.
+const CREW_SHOT_FRAMES := 900
 
 var failures: Array[String] = []
 var checks := 0
@@ -438,9 +442,9 @@ func _physics_crew() -> void:
 		75:
 			_expect(gunman.state in [Crew3D.State.HUNT, Crew3D.State.FIGHT, Crew3D.State.COVER],
 					"crew saw the pirate and stayed on patrol (state %d)" % gunman.state)
-		240:
+		_ when frames >= CREW_SHOT_FRAMES or (frames >= 240 and player.health.current < player.health.max_health):
 			_expect(player.health.current < player.health.max_health,
-					"crew never landed a shot on the pirate")
+					"crew never landed a shot on the pirate in %d frames" % frames)
 			_expect(bystander.health.current == bystander.health.max_health,
 					"crew shot one of their own")
 			_check_cover()

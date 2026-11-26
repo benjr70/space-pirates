@@ -91,7 +91,9 @@ extends SceneTree
 ##    pod) or drops below the floor while alive;
 ## 3. no crew member is stuck: walking to a Job (on routine, or sweeping
 ##    under the Alarm) without moving 1 m in STUCK_LIMIT simulated seconds;
-## 4. no crew member holds COVER longer than its _cover_limit, and none puts
+## 4. no Guard fighting from cover is stuck: down with the Pirate in its
+##    sight longer than its longest time down plus COVER_SLACK, or trying to
+##    walk without moving FIGHT_STUCK_MOVE in FIGHT_STUCK_TIME; and none puts
 ##    COVER_SHOTS shots in a row into the ship within COVER_SHOT_RANGE of
 ##    its own muzzle;
 ## 5. the HUD offers a Door's prompt only while the Pirate is in a Door's
@@ -194,16 +196,20 @@ const HIDE_TIME := 5.0
 const SPOT_NEAR := Vector2(3.0, 8.0)
 ## The same when no spot that far off will do.
 const SPOT_CLOSE := Vector2(1.5, 3.0)
-## A crew member in COVER longer than its own cover limit (_cover_limit)
-## fails the Raid: it gives up a cover point it cannot reach after
-## Crew3D.COVER_GIVE_UP (3 s), and its hold (at most 1.2 x 1.35 = 1.6 s) and
-## its Gunnery's time down (drawn at its last shot, so already running when
-## it ducks: at most 2.0 s Pistol, 2.5 s Assault Rifle, 1.5 s Shotgun, 4.0 s
-## Marksman Rifle) run from when it ducked, so it is out by the longest of
-## the three. COVER_SLACK on top. Before time down replaced the 1.1 s pause
-## (crew-combat ticket 15) the limit was a flat 3.5 s, longest seen 3.0 s
-## over 990 Raids.
+## A Guard fighting from cover ([CrewCover]) that stays down with the
+## Pirate in its sight, since it got down or last ducked a near miss, for
+## longer than its longest time down (CrewCover.longest_down: its
+## Gunnery's time down ceiling varied up 30%, plus the 0.8 s near-miss
+## hold; 3.4 s Pistol, 4.05 s Assault Rifle, 2.75 s Shotgun, 6.0 s Marksman
+## Rifle) and COVER_SLACK fails the Raid: it should have peeked. One trying
+## to walk in a fight for FIGHT_STUCK_TIME without moving FIGHT_STUCK_MOVE
+## (a second's standing still starts the count again) fails it too. These
+## replace the old limit on time in COVER (crew-combat ticket 18), which a
+## Guard dug in now rightly passes: it holds a spot, hiding or trading
+## shots, for as long as the fight lasts there.
 const COVER_SLACK := 0.5
+const FIGHT_STUCK_TIME := 5.0
+const FIGHT_STUCK_MOVE := 0.3
 ## A crew member putting this many shots (a Shotgun's pellets one shot) in a row into the ship within
 ## COVER_SHOT_RANGE of its own muzzle (cover at its shoulder or in front of
 ## it), never a body, fails the Raid. Longest such streak seen over 990
@@ -236,8 +242,12 @@ const MELEE_REACH := 1.6
 ## half-width at the range, or this tight whatever the range.
 const BODY_HALF_WIDTH := 0.3
 const MIN_SPREAD := 0.6
-## Where he aims on a crew member: its chest, above the 1.1 m crates.
+## Where he aims on a crew member: its chest, above the 1.1 m crates;
+## on a Guard down in cover (its capsule cut, crew-combat ticket 18),
+## CHEST_BELOW_TOP under the top of its body as it is now, so he never
+## counts a Guard hidden behind low cover as a target he can hit.
 const CHEST := 1.3
+const CHEST_BELOW_TOP := 0.2
 ## Seconds shooting at one crew member further off than GIVE_UP_BEYOND
 ## without a wound before leaving it be, and for how long.
 const GIVE_UP_AFTER := 2.0
@@ -318,7 +328,10 @@ var _engaged := {}
 var box_blocked := false
 ## The sights come down once this passes without a shot taken.
 var _aim_until := 0.0
-var _in_cover := {}
+## Per Guard fighting from cover: [stretch down in sight began, downs,
+## near misses] and [anchor, seconds walking, seconds still].
+var _down_in_sight := {}
+var _fight_walk := {}
 ## Crew shots in a row that hit the ship rather than a body, by shooter.
 var _wasted := {}
 ## Crew member to the physics frame of the last shot counted in its streak:
@@ -545,7 +558,8 @@ func _attempt(ship_class: StringName, ship_seed: int, script: StringName) -> Arr
 	_aim_until = 0.0
 	_given_up.clear()
 	_retreats = 0
-	_in_cover.clear()
+	_down_in_sight.clear()
+	_fight_walk.clear()
 	_wasted.clear()
 	_wasted_shot.clear()
 	route.clear()
@@ -711,12 +725,38 @@ func _frame(budget: float) -> bool:
 	return t < budget
 
 
-## Seconds [param member] may stay in COVER: the longest of giving up an
-## unreachable cover point, its own hold and its Gunnery's time-down
-## ceiling, plus COVER_SLACK.
-func _cover_limit(member: Crew3D) -> float:
-	var down: float = member.gunnery.time_down_high if member.gunnery != null else 0.0
-	return maxf(Crew3D.COVER_GIVE_UP, maxf(member.cover_hold_time, down)) + COVER_SLACK
+## A Guard fighting from cover that is stuck: down with him in its sight
+## past its longest time down, or walking and getting nowhere. Empty when
+## it is not.
+func _stuck_in_fight(member: Crew3D) -> String:
+	var cover: CrewCover = member.cover
+	if cover == null or not member.state in [Crew3D.State.FIGHT, Crew3D.State.COVER]:
+		_down_in_sight.erase(member)
+		_fight_walk.erase(member)
+		return ""
+	var what := "a Guard (%s, mode %s, %.1f m from the Pirate)" % [member.weapon.resource_path.get_file() if member.weapon else "unarmed",
+			CrewCover.MODE_NAMES[cover.mode], _flat(member.global_position).distance_to(_flat(player.global_position))]
+	if cover.mode != CrewCover.Mode.DOWN or not member._can_see:
+		_down_in_sight.erase(member)
+	elif not _down_in_sight.has(member) or _down_in_sight[member][1] != cover.downs or _down_in_sight[member][2] != cover.near_misses:
+		_down_in_sight[member] = [t, cover.downs, cover.near_misses]
+	elif t - _down_in_sight[member][0] > cover.longest_down() + COVER_SLACK:
+		return "%s stayed down %.1f s with him in its sight, longer than %.2f + %.1f s (t=%.1f s)" % [what, t - _down_in_sight[member][0],
+				cover.longest_down(), COVER_SLACK, t]
+	var flat := _flat(member.global_position)
+	if not _fight_walk.has(member) or flat.distance_to(_fight_walk[member][0]) > FIGHT_STUCK_MOVE:
+		_fight_walk[member] = [flat, 0.0, 0.0]
+	elif member.is_walking():
+		_fight_walk[member][1] += STEP
+		_fight_walk[member][2] = 0.0
+		if _fight_walk[member][1] > FIGHT_STUCK_TIME:
+			return "%s tried to walk %.0f s without moving %.1f m, at %s, pressed against %s (t=%.1f s)" % [what, FIGHT_STUCK_TIME,
+					FIGHT_STUCK_MOVE, ShipBuilder3D.world_to_tile(member.global_position), _pressed_against(member), t]
+	else:
+		_fight_walk[member][2] += STEP
+		if _fight_walk[member][2] >= 1.0:
+			_fight_walk[member] = [flat, 0.0, 0.0]
+	return ""
 
 
 func _check_invariants() -> void:
@@ -737,15 +777,9 @@ func _check_invariants() -> void:
 	for member in crew:
 		if not is_instance_valid(member) or not member.is_alive():
 			continue
-		if member.state != Crew3D.State.COVER:
-			_in_cover.erase(member)
-		elif not _in_cover.has(member):
-			_in_cover[member] = t
-		elif cover_held == "" and t - _in_cover[member] > _cover_limit(member):
-			cover_held = "a %s (%s, hold %.2f s, down left %.2f s, path %d) held COVER for %.1f s, %.1f m from the Pirate, Awareness %.2f (t=%.1f s)" % [
-				"Worker" if member.is_worker() else "Guard", member.weapon.resource_path.get_file() if member.weapon else "unarmed",
-				member.cover_hold_time, member._reload_timer, member._path.size(), _cover_limit(member),
-				_flat(member.global_position).distance_to(_flat(player.global_position)), member.perception.awareness, t]
+		var stuck_fighting := _stuck_in_fight(member)
+		if cover_held == "" and stuck_fighting != "":
+			cover_held = stuck_fighting
 		var walking: bool = member.state == Crew3D.State.PATROL and member.routine != null \
 				and member.job_phase == Crew3D.JobPhase.WALKING
 		var flat := Vector3(member.global_position.x, 0.0, member.global_position.z)
@@ -1167,7 +1201,7 @@ func _fire_at(member: Crew3D) -> void:
 	# on a body at this range: bursts, not a hosepipe.
 	Input.action_press(&"aim")
 	_aim_until = t + 0.5
-	var distance: float = player.camera.global_position.distance_to(member.global_position + Vector3(0, CHEST, 0))
+	var distance: float = player.camera.global_position.distance_to(_chest(member))
 	if player.spread_degrees() <= maxf(rad_to_deg(atan(BODY_HALF_WIDTH / distance)), MIN_SPREAD):
 		player.fire()
 
@@ -1343,12 +1377,22 @@ func _look_at(point: Vector3) -> void:
 ## Looks at a crew member's chest, led by where its walk carries it while
 ## the bolt flies.
 func _aim_at(member: Crew3D) -> void:
-	var chest := member.global_position + Vector3(0, CHEST, 0)
+	var chest := _chest(member)
 	var flight: float = player.camera.global_position.distance_to(chest) / player.weapon.projectile_speed
 	_look_at(chest + Vector3(member.velocity.x, 0.0, member.velocity.z) * flight)
 
 
 # --- what he sees -------------------------------------------------------------
+
+## The point he aims at on [param member]: CHEST up, or lower while its
+## body is lowered behind cover.
+func _chest(member: Crew3D) -> Vector3:
+	var height := CHEST
+	var shape := member.get_node_or_null("CollisionShape3D") as CollisionShape3D
+	if shape != null and shape.shape is CapsuleShape3D:
+		height = minf(CHEST, shape.position.y + (shape.shape as CapsuleShape3D).height / 2.0 - CHEST_BELOW_TOP)
+	return member.global_position + Vector3(0, height, 0)
+
 
 ## Living crew he would shoot at: a clear line from his eyes and from the
 ## muzzle to the chest, within SIGHT, not given up on; a fleeing Worker
@@ -1367,7 +1411,7 @@ func _targets(threats_only: bool) -> Array[Crew3D]:
 			continue
 		if threats_only and not _onto_him(member):
 			continue
-		var chest := member.global_position + Vector3(0, CHEST, 0)
+		var chest := _chest(member)
 		if eye.distance_to(chest) > SIGHT:
 			continue
 		if space.intersect_ray(PhysicsRayQueryParameters3D.create(eye, chest, 1)).is_empty() \
@@ -1393,7 +1437,7 @@ func _barrel_blocked() -> Crew3D:
 	for member in crew:
 		if not is_instance_valid(member) or not member.is_alive() or not member.state in THREAT_STATES:
 			continue
-		var chest := member.global_position + Vector3(0, CHEST, 0)
+		var chest := _chest(member)
 		if eye.distance_to(chest) > 8.0 or (best != null and eye.distance_to(chest) > eye.distance_to(best.global_position)):
 			continue
 		if space.intersect_ray(PhysicsRayQueryParameters3D.create(eye, chest, 1)).is_empty() \
@@ -1458,7 +1502,7 @@ func _guard_fighting() -> Crew3D:
 ## clear); without, the eye line blocked. INF when none.
 func _spot_near(member: Crew3D, seen: bool, ring := SPOT_NEAR) -> Vector3:
 	var space := player.get_world_3d().direct_space_state
-	var chest := member.global_position + Vector3(0, CHEST, 0)
+	var chest := _chest(member)
 	var muzzle := member.global_position + Vector3(0, Crew3D.MUZZLE_HEIGHT, 0)
 	var centre := _cell(member.global_position)
 	var best := Vector3.INF
