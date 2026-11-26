@@ -29,3 +29,6 @@ const PATH := "res://resources/sandbox.tres"
 @export var walk_in_distance := 1.0
 ## At most this many pellets of one crew Shotgun shot do damage.
 @export var shotgun_pellet_cap := 9
+## Seconds Pistol and Assault Rifle Guards fire at the edges of the prop he
+## broke sight behind ([CrewTeam]), deliberate misses only, before they hold.
+@export var suppression_time := 4.0

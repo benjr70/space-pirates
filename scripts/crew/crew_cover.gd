@@ -82,8 +82,14 @@ const LOOK_HIDING := 1.0
 const LOOK_OPEN := 1.5
 ## Seconds before it weighs a shift again after weighing one.
 const LOOK_SHIFT := 1.5
-## Seconds a Guard moving up or back holds the one mover's place.
-const MOVER_TIME := 4.0
+## Covering fire: a Guard changes cover only while another fighting him is
+## up and has fired within COVER_FIRE seconds, waiting up to COVER_WAIT for
+## it; with no partner able to fire when it starts waiting, it moves at once.
+const COVER_FIRE := 1.0
+const COVER_WAIT := 3.0
+## The flank's end: a spot in his Room within this of the Door it came
+## through, metres.
+const FLANK_SPOT_REACH := 5.0
 ## Seconds down on first reaching a spot, before its first peek.
 const ARRIVE_DOWN := 0.3
 ## Seconds it walks to a spot without moving MOVE_PROGRESS metres before
@@ -135,8 +141,33 @@ var blind := 0
 var bursts := 0
 ## Counts down to its next look for better cover.
 var think := 0.0
-## Seconds left holding the one mover's place.
-var mover_clock := 0.0
+## Between cover tiles: it left a spot it held for another and has not got
+## down there yet. One Guard fighting him at a time, not counting a flanker.
+var between := false
+## Walking to its spot inside the Door it flanked through: it needs no
+## covering fire and is not the one mover.
+var flank_end := false
+## Seconds it has waited to change cover (negative while it wants to stay),
+## and whether it waits for covering fire at all (a partner able to fire
+## when it started waiting).
+var _move_wait := -1.0
+var _wait_for_cover := false
+## Asked to change cover in this tick ([method _may_leave]): a tick without
+## asking ends the wait.
+var _asked := false
+## Held back from changing cover in this tick.
+var _held_back := false
+## It found where its habit would shift it to and waits to go.
+var _want_shift := false
+## Another Guard has fought him beside it in this fight (in his Room or one
+## joined to it, or flanking); with none left now it is the last Guard: it
+## moves up no more, picks a spot further from him once (_fell_back) and
+## holds.
+var had_partner := false
+var last_guard := false
+var _fell_back := false
+## Which side of the prop it fires past next while firing on his cover.
+var _edge_side := 1.0
 var crouched := false
 ## {tile: seconds left} it gave up walking to.
 var unreachable := {}
@@ -212,6 +243,25 @@ func begin() -> void:
 	hip = false
 	ambushing = false
 	_racked = false
+	between = false
+	flank_end = false
+	_move_wait = -1.0
+	_want_shift = false
+	had_partner = false
+	last_guard = false
+	_fell_back = false
+
+
+## Starts the cover fight at the end of a flank: a spot by the cover rules
+## inside the Door at [param door], in his Room [param room], within
+## FLANK_SPOT_REACH of it, walked to without the fair-walk rule (it is
+## coming in from round the side). False with none: it picks as usual.
+func begin_flank(door: Vector3, room: int) -> bool:
+	var found := find(0, false, INF, room, door)
+	if found.is_empty():
+		return false
+	_claim(found, false, true)
+	return true
 
 
 ## Out of the fight (searching, dead, back on routine): stands up and frees
@@ -221,7 +271,10 @@ func release() -> void:
 	_unclaim()
 	_end_line()
 	_give_up_place()
-	mover_clock = 0.0
+	between = false
+	flank_end = false
+	_move_wait = -1.0
+	_want_shift = false
 	hip = false
 	ambushing = false
 	mode = Mode.NONE
@@ -242,7 +295,8 @@ func tick(delta: float) -> void:
 	timer -= delta
 	clock += delta
 	think -= delta
-	mover_clock -= delta
+	if _move_wait >= 0.0:
+		_move_wait += delta
 	for key in unreachable.keys():
 		unreachable[key] -= delta
 		if unreachable[key] <= 0.0:
@@ -253,6 +307,7 @@ func tick(delta: float) -> void:
 		return
 	if mode in [Mode.DOWN, Mode.OUT, Mode.SHOOT, Mode.BACK]:
 		held += delta
+	_count_partners()
 	if hip and _flat(crew.global_position, crew._last_seen) >= CrewHabit.PERCH_CLOSE:
 		hip = false
 	match mode:
@@ -296,7 +351,10 @@ func tick(delta: float) -> void:
 		Mode.OPEN:
 			_fight_in_open(delta)
 		Mode.AMBUSH:
+			_asked = false
 			_wait_in_ambush()
+			if not _asked:
+				_move_wait = -1.0
 
 
 # --- choosing a spot ------------------------------------------------------------
@@ -315,10 +373,13 @@ func _pick(want: int, relaxed := false) -> bool:
 
 ## The spot it would pick: {tile, at, low, step, peek, score}, or empty.
 ## [param max_far]: only a spot no further than this from him (a Shotgun's
-## walk into its band). Only a Shotgun takes a spot within SHOTGUN_CLOSE of
-## him. A Marksman Rifle searches out to PERCH_RADIUS and scores a spot by
-## its clear line to him ([method _score]).
-func find(want: int, relaxed := false, max_far := INF) -> Dictionary:
+## walk into its band). [param only_room] and [param around]: only a spot in
+## that Room within FLANK_SPOT_REACH of that point, walked to without the
+## fair-walk rule (the end of a flank). Only a Shotgun takes a spot within
+## SHOTGUN_CLOSE of him. A Marksman Rifle searches out to PERCH_RADIUS and
+## scores a spot by its clear line to him ([method _score]). The last Guard
+## takes no spot nearer him than the one it holds.
+func find(want: int, relaxed := false, max_far := INF, only_room := -1, around := Vector3.INF) -> Dictionary:
 	var layout := crew.layout
 	if layout == null:
 		return {}
@@ -339,6 +400,9 @@ func find(want: int, relaxed := false, max_far := INF) -> Dictionary:
 	if rooms.is_empty() and crew.home_room >= 0 and crew.home_room < layout.rooms.size():
 		rooms.append(crew.home_room)
 	rooms = CrewCombat.rooms_near(layout, rooms)
+	if only_room >= 0:
+		rooms = [only_room]
+	var no_nearer := _flat(spot if spot != Vector3.INF else here, last) if last_guard else -INF
 	var claimed := _claimed()
 	var others := _other_spots()
 
@@ -352,7 +416,9 @@ func find(want: int, relaxed := false, max_far := INF) -> Dictionary:
 			if _flat(here, at) > radius:
 				continue
 			var far := _flat(at, last)
-			if far > max_far:
+			if far > max_far or far < no_nearer - 0.01:
+				continue
+			if around != Vector3.INF and _flat(at, around) > FLANK_SPOT_REACH:
 				continue
 			if gun != CrewHabit.Gun.SHOTGUN and far < CrewHabit.SHOTGUN_CLOSE:
 				continue
@@ -397,7 +463,7 @@ func find(want: int, relaxed := false, max_far := INF) -> Dictionary:
 		if tried >= tries:
 			break
 		tried += 1
-		if fair_walk(entry.at, radius * WALK_REACH, not relaxed):
+		if fair_walk(entry.at, radius * WALK_REACH, not relaxed and only_room < 0):
 			return entry
 	return {}
 
@@ -507,10 +573,19 @@ func fair_walk(to: Vector3, reach := INF, fair := true) -> bool:
 
 
 ## Claims [param found] and sets off for it; [param ambush]: to wait there
-## in ambush (Shotgun) rather than get down.
-func _claim(found: Dictionary, ambush := false) -> void:
+## in ambush (Shotgun) rather than get down; [param flank]: the spot inside
+## the Door it flanked through. Leaving a spot it held for another makes it
+## the one mover until it gets down there.
+func _claim(found: Dictionary, ambush := false, flank := false) -> void:
 	if found.tile != tile:
 		held = 0.0
+		if tile != Vector2i.MAX and mode in [Mode.DOWN, Mode.OUT, Mode.SHOOT, Mode.BACK, Mode.AMBUSH]:
+			between = true
+	flank_end = flank
+	if flank:
+		between = false
+	_move_wait = -1.0
+	_want_shift = false
 	tile = found.tile
 	spot = found.at
 	step = found.step
@@ -609,12 +684,91 @@ func _bodies_in_the_way() -> Array[Vector3]:
 	return out
 
 
-## Another Guard is moving up or back now.
-func _someone_moving() -> bool:
+## The other living Guards fighting him (FIGHT or COVER).
+func _partners_fighting() -> Array[Crew3D]:
+	var out: Array[Crew3D] = []
 	for other in _guards():
-		if other.cover != null and other.cover.mover_clock > 0.0:
+		if other.target == crew.target and other.cover != null and other.state in [Crew3D.State.FIGHT, Crew3D.State.COVER]:
+			out.append(other)
+	return out
+
+
+## Another Guard fighting him is between cover tiles now (a flanker on its
+## way to its spot does not count): one mover at a time.
+func _someone_moving() -> bool:
+	for other in _partners_fighting():
+		if other.cover.between and not other.cover.flank_end:
 			return true
 	return false
+
+
+## Up and firing at him, true or a deliberate miss: in a peek or the open
+## fight, its last shot within COVER_FIRE. It covers a partner changing
+## cover.
+func covering() -> bool:
+	return mode in [Mode.SHOOT, Mode.OPEN] and crew.shot_age() <= COVER_FIRE
+
+
+## Able to give covering fire: fighting in the open, or holding (or on its
+## way to) a spot with a way to shoot, not holding its fire, and with him in
+## its sight now, or within COVER_WAIT while it is down behind its own cover
+## or walking to its spot, or his cover to fire on. Not one hiding with no
+## shot, a Shotgun waiting in ambush out of his sight, nor one up that has
+## lost him.
+func can_cover() -> bool:
+	if covering():
+		return true
+	if mode in [Mode.NONE, Mode.AMBUSH] or holds_fire():
+		return false
+	if mode != Mode.OPEN and not has_peek:
+		return false
+	if crew._can_see:
+		return true
+	if (behind_own_cover() or mode == Mode.MOVE) and crew._seen_ago <= COVER_WAIT:
+		return true
+	var team := CrewTeam.of(crew.target)
+	return team != null and team.suppresses(crew)
+
+
+## Whether it may change cover now. One Guard fighting him moves at a time;
+## and it waits for a partner up and firing (covering fire), up to
+## COVER_WAIT, unless no partner was able to fire when it started waiting.
+## Call it every tick it wants to move: a tick without asking ends the wait.
+func _may_leave() -> bool:
+	_asked = true
+	if _move_wait < 0.0:
+		_move_wait = 0.0
+		_wait_for_cover = _partners_fighting().any(func(other: Crew3D) -> bool: return other.cover.can_cover())
+	var may := not _someone_moving() and (not _wait_for_cover or _move_wait >= COVER_WAIT \
+			or _partners_fighting().any(func(other: Crew3D) -> bool: return other.cover.covering()))
+	_held_back = _held_back or not may
+	return may
+
+
+## Seconds it has waited to change cover so far (negative when it is not
+## waiting): for checks.
+func move_wait() -> float:
+	return _move_wait
+
+
+## Who fights him beside it: another living Guard after him in his Room or
+## one joined to it, or flanking. With none, a Guard that has had one is the
+## last Guard.
+func _count_partners() -> void:
+	var layout := crew.layout
+	var near: Array[int] = []
+	if layout != null:
+		near = CrewCombat.rooms_near(layout, CrewNoise.rooms_at(layout, crew._last_seen))
+	for other in _guards():
+		if other.target != crew.target or not other.state in [Crew3D.State.HUNT, Crew3D.State.FIGHT, Crew3D.State.COVER]:
+			continue
+		if other.flanking or near.is_empty() \
+				or CrewNoise.rooms_at(layout, other.global_position).any(func(room: int) -> bool: return room in near):
+			had_partner = true
+			last_guard = false
+			_fell_back = false
+			return
+	last_guard = had_partner
 
 
 ## No cover in reach: fall back out of his sight, or fight where it stands.
@@ -624,10 +778,19 @@ func _no_cover() -> void:
 	_unclaim()
 	_stand()
 	crew._path.clear()
+	between = false
+	flank_end = false
 	think = LOOK_OPEN
 	_set_mode(Mode.OPEN)
 	_start_burst()
 	timer = crew.gunnery.settle * _jitter() if crew.gunnery != null else 0.0
+
+
+## Leaves its spot for another: the best ([param want] 0) or one further
+## (-1); with none, no cover ([method _no_cover]).
+func _leave(want: int) -> void:
+	if not _pick(want):
+		_no_cover()
 
 
 # --- holding a spot -------------------------------------------------------------
@@ -638,6 +801,8 @@ func _get_down(time: float) -> void:
 	waited = 0.0
 	_racked = false
 	_peek_spent = false
+	between = false
+	flank_end = false
 	_crouch()
 	var look := crew._last_seen - crew.global_position
 	look.y = 0.0
@@ -647,8 +812,21 @@ func _get_down(time: float) -> void:
 
 
 ## What makes it leave, or change what it is doing, while down. True when
-## it did.
+## it did. Every change of spot waits its turn ([method _may_leave]).
 func _watch(delta: float) -> bool:
+	_asked = false
+	_held_back = false
+	var acted := _watch_for(delta)
+	if not _asked:
+		_move_wait = -1.0
+	elif _held_back and not acted and not has_peek:
+		# Hiding with no shot, waiting its turn to move: it cannot peek, so
+		# this counts with its habit's waits.
+		waited += delta
+	return acted
+
+
+func _watch_for(delta: float) -> bool:
 	var target := crew.target
 	var eye: Vector3 = target.global_position + Vector3.UP * Crew3D.EYE_HEIGHT
 	var far := _flat(crew.global_position, target.global_position)
@@ -659,9 +837,11 @@ func _watch(delta: float) -> bool:
 	else:
 		exposed = 0.0
 	if exposed > FLANKED_AFTER:
+		if not _may_leave():
+			# With a shot it peeks as usual meanwhile.
+			return false
 		exposed = 0.0
-		if not _pick(0):
-			_no_cover()
+		_leave(0)
 		return true
 	if gun == CrewHabit.Gun.MARKSMAN_RIFLE:
 		# Him close: back to a further perch, or the hip. It takes the place
@@ -670,54 +850,94 @@ func _watch(delta: float) -> bool:
 			return true
 	elif crew._can_see and far < TOO_CLOSE and gun != CrewHabit.Gun.SHOTGUN:
 		# Too close; the Shotgun stays.
-		if not _pick(-1):
-			_no_cover()
+		if not _may_leave():
+			return false
+		_leave(-1)
 		return true
 	if not has_peek and crew._can_see:
 		# Hiding where he could not see it standing, and now he can: it no
 		# longer hides, and it has no shot from here.
-		if not _pick(0):
-			_no_cover()
+		if not _may_leave():
+			return false
+		_leave(0)
 		return true
-	if not has_peek and think <= 0.0:
+	if not has_peek and think <= 0.0 and _may_leave():
 		# Hiding with no shot: look again for real cover.
 		think = LOOK_HIDING
 		if _pick(0):
 			return true
 	if blind >= BLIND_PEEKS:
-		blind = 0
 		# A Marksman Rifle with him hidden holds its perch.
-		if (gun != CrewHabit.Gun.MARKSMAN_RIFLE or crew._seen_ago < WAIT_UP) and _pick(0):
-			return true
-	if think <= 0.0 and not _someone_moving():
-		return _shift()
+		if gun == CrewHabit.Gun.MARKSMAN_RIFLE and crew._seen_ago >= WAIT_UP:
+			blind = 0
+		elif _may_leave():
+			blind = 0
+			if _pick(0):
+				return true
+	if last_guard:
+		return _fall_back()
+	return _shift()
+
+
+## The last Guard fighting him: once, a spot at least a metre further from
+## him, then it holds (no shift, no moving up). True when it set off.
+func _fall_back() -> bool:
+	if _fell_back or not _may_leave() or think > 0.0:
+		return false
+	think = LOOK_SHIFT
+	if _pick(-1):
+		_fell_back = true
+		return true
 	return false
 
 
 ## Moving one spot by its habit: out of its band after holding it its
 ## Gunnery's hold before shifting (a Shotgun into its band, else to its
-## ambush), or nearer where he was after UNSEEN_ADVANCE unseen. A Marksman
-## Rifle never moves up. True when it set off.
+## ambush), or nearer where he was after UNSEEN_ADVANCE unseen, or while
+## the others fire on the prop he hid behind (one Guard). A Marksman Rifle
+## never moves up. It looks every LOOK_SHIFT; having found somewhere, it
+## waits its turn ([method _may_leave]) and goes. True when it set off.
 func _shift() -> bool:
-	var gunnery := crew.gunnery
-	var hold := gunnery.hold_before_shifting if gunnery != null else -1.0
-	if gun == CrewHabit.Gun.MARKSMAN_RIFLE or gunnery == null:
+	if gun == CrewHabit.Gun.MARKSMAN_RIFLE or crew.gunnery == null:
 		return false
+	if not _want_shift:
+		if think > 0.0:
+			return false
+		think = LOOK_SHIFT
+		if _shift_target().is_empty():
+			return false
+		_want_shift = true
+	if not _may_leave():
+		return false
+	_want_shift = false
+	# Its turn: where it goes now, looked for afresh.
+	var found := _shift_target()
+	if found.is_empty():
+		_move_wait = -1.0
+		return false
+	_claim(found, found.get("ambush", false))
+	if found.get("up", false):
+		CrewTeam.of(crew.target).moved_up(crew)
+	return true
+
+
+## Where its habit would shift it now, or empty.
+func _shift_target() -> Dictionary:
+	var gunnery := crew.gunnery
+	var hold := gunnery.hold_before_shifting
 	var cover_far := _flat(spot, crew._last_seen)
 	var out_of_band := hold >= 0.0 and held > hold
 	if gun == CrewHabit.Gun.SHOTGUN and out_of_band and cover_far > gunnery.range_far:
-		think = LOOK_SHIFT
 		var into := find(0, false, gunnery.range_far)
 		if not into.is_empty():
-			mover_clock = MOVER_TIME
-			_claim(into)
-			return true
+			return into
 		var lie := ambush_spot()
 		if not lie.is_empty():
-			mover_clock = MOVER_TIME
-			_claim(lie, true)
-			return true
-	var hidden := crew._seen_ago > UNSEEN_ADVANCE
+			lie["ambush"] = true
+			return lie
+	var team := CrewTeam.of(crew.target)
+	var up := team != null and team.may_move_up(crew)
+	var hidden := crew._seen_ago > UNSEEN_ADVANCE or up
 	var want := 0
 	if hidden:
 		want = 1
@@ -727,13 +947,11 @@ func _shift() -> bool:
 		elif cover_far < gunnery.range_near:
 			want = -1
 	if want != 0:
-		think = LOOK_SHIFT
 		var found := find(want)
 		if not found.is_empty() and (hidden or found.score > score * (1.0 + BETTER)):
-			mover_clock = MOVER_TIME
-			_claim(found)
-			return true
-	return false
+			found["up"] = up and crew._seen_ago <= UNSEEN_ADVANCE
+			return found
+	return {}
 
 
 # --- peeking and firing ---------------------------------------------------------
@@ -742,7 +960,7 @@ func _start_peek() -> void:
 	if not has_peek:
 		timer = LOOK_HIDING
 		return
-	if not crew._can_see and crew._seen_ago > UNSEEN_STAY_DOWN and crew._rng.randf() < 0.5:
+	if not crew._can_see and crew._seen_ago > UNSEEN_STAY_DOWN and not _suppresses() and crew._rng.randf() < 0.5:
 		# Nothing to shoot at: stay down a little longer rather than bob.
 		timer = _down_time() * 0.5
 		_racked = false
@@ -804,13 +1022,17 @@ func _shoot(delta: float) -> void:
 		# Him close: no line; down, to fall back or take to the hip.
 		_duck()
 		return
+	var edge := Vector3.INF
 	if not crew._can_see or crew._muzzle_blocked() or holds_fire():
-		_end_line()
-		wait += delta
-		if wait > WAIT_UP:
-			blind += 1
-			_duck()
-		return
+		# No shot at him: at the prop he hid behind, if the team fires on it.
+		edge = _suppress_at()
+		if edge == Vector3.INF:
+			_end_line()
+			wait += delta
+			if wait > WAIT_UP:
+				blind += 1
+				_duck()
+			return
 	wait = 0.0
 	if uses_line():
 		if _peek_spent or crew._shots_left <= 0:
@@ -834,12 +1056,13 @@ func _shoot(delta: float) -> void:
 		timer = crew._rng.randf_range(gunnery.gap_between_bursts_low,
 				maxf(gunnery.gap_between_bursts_high, gunnery.gap_between_bursts_low)) * _jitter()
 		return
-	_fire_when_ready()
+	_fire_when_ready(edge)
 
 
 ## Fires its next shot once the gun is ready, never starting a burst in step
-## with another crew member's.
-func _fire_when_ready() -> void:
+## with another crew member's: at him, or as a deliberate miss at
+## [param edge] (the edge of the prop he hid behind) when that is set.
+func _fire_when_ready(edge := Vector3.INF) -> void:
 	if crew._shot_timer > 0.0:
 		return
 	if CrewHabit.racks(crew.weapon):
@@ -857,9 +1080,26 @@ func _fire_when_ready() -> void:
 			return
 		crew.burst_frame = Engine.get_physics_frames()
 	crew._path.clear()
-	crew._aim = (crew.target.global_position + Vector3.UP * Crew3D.TORSO_HEIGHT
-			- (crew.global_position + Vector3.UP * Crew3D.MUZZLE_HEIGHT)).normalized()
+	var at: Vector3 = crew.target.global_position + Vector3.UP * Crew3D.TORSO_HEIGHT if edge == Vector3.INF else edge
+	crew._aim = (at - (crew.global_position + Vector3.UP * Crew3D.MUZZLE_HEIGHT)).normalized()
+	if edge != Vector3.INF:
+		crew.miss_at = edge
+		_edge_side = -_edge_side
 	crew._fire()
+
+
+## Whether it fires on the prop he broke sight behind now (a Pistol or an
+## Assault Rifle, while the team does: [CrewTeam]).
+func _suppresses() -> bool:
+	var team := CrewTeam.of(crew.target)
+	return team != null and team.suppresses(crew)
+
+
+## Where its next shot at the prop he hid behind goes, or INF with none to
+## fire (not suppressing, or neither edge in its sight).
+func _suppress_at() -> Vector3:
+	var team := CrewTeam.of(crew.target)
+	return team.suppress_point(crew, _edge_side) if team != null else Vector3.INF
 
 
 func _duck() -> void:
@@ -901,15 +1141,15 @@ func _fight_in_open(delta: float) -> void:
 			return
 		var gunnery := crew.gunnery
 		if gun == CrewHabit.Gun.SHOTGUN and gunnery != null and gunnery.hold_before_shifting >= 0.0 \
-				and clock > gunnery.hold_before_shifting and not _someone_moving() \
+				and clock > gunnery.hold_before_shifting and not last_guard \
 				and _flat(crew.global_position, crew._last_seen) > gunnery.range_far:
 			# Out of its band with no cover: to its ambush, if it has one.
 			var lie := ambush_spot()
 			if not lie.is_empty():
-				mover_clock = MOVER_TIME
 				_claim(lie, true)
 				return
-		if crew._path.is_empty() and (not crew._can_see or crew._muzzle_blocked()):
+		if crew._path.is_empty() and (not crew._can_see or crew._muzzle_blocked()) and not _suppresses():
+			# (Firing on his cover, it stays and fires at its edges.)
 			var to := crew._find_firing_position()
 			if to != Vector3.INF:
 				crew._repath_to(to)
@@ -917,9 +1157,12 @@ func _fight_in_open(delta: float) -> void:
 		crew._path.clear()
 	if timer > 0.0:
 		return
+	var edge := Vector3.INF
 	if not crew._can_see or crew._muzzle_blocked() or holds_fire():
-		_end_line()
-		return
+		edge = _suppress_at()
+		if edge == Vector3.INF:
+			_end_line()
+			return
 	if uses_line():
 		if _line_up(delta) == LINE_FIRED:
 			_start_burst()
@@ -930,7 +1173,7 @@ func _fight_in_open(delta: float) -> void:
 		_start_burst()
 		timer = _down_time() * OPEN_PAUSE
 		return
-	_fire_when_ready()
+	_fire_when_ready(edge)
 
 
 ## A shot of his: one passing within NEAR_MISS of it keeps it down
@@ -984,6 +1227,10 @@ func _set_mode(next: Mode) -> void:
 		# The peek is over: its sight line goes, and its true-aim place.
 		_end_line()
 		_give_up_place()
+	if next in [Mode.DOWN, Mode.AMBUSH, Mode.OPEN]:
+		# Got there (or has no spot to go to): no longer moving.
+		between = false
+		flank_end = false
 	mode = next
 	clock = 0.0
 	_nudged = false
@@ -1002,27 +1249,54 @@ static func _flat(a: Vector3, b: Vector3) -> float:
 
 # --- the Shotgun's ambush ---------------------------------------------------------
 
-## Where a Shotgun waits in ambush: beside the doorway of his Room nearest
-## to it, within AMBUSH_REACH of the opening, where he cannot see it
-## standing, by a fair walk; the tile nearest the opening first. Empty with
-## none (his Room has no Door, or nowhere hidden near it).
+## Where a Shotgun waits in ambush: beside a doorway of his Room, within
+## AMBUSH_REACH of the opening, where he cannot see it standing, by a fair
+## walk; the tile nearest the opening first. Where his Room has a second
+## Door and another Guard fights him, the Door furthest from that Guard (the
+## one a flank goes in by: [method CrewCombat.far_door]); else, or with no
+## such tile there, the Door nearest to it. Empty with none (his Room has
+## no Door, or nowhere hidden near one).
 func ambush_spot() -> Dictionary:
 	var layout := crew.layout
 	if layout == null:
 		return {}
 	var last := crew._last_seen
 	var his := CrewNoise.rooms_at(layout, last)
-	var door: DoorData = null
+	var nearest: DoorData = null
 	var door_far := INF
+	var doors := 0
 	for d in layout.doors:
 		if d.locked or not (d.room_a in his or d.room_b in his):
 			continue
+		doors += 1
 		var far := _flat(crew.global_position, ShipBuilder3D.door_center_world(d))
 		if far < door_far:
 			door_far = far
-			door = d
-	if door == null:
+			nearest = d
+	if nearest == null:
 		return {}
+	var tries: Array[DoorData] = []
+	var pinner: Crew3D = null
+	for other in _partners_fighting():
+		if pinner == null or _flat(other.global_position, last) < _flat(pinner.global_position, last):
+			pinner = other
+	if doors > 1 and pinner != null and his.size() == 1:
+		var second := CrewCombat.far_door(layout, his[0], pinner.global_position)
+		if second != null:
+			tries.append(second)
+	if not nearest in tries:
+		tries.append(nearest)
+	for door in tries:
+		var found := _ambush_at(door)
+		if not found.is_empty():
+			return found
+	return {}
+
+
+## The ambush tile beside [param door], or empty.
+func _ambush_at(door: DoorData) -> Dictionary:
+	var layout := crew.layout
+	var last := crew._last_seen
 	var centre := ShipBuilder3D.door_center_world(door)
 	var eye := last + Vector3.UP * Crew3D.EYE_HEIGHT
 	var astar := CrewPaths.grid(layout)
@@ -1066,22 +1340,34 @@ func _wait_in_ambush() -> void:
 	if door_at != Vector3.INF and look.length_squared() > 0.01:
 		crew._aim = look.normalized()
 	if crew._can_see:
-		ambushing = false
 		if _flat(crew.global_position, crew.target.global_position) <= CrewHabit.SHOTGUN_HOLD_FIRE \
 				and not crew._muzzle_blocked():
+			ambushing = false
 			low = true
 			has_peek = true
 			_begin_shooting()
-		elif not _pick(0):
-			_no_cover()
+		elif _may_leave():
+			ambushing = false
+			_leave(0)
 		return
 	var gunnery := crew.gunnery
-	if think <= 0.0 and gunnery != null and not _someone_moving():
+	if gunnery == null or last_guard:
+		return
+	if not _want_shift:
+		if think > 0.0:
+			return
 		think = LOOK_SHIFT
-		var into := find(0, false, gunnery.range_far)
-		if not into.is_empty():
-			mover_clock = MOVER_TIME
-			_claim(into)
+		if find(0, false, gunnery.range_far).is_empty():
+			return
+		_want_shift = true
+	if not _may_leave():
+		return
+	_want_shift = false
+	var into := find(0, false, gunnery.range_far)
+	if into.is_empty():
+		_move_wait = -1.0
+		return
+	_claim(into)
 
 
 # --- the Marksman Rifle's perch and sight line -------------------------------------
@@ -1219,13 +1505,15 @@ func _marksman_close() -> bool:
 	if _flat(crew.global_position, crew._last_seen) >= CrewHabit.PERCH_CLOSE:
 		hip = false
 		return false
+	# From a spot it holds, it waits its turn to leave ([method _may_leave]).
+	if mode != Mode.OPEN and spot != Vector3.INF and not _may_leave():
+		return false
 	if hip and think > 0.0:
 		return false
 	think = LOOK_SHIFT
 	var further := find(-1)
 	if not further.is_empty():
 		hip = false
-		mover_clock = MOVER_TIME
 		_claim(further)
 		return true
 	hip = true

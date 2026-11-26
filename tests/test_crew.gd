@@ -134,6 +134,12 @@ func _initialize() -> void:
 	await _check_marksman_waits_for_place()
 	await _check_marksman_small_room()
 	await _check_marksman_falls_back()
+	await _check_flank_by_gun()
+	await _check_marksman_never_flanks()
+	await _check_covering_fire()
+	await _check_suppression()
+	await _check_radioed_in()
+	await _check_last_guard()
 	await _check_round_props()
 	await _check_unstick()
 	await _check_head_on_doorway()
@@ -3017,8 +3023,10 @@ func _check_open_fight() -> void:
 ## Sixty simulated seconds of three Guards (rolled guns) fighting the Pirate
 ## in the largest Room of a generated medium ship, the Pirate moved to a
 ## fresh spot every 10 s: no Guard is stuck (trying to walk without moving
-## 0.3 m for 5 s), no two ever claim one tile, and no claimed tile is beside
-## a Breaker.
+## 0.3 m for 5 s), no two ever claim one tile, no claimed tile is beside a
+## Breaker, and never more than one Guard is between cover tiles at once
+## (walking to a tile after leaving one it got down on), not counting a
+## flanker (crew-combat ticket 21).
 func _check_cover_fight_on_ship() -> void:
 	world.free()
 	world = Node3D.new()
@@ -3093,6 +3101,12 @@ func _check_cover_fight_on_ship() -> void:
 	var shared: Array[String] = []
 	var by_breaker: Array[String] = []
 	var went_down := {}
+	# The tile each last got down on (or waited in ambush on), for who is
+	# between cover tiles.
+	var down_on := {}
+	var was_moving := {}
+	var moves := 0
+	var two_moving: Array[String] = []
 	var t := 0.0
 	var frames := roundi(SHIP_FIGHT / STEP)
 	for frame in frames:
@@ -3106,6 +3120,24 @@ func _check_cover_fight_on_ship() -> void:
 					player.global_position = at
 					break
 		var claimed := {}
+		var moving: Array[String] = []
+		for guard in guards:
+			var held: Vector2i = down_on.get(guard, Vector2i.MAX)
+			var fighting: bool = guard.state in [Crew3D.State.FIGHT, Crew3D.State.COVER]
+			if not fighting or guard.cover.mode == CrewCover.Mode.OPEN:
+				down_on.erase(guard)
+			elif guard.cover.mode in [CrewCover.Mode.DOWN, CrewCover.Mode.AMBUSH]:
+				down_on[guard] = guard.cover.tile
+			elif guard.cover.mode == CrewCover.Mode.MOVE and held != Vector2i.MAX and guard.cover.tile != held \
+					and not guard.flanking and not guard.cover.flank_end:
+				moving.append("%s from %s to %s" % [guard.weapon.resource_path.get_file(), held, guard.cover.tile])
+				if not was_moving.get(guard, false):
+					moves += 1
+				was_moving[guard] = true
+				continue
+			was_moving[guard] = false
+		if moving.size() > 1 and two_moving.size() < 3:
+			two_moving.append("t=%.1f s: %s" % [t, moving])
 		for guard in guards:
 			var w: Dictionary = watch[guard]
 			if guard.cover.mode == CrewCover.Mode.DOWN:
@@ -3140,6 +3172,8 @@ func _check_cover_fight_on_ship() -> void:
 	_expect(stuck.is_empty(), "%s: Guards stuck, trying to walk without moving %.1f m for %.0f s: %s" % [tag, STUCK_MOVE, STUCK_TIME, stuck])
 	_expect(shared.is_empty(), "%s: two Guards claimed one tile: %s" % [tag, shared])
 	_expect(by_breaker.is_empty(), "%s: a Guard claimed a tile beside a Breaker: %s" % [tag, by_breaker])
+	print("  %s: %d moves between cover tiles" % [tag, moves])
+	_expect(two_moving.is_empty(), "%s: two Guards between cover tiles at once (%d moves in all): %s" % [tag, moves, two_moving])
 	for guard in guards:
 		guard.free()
 	for shot in shots.get_children():
@@ -3648,3 +3682,493 @@ func _check_marksman_falls_back() -> void:
 	guard.free()
 	_clear_shots()
 	_release_player(was)
+
+
+# --- Guards work together (crew-combat ticket 21) ----------------------------------
+
+## The flank rig (_flank_rig), x offset from x0: Room A (his) 8 x 8 at
+## x0 + 9, Room B (the Guards') 8 x 8 west of it at x0, Room C 17 x 8 north
+## of both; Doors A-B at (x0 + 8, 4), A-C at (x0 + 13, -1), B-C at
+## (x0 + 3, -1). A bar of two crates inside A's north Door at (x0 + 13, 2)
+## and (x0 + 14, 2), and a crate at (x0 + 11, 5) for the pinning Guards. The
+## Pirate at (x0 + 14, 6); the Guards start in B.
+const FLANK_X0 := 3000
+const FLANK_PIRATE := Vector2i(14, 6)
+const FLANK_STARTS: Array[Vector2i] = [Vector2i(3, 2), Vector2i(3, 4), Vector2i(3, 6)]
+## Seconds the flank rig runs, and the 20 seeded fights each run.
+const FLANK_SECONDS := 20.0
+const FLANK_FIGHTS := 20
+const FLANK_FIGHTS_X0 := 5000
+const FLANK_FIGHT_SECONDS := 8.0
+## Covering fire: the two-Guard fight's length, how often he moves, and the
+## criterion's numbers: a partner's shot within 1 s, or a 3 s wait, each
+## within 0.2 s.
+const COVERING_SECONDS := 60.0
+const COVERING_MOVE := 6.0
+const COVERING_SHOT := 1.0
+const COVERING_WAIT := 3.0
+const COVERING_SLACK := 0.2
+## Suppression: the window, its time on the Sandbox, the margin after it,
+## and how near a crate's edge a shot at it is aimed.
+const SUPPRESS_SECONDS := 4.0
+const SUPPRESS_AFTER := 4.5
+const SUPPRESS_WATCH := 6.0
+const SUPPRESS_EDGE := 0.8
+## The radio rig: Room P (his) 6 x 6 at x0, Room J 30 x 4 along its north
+## side from x0 - 6, Room F 8 x 8 north of J at x0 + 8; Doors P-J at
+## (x0 + 3, -1), J-F at (x0 + 12, -6). The Pirate at (x0 + 3, 4), the Guard
+## starting in F at (x0 + 12, -12), 18.4 m off and two Rooms away; from J
+## only the cone through P's Door sees him. For the takeover itself, a
+## hunting Guard 20.4 m off in J (joined to his Room) and one 21.2 m off in
+## F (not joined).
+const RADIO_X0 := 3200
+const RADIO_PIRATE := Vector2i(3, 4)
+const RADIO_START := Vector2i(12, -12)
+const RADIO_JOINED := Vector2i(22, -3)
+const RADIO_FAR := Vector2i(15, -13)
+const RADIO_NEAR := 10.0
+const RADIO_SECONDS := 40.0
+## The last Guard: seconds until its spot is judged, then how long it is
+## watched not to come nearer.
+const LAST_AFTER := 10.0
+const LAST_HOLD := 20.0
+
+
+## Builds a flank rig at [param x0]: {layout, ship, doors (Door3D nodes)}.
+func _flank_rig(x0: int, ship_name: String) -> Dictionary:
+	var rig := ShipLayout.new()
+	var a := RoomData.new()
+	a.rects = [Rect2i(x0 + 9, 0, 8, 8)]
+	a.props = [{"type": &"crate", "tile": Vector2i(x0 + 13, 2)}, {"type": &"crate", "tile": Vector2i(x0 + 14, 2)},
+			{"type": &"crate", "tile": Vector2i(x0 + 11, 5)}]
+	var b := RoomData.new()
+	b.rects = [Rect2i(x0, 0, 8, 8)]
+	var c := RoomData.new()
+	c.rects = [Rect2i(x0, -9, 17, 8)]
+	rig.rooms = [a, b, c]
+	rig.doors = [_door(0, 1, Vector2i(x0 + 8, 4), false), _door(0, 2, Vector2i(x0 + 13, -1), true),
+			_door(1, 2, Vector2i(x0 + 3, -1), true)]
+	var ship := Node3D.new()
+	ship.name = ship_name
+	world.add_child(ship)
+	ShipBuilder3D.build(rig, ship)
+	return {"layout": rig, "ship": ship, "doors": ship.get_node("Doors").get_children()}
+
+
+## Shuts every Door of a rig the Guards opened: noise carries through any
+## open Door joining Rooms of the same indices, whatever the rig.
+func _shut_all(doors: Array) -> void:
+	for door in doors:
+		if door is Door3D:
+			door.close()
+
+
+## In the flank rig, a Shotgun, a Pistol and an Assault Rifle Guard outside
+## his Room (B), told where he is: the one that flanks is the Shotgun, and it
+## ends (first down after its flank) within 0.5 m of a tile hidden from him
+## (the 0.9 m ray to his torso blocked) inside A's second (north) Door: in his
+## Room, within CrewCover.FLANK_SPOT_REACH of that Door, nearer it than the
+## first.
+func _check_flank_by_gun() -> void:
+	var rig := _flank_rig(FLANK_X0, "FlankShip")
+	var flank_layout: ShipLayout = rig.layout
+	var him := ShipBuilder3D.tile_to_world(Vector2i(FLANK_X0, 0) + FLANK_PIRATE)
+	var pirate := _own_pirate(him)
+	var guards: Array[Crew3D] = []
+	for i in 3:
+		var gun: int = [GunRoll.SHOTGUN, GunRoll.PISTOL, GunRoll.ASSAULT_RIFLE][i]
+		var guard := _rig_guard(GunRoll.weapon(gun), flank_layout, Vector2i(FLANK_X0, 0) + FLANK_STARTS[i], him)
+		guard.target = pirate
+		guards.append(guard)
+	for i in 2:
+		await physics_frame
+	for guard in guards:
+		guard.hear_position(him)
+		guard.set_physics_process(true)
+	var second := ShipBuilder3D.door_center_world(flank_layout.doors[1])
+	var first := ShipBuilder3D.door_center_world(flank_layout.doors[0])
+	var flankers: Array[Crew3D] = []
+	var ended := {}
+	var was_flanking := {}
+	var t := 0.0
+	while t < FLANK_SECONDS and ended.is_empty():
+		await physics_frame
+		t += STEP
+		for guard in guards:
+			if guard.flanking and not guard in flankers:
+				flankers.append(guard)
+			if guard.flanking or guard.cover.flank_end:
+				was_flanking[guard] = true
+			elif was_flanking.has(guard) and guard.cover.mode == CrewCover.Mode.DOWN:
+				ended[guard] = guard.cover.tile
+	for guard in guards:
+		guard.set_physics_process(false)
+	var shotgun := guards[0]
+	print("  flank by gun: flankers %s, the Shotgun down on %s after %.1f s" % [flankers.map(func(g: Crew3D) -> String: return g.weapon.resource_path.get_file()),
+			ended.get(shotgun, "-"), t])
+	_expect(not flankers.is_empty() and flankers[0] == shotgun,
+			"flank by gun: the first flanker was %s, want the Shotgun Guard (of Shotgun, Pistol, Assault Rifle)"
+			% ("none" if flankers.is_empty() else flankers[0].weapon.resource_path.get_file()))
+	var tile: Vector2i = ended.get(shotgun, Vector2i.MAX)
+	var at := ShipBuilder3D.tile_to_world(tile) if tile != Vector2i.MAX else Vector3.INF
+	var ok := tile != Vector2i.MAX and _flat(shotgun.global_position, at) <= 0.5 and _hidden_tile(shotgun, tile, him) \
+			and flank_layout.room_at(tile) == 0 and _flat(at, second) <= CrewCover.FLANK_SPOT_REACH and _flat(at, second) < _flat(at, first)
+	_expect(ok, "flank by gun: after %.1f s the Shotgun flanker ended on %s (%.2f m from it, hidden %s, Room %d, %.1f m from the second Door), want within 0.5 m of a tile hidden from him inside the second Door"
+			% [t, tile, _flat(shotgun.global_position, at) if at != Vector3.INF else -1.0,
+			_hidden_tile(shotgun, tile, him) if tile != Vector2i.MAX else false,
+			flank_layout.room_at(tile) if tile != Vector2i.MAX else -1, _flat(at, second) if at != Vector3.INF else -1.0])
+	for guard in guards:
+		guard.free()
+	pirate.free()
+	_shut_all(rig.doors)
+	_clear_shots()
+
+
+## Twenty seeded fights side by side in flank rigs, each with a Marksman
+## Rifle Guard and two more of rolled guns (fight i seeded i + 1): no Marksman
+## Rifle Guard ever flanks, and in every fight with another gun some Guard
+## does.
+func _check_marksman_never_flanks() -> void:
+	var rigs: Array[Dictionary] = []
+	var pirates: Array[CharacterBody3D] = []
+	var fights: Array = []
+	for i in FLANK_FIGHTS:
+		var x0 := FLANK_FIGHTS_X0 + i * 30
+		var rig := _flank_rig(x0, "FlankFight%d" % i)
+		rigs.append(rig)
+		var him := ShipBuilder3D.tile_to_world(Vector2i(x0, 0) + FLANK_PIRATE)
+		var pirate := _own_pirate(him)
+		pirates.append(pirate)
+		var roll := RandomNumberGenerator.new()
+		roll.seed = i + 1
+		var guns := [GunRoll.MARKSMAN_RIFLE, roll.randi_range(0, 3), roll.randi_range(0, 3)]
+		var order := [0, 1, 2]
+		order.shuffle()
+		var guards: Array[Crew3D] = []
+		for k in 3:
+			var guard := _rig_guard(GunRoll.weapon(guns[k]), rig.layout, Vector2i(x0, 0) + FLANK_STARTS[order[k]], him)
+			guard.target = pirate
+			guards.append(guard)
+		fights.append({"guards": guards, "him": him, "flankers": {}})
+	for i in 2:
+		await physics_frame
+	for fight: Dictionary in fights:
+		for guard: Crew3D in fight.guards:
+			guard.hear_position(fight.him)
+			guard.set_physics_process(true)
+	for frame in roundi(FLANK_FIGHT_SECONDS / STEP):
+		await physics_frame
+		for fight: Dictionary in fights:
+			for guard: Crew3D in fight.guards:
+				if guard.flanking:
+					fight.flankers[guard] = true
+	var marksman: Array[String] = []
+	var none: Array[int] = []
+	for i in fights.size():
+		var fight: Dictionary = fights[i]
+		var other_gun := false
+		for guard: Crew3D in fight.guards:
+			guard.set_physics_process(false)
+			var gun := CrewHabit.gun_of(guard.weapon)
+			if gun != CrewHabit.Gun.MARKSMAN_RIFLE:
+				other_gun = true
+			elif fight.flankers.has(guard):
+				marksman.append("fight %d" % i)
+		if other_gun and fight.flankers.is_empty():
+			none.append(i)
+	print("  flank: %d of %d seeded fights had a flank, %d Marksman Rifle Guards among %d" % [fights.filter(func(f: Dictionary) -> bool: return not f.flankers.is_empty()).size(),
+			FLANK_FIGHTS, fights.reduce(func(n: int, f: Dictionary) -> int: return n + f.guards.filter(func(g: Crew3D) -> bool: return CrewHabit.gun_of(g.weapon) == CrewHabit.Gun.MARKSMAN_RIFLE).size(), 0), FLANK_FIGHTS * 3])
+	_expect(marksman.is_empty(), "flank: a Marksman Rifle Guard flanked in %s of %d seeded fights, want never" % [marksman, FLANK_FIGHTS])
+	_expect(none.is_empty(), "flank: no Guard flanked in fights %s, each with a gun that may flank" % [none])
+	for fight: Dictionary in fights:
+		for guard: Crew3D in fight.guards:
+			guard.free()
+	for pirate in pirates:
+		pirate.free()
+	for rig in rigs:
+		_shut_all(rig.doors)
+		rig.ship.free()
+	_clear_shots()
+
+
+## The Pirate moved to a fresh open tile of [param rig] at least 3 m from
+## every Guard in [param guards].
+func _move_clear(pirate: Node3D, rig: ShipLayout, guards: Array) -> void:
+	var astar := CrewPaths.grid(rig)
+	var tiles: Array = rig.rooms[0].tiles().keys()
+	for _try in 40:
+		var tile: Vector2i = tiles[randi_range(0, tiles.size() - 1)]
+		var at := ShipBuilder3D.tile_to_world(tile)
+		if _open_tile(astar, tile) and CrewPaths.clear(astar, at, at) \
+				and guards.all(func(g: Crew3D) -> bool: return not is_instance_valid(g) or _flat(g.global_position, at) >= 3.0):
+			pirate.global_position = at
+			return
+
+
+## Covering fire: a Pistol and an Assault Rifle Guard fight him for 60 s in
+## a 14 x 10 m Room with crates throughout, him moved to a fresh tile every
+## 6 s. Whenever one leaves a cover tile it got down on for another, the
+## other fired within the previous 1 s, or the mover had waited 3 s, each
+## within 0.2 s. At least three such moves happen.
+func _check_covering_fire() -> void:
+	var rig: ShipLayout = band_layouts[0]
+	var him := ShipBuilder3D.tile_to_world(Vector2i(BAND_X0, 0) + BAND_PIRATE)
+	var pirate := _own_pirate(him)
+	var guards: Array[Crew3D] = []
+	for i in 2:
+		var guard := _rig_guard(GunRoll.weapon(i), rig, Vector2i(BAND_X0, 0) + BAND_STARTS[i], him)
+		guard.target = pirate
+		guards.append(guard)
+	for i in 2:
+		await physics_frame
+	var shots: Array = []
+	var watch := _record_shots(guards, shots)
+	var last_shot := {guards[0]: -1000000, guards[1]: -1000000}
+	var rec := {}
+	for guard in guards:
+		rec[guard] = {"down": Vector2i.MAX, "tile": Vector2i.MAX, "wait": -1.0}
+		guard.hear_position(him)
+		guard.set_physics_process(true)
+	var leaves: Array[String] = []
+	var wrong: Array[String] = []
+	var covered := 0
+	var t := 0.0
+	var frames := roundi(COVERING_SECONDS / STEP)
+	for frame in frames:
+		await physics_frame
+		t += STEP
+		var now := Engine.get_physics_frames()
+		for s: Dictionary in shots:
+			last_shot[s.guard] = maxi(last_shot[s.guard], s.frame)
+		shots.clear()
+		if frame > 0 and frame % roundi(COVERING_MOVE / STEP) == 0:
+			_move_clear(pirate, rig, guards)
+		for i in 2:
+			var guard := guards[i]
+			var other := guards[1 - i]
+			var r: Dictionary = rec[guard]
+			var tile: Vector2i = guard.cover.tile
+			if not guard.state in [Crew3D.State.FIGHT, Crew3D.State.COVER] or guard.cover.mode == CrewCover.Mode.OPEN:
+				r.down = Vector2i.MAX
+			elif r.tile == r.down and r.down != Vector2i.MAX and tile != r.tile and tile != Vector2i.MAX:
+				# Left the spot it held for another, this frame.
+				var since: float = (now - last_shot[other]) * STEP
+				var waited: float = r.wait + STEP
+				var what := "t=%.2f s %s left %s for %s: partner fired %.2f s before, waited %.2f s" % [t,
+						Gunnery.NAMES[i], r.down, tile, since, waited]
+				leaves.append(what)
+				if since <= COVERING_SHOT + COVERING_SLACK:
+					covered += 1
+				elif waited < COVERING_WAIT - COVERING_SLACK:
+					wrong.append(what)
+			if guard.cover.mode in [CrewCover.Mode.DOWN, CrewCover.Mode.AMBUSH]:
+				r.down = tile
+			r.tile = tile
+			r.wait = guard.cover.move_wait()
+	for guard in guards:
+		guard.set_physics_process(false)
+	get_first_node_in_group(&"projectiles").child_entered_tree.disconnect(watch)
+	print("  covering fire: %d moves between cover tiles, %d under a partner's fire, the rest after a %.0f s wait" % [leaves.size(), covered, COVERING_WAIT])
+	_expect(leaves.size() >= 3, "covering fire: only %d moves between cover tiles in %.0f s, want at least 3" % [leaves.size(), COVERING_SECONDS])
+	_expect(wrong.is_empty(), "covering fire: of %d moves (%d under fire), %d had neither a partner's shot within %.1f s nor a %.0f s wait: %s"
+			% [leaves.size(), covered, wrong.size(), COVERING_SHOT, COVERING_WAIT, wrong.slice(0, 3)])
+	for guard in guards:
+		guard.free()
+	pirate.free()
+	_clear_shots()
+
+
+## Suppression: a Pistol and an Assault Rifle Guard fight him in the open
+## of the suppression rig; he steps behind its crate (out of both their
+## shots). Of their shots in the next 4 s at least one is aimed within 0.8 m
+## of one of the crate's edges (its four upright corners) and none is aimed
+## true, and none is fired at the crate after 4.5 s. The suppression time is
+## the Sandbox's 4 s.
+func _check_suppression() -> void:
+	var numbers: Sandbox = ResourceLoader.load(Sandbox.PATH, "", ResourceLoader.CACHE_MODE_IGNORE)
+	_expect(is_equal_approx(numbers.suppression_time, SUPPRESS_SECONDS),
+			"suppression: the Sandbox's suppression time is %s s, want %.0f s" % [numbers.suppression_time, SUPPRESS_SECONDS])
+	var x0 := 3100
+	var crate := Vector2i(x0 + 4, 7)
+	var rig := _rig_room("SuppressShip", Rect2i(x0, 0, 10, 18), [{"type": &"crate", "tile": crate}])
+	var beside := ShipBuilder3D.tile_to_world(Vector2i(x0 + 7, 6))
+	var behind := ShipBuilder3D.tile_to_world(Vector2i(x0 + 4, 6))
+	var pirate := _own_pirate(beside)
+	var guards: Array[Crew3D] = []
+	for i in 2:
+		var guard := _rig_guard(GunRoll.weapon(i), rig, Vector2i(x0 + 3 + 2 * i, 16), beside)
+		guard.target = pirate
+		guards.append(guard)
+	for i in 2:
+		await physics_frame
+	for guard in guards:
+		guard.hear_position(beside)
+		guard.set_physics_process(true)
+	# Fighting him in the open, both with a shot at him.
+	var ready := await _seconds_until(6.0, func() -> bool:
+		return guards.all(func(g: Crew3D) -> bool: return g._can_see and not g._muzzle_blocked() and g.shot_age() < 1.0))
+	_expect(ready >= 0.0, "suppression: the two Guards were not both firing at him in the open within 6 s (modes %s, %s)"
+			% [CrewCover.MODE_NAMES[guards[0].cover.mode], CrewCover.MODE_NAMES[guards[1].cover.mode]])
+	var shots: Array = []
+	var watch := _record_shots(guards, shots)
+	pirate.global_position = behind
+	var blocked := guards.all(func(g: Crew3D) -> bool: return g._muzzle_blocked())
+	var start := Engine.get_physics_frames()
+	for frame in roundi(SUPPRESS_WATCH / STEP):
+		await physics_frame
+	for guard in guards:
+		guard.set_physics_process(false)
+	get_first_node_in_group(&"projectiles").child_entered_tree.disconnect(watch)
+	var corners: Array[Vector3] = []
+	var c := ShipBuilder3D.tile_to_world(crate)
+	for dx in [-0.5, 0.5]:
+		for dz in [-0.5, 0.5]:
+			corners.append(c + Vector3(dx, 0.0, dz))
+	var near_edge := 0
+	var true_shots := 0
+	var late := 0
+	var in_window := 0
+	for s: Dictionary in shots:
+		var at: float = (s.frame - start) * STEP
+		var point: Vector3 = s.point
+		# From the aim point to the nearest upright edge of the crate (a
+		# corner of its tile, from the floor to its 1.1 m top).
+		var edge := INF
+		var rise := maxf(point.y - 1.1, 0.0) + maxf(-point.y, 0.0)
+		for corner in corners:
+			edge = minf(edge, Vector3(point.x - corner.x, rise, point.z - corner.z).length())
+		if at <= SUPPRESS_SECONDS:
+			in_window += 1
+			if s.aimed:
+				true_shots += 1
+			if s.kind == "prop" and edge <= SUPPRESS_EDGE:
+				near_edge += 1
+		elif at > SUPPRESS_AFTER and s.kind == "prop":
+			late += 1
+	print("  suppression: %d shots in %.0f s, %d at the crate's edge, %d true; %d at the crate after %.1f s" % [in_window, SUPPRESS_SECONDS, near_edge, true_shots, late, SUPPRESS_AFTER])
+	_expect(blocked, "suppression: behind the crate he is not out of both Guards' shots")
+	_expect(near_edge >= 1 and true_shots == 0, "suppression: of %d shots in %.0f s after he hid behind the crate, %d were aimed within %.1f m of its edge and %d true, want at least 1 and none"
+			% [in_window, SUPPRESS_SECONDS, near_edge, SUPPRESS_EDGE, true_shots])
+	_expect(late == 0, "suppression: %d shots were fired at the crate after %.1f s, want none" % [late, SUPPRESS_AFTER])
+	for guard in guards:
+		guard.free()
+	pirate.free()
+	_clear_shots()
+
+
+## A Guard radioed from two Rooms away (the radio rig, 25 m off): when it
+## first comes within 10 m of him it is in the cover fight (COVER or FIGHT)
+## and the tile it stands on is hidden from him (the 0.9 m ray from that
+## tile's centre to his torso blocked).
+func _check_radioed_in() -> void:
+	var x0 := RADIO_X0
+	var rig := ShipLayout.new()
+	var p := RoomData.new()
+	p.rects = [Rect2i(x0, 0, 6, 6)]
+	var j := RoomData.new()
+	j.rects = [Rect2i(x0 - 6, -5, 30, 4)]
+	var f := RoomData.new()
+	f.rects = [Rect2i(x0 + 8, -14, 8, 8)]
+	rig.rooms = [p, j, f]
+	rig.doors = [_door(0, 1, Vector2i(x0 + 3, -1), true), _door(1, 2, Vector2i(x0 + 12, -6), true)]
+	var ship := Node3D.new()
+	ship.name = "RadioShip"
+	world.add_child(ship)
+	ShipBuilder3D.build(rig, ship)
+	var doors := ship.get_node("Doors").get_children()
+	for door in doors:
+		door.open()
+	var him := ShipBuilder3D.tile_to_world(Vector2i(x0, 0) + RADIO_PIRATE)
+	var pirate := _own_pirate(him)
+	# The takeover: radioed, it runs while further than 18 m, unless it is in
+	# a Room joined to his.
+	var takes: Array[bool] = []
+	for tile in [RADIO_JOINED, RADIO_FAR]:
+		var hunter := _rig_guard(GunRoll.weapon(GunRoll.PISTOL), rig, Vector2i(x0, 0) + tile, him)
+		hunter.target = pirate
+		hunter.hear_position(him)
+		hunter._tick_hunt()
+		takes.append(hunter.state == Crew3D.State.COVER)
+		hunter.free()
+	_expect(takes == [true, false], "radioed in: a hunting Guard 20.4 m off in a Room joined to his took to cover: %s, one 21.2 m off two Rooms away: %s; want yes and no"
+			% [takes[0], takes[1]])
+	var guard := _rig_guard(GunRoll.weapon(GunRoll.PISTOL), rig, Vector2i(x0, 0) + RADIO_START, him)
+	guard.target = pirate
+	for i in 2:
+		await physics_frame
+	guard.hear_position(him)
+	guard.set_physics_process(true)
+	var t := 0.0
+	var reached := false
+	while t < RADIO_SECONDS and not reached:
+		await physics_frame
+		t += STEP
+		reached = _flat(guard.global_position, him) <= RADIO_NEAR
+	guard.set_physics_process(false)
+	var tile := ShipBuilder3D.world_to_tile(guard.global_position)
+	var fighting := guard.state in [Crew3D.State.FIGHT, Crew3D.State.COVER]
+	var hidden := _hidden_tile(guard, tile, him)
+	print("  radioed in: within %.0f m after %.1f s, mode %s on %s" % [RADIO_NEAR, t, CrewCover.MODE_NAMES[guard.cover.mode], tile])
+	_expect(reached and fighting and hidden,
+			"radioed in: the Guard came within %.0f m of him after %.1f s (reached %s) in state %d (mode %s) on tile %s, hidden from him: %s; want in the cover fight on a hidden tile"
+			% [RADIO_NEAR, t, reached, guard.state, CrewCover.MODE_NAMES[guard.cover.mode], tile, hidden])
+	guard.free()
+	pirate.free()
+	_shut_all(doors)
+	ship.free()
+	_clear_shots()
+
+
+## The last Guard: two Pistol Guards fight him (standing still, in their
+## sight) in a 14 x 10 m Room with crates; once both are down in cover one
+## falls. Ten seconds later the other's cover tile is further from him than
+## the one it held, and over the next 20 s no tile it holds is nearer him
+## than that.
+func _check_last_guard() -> void:
+	var rig: ShipLayout = band_layouts[1]
+	var x0 := BAND_X0 + 16
+	var him := ShipBuilder3D.tile_to_world(Vector2i(x0, 0) + BAND_PIRATE)
+	var pirate := _own_pirate(him)
+	var guards: Array[Crew3D] = []
+	for start in [Vector2i(11, 2), Vector2i(11, 7)]:
+		var guard := _rig_guard(GunRoll.weapon(GunRoll.PISTOL), rig, Vector2i(x0, 0) + start, him)
+		guard.target = pirate
+		guards.append(guard)
+	for i in 2:
+		await physics_frame
+	for guard in guards:
+		guard.hear_position(him)
+		guard.set_physics_process(true)
+	var down := await _seconds_until(12.0, func() -> bool:
+		return guards.all(func(g: Crew3D) -> bool: return g.cover.mode == CrewCover.Mode.DOWN))
+	_expect(down >= 0.0, "last guard: the two Guards were not both down in cover within 12 s")
+	var survivor := guards[1]
+	var held: Vector2i = survivor.cover.tile
+	var held_far := _flat(ShipBuilder3D.tile_to_world(held), him)
+	guards[0].take_damage(100000, pirate)
+	for frame in roundi(LAST_AFTER / STEP):
+		await physics_frame
+	var after: Vector2i = survivor.cover.tile
+	var after_far := _flat(ShipBuilder3D.tile_to_world(after), him) if after != Vector2i.MAX else -1.0
+	_expect(after != Vector2i.MAX and after_far > held_far,
+			"last guard: %.0f s after its partner fell its cover tile is %s, %.1f m from him (last %s), want further than the %.1f m of %s"
+			% [LAST_AFTER, after, after_far, survivor.cover.last_guard, held_far, held])
+	var nearest := INF
+	var nearest_tile := Vector2i.MAX
+	for frame in roundi(LAST_HOLD / STEP):
+		await physics_frame
+		var tile: Vector2i = survivor.cover.tile
+		if tile == Vector2i.MAX:
+			continue
+		var far := _flat(ShipBuilder3D.tile_to_world(tile), him)
+		if far < nearest:
+			nearest = far
+			nearest_tile = tile
+	print("  last guard: held %s at %.1f m, %.0f s later %s at %.1f m, nearest in the %.0f s after %.1f m" % [held, held_far, LAST_AFTER, after, after_far, LAST_HOLD, nearest])
+	_expect(nearest >= after_far - 0.01, "last guard: in the %.0f s after, it held %s, %.1f m from him, nearer than the %.1f m of %s"
+			% [LAST_HOLD, nearest_tile, nearest, after_far, after])
+	survivor.set_physics_process(false)
+	for guard in guards:
+		guard.free()
+	pirate.free()
+	_clear_shots()

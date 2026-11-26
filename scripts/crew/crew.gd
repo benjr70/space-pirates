@@ -88,6 +88,10 @@ const SIDESTEP := 1.0
 ## Which one is fixed (see [method _gives_way]); after GIVE_WAY_INSIST tries
 ## still blocked, either will.
 const GIVE_WAY_NEAR := 1.0
+## Stuck this many tries with nobody that near, it looks for one in its way
+## out to GIVE_WAY_FAR (a body just past arm's length closing a lane).
+const GIVE_WAY_LOOK_FURTHER := 3
+const GIVE_WAY_FAR := 1.5
 const GIVE_WAY_PASSED := 2.0
 const GIVE_WAY_WAIT := 5.0
 const GIVE_WAY_INSIST := 8
@@ -200,7 +204,8 @@ var _walk_in := false
 var _walk_side := 1.0
 ## Its last shot, before spread: where it was aimed from and at, whether it
 ## aimed true, whether it was a walk-in round, and for a miss whether he was
-## behind cover ("cover") or in the open ("open").
+## behind cover ("cover") or in the open ("open"), or it fired on the prop
+## he hid behind ("prop", [CrewTeam]).
 var last_aim_origin := Vector3.ZERO
 var last_aim_point := Vector3.ZERO
 var last_aimed_true := false
@@ -209,11 +214,25 @@ var last_miss_kind := ""
 ## Where its next shot goes, set by its habit for that one shot: the
 ## Marksman Rifle's sight line, fixed before the shot. INF otherwise.
 var aim_override := Vector3.INF
+## Where its next shot goes as a deliberate miss, never true: the edge of
+## the prop he broke sight behind ([CrewTeam]). INF otherwise.
+var miss_at := Vector3.INF
+## The physics frame it last fired on: a partner up and firing within
+## [constant CrewCover.COVER_FIRE] covers a Guard changing cover.
+var shot_frame := -1000000
 ## The physics frame it last racked its gun (the Shotgun's tell).
 var _rack_frame := -1000000
 var _share_timer := 0.0
-## A Guard going round through another Door while another pins him.
+## A Guard going round through another Door while another pins him
+## ([CrewTeam] picks it), the centre of that Door, and his Room behind it.
 var flanking := false
+var _flank_door := Vector3.INF
+var _flank_room := -1
+## It has flanked in this fight: it flanks no more until it loses him.
+var flank_done := false
+## Set while [method _start_flank] enters HUNT, so entering does not look
+## for a flanker again.
+var _starting_flank := false
 ## Hunting where a trace (a body, the open Hatch) says he was, not where
 ## anyone saw him: today's hunt carries it, into his pod if that is where
 ## it leads, until it sees him.
@@ -478,8 +497,10 @@ func _physics_process(delta: float) -> void:
 		velocity.y -= _gravity * delta
 
 	if not is_worker() and target != null and is_instance_valid(target):
-		# Who aims true this frame, settled before anyone moves or fires.
+		# Who aims true this frame, and what the team does (a flank, fire on
+		# his cover), settled before anyone moves or fires.
 		CrewFire.of(target).update()
+		CrewTeam.of(target).update()
 	_update_perception(delta)
 	_shot_timer = maxf(_shot_timer - delta, 0.0)
 	_hold_timer = maxf(_hold_timer - delta, 0.0)
@@ -733,6 +754,8 @@ func _enter(next: State) -> void:
 	_speed_scale = 1.0
 	flanking = false
 	_hunting_trace = false
+	if next in [State.PATROL, State.SEARCH]:
+		flank_done = false
 	match next:
 		State.PATROL:
 			_path.clear()
@@ -748,7 +771,8 @@ func _enter(next: State) -> void:
 			_hold_timer = INVESTIGATE_LINGER
 		State.HUNT:
 			_repath_to(_last_seen)
-			_try_flank()
+			if not _starting_flank:
+				_try_flank()
 		State.FIGHT, State.COVER:
 			# A Guard fights from cover; a Worker has nothing to fight with.
 			_path.clear()
@@ -989,44 +1013,50 @@ func hear_position(at: Vector3, from_trace := false) -> void:
 	_hunting_trace = from_trace
 
 
-## With another Guard already pinning him, go round through his Room's
-## other Door rather than in behind it.
+## With another Guard already pinning him, one Guard goes round through his
+## Room's other Door rather than in behind it: the team picks which, by gun
+## ([method CrewTeam.consider_flank]).
 func _try_flank() -> void:
-	if is_worker():
+	if is_worker() or target == null or not is_instance_valid(target):
 		return
-	var pinner: Crew3D = null
-	for node in get_tree().get_nodes_in_group(&"crew"):
-		var other := node as Crew3D
-		if other == null or other == self or other.is_worker() or not other.is_alive():
-			continue
-		if other.flanking:
-			return  # someone is already going round
-		if other.state in [State.FIGHT, State.COVER]:
-			pinner = other
-	if pinner == null:
-		return
-	var route := CrewCombat.flank_route(self, _last_seen, pinner.global_position)
-	if route.is_empty():
-		return
+	var team := CrewTeam.of(target)
+	if team != null:
+		team.consider_flank()
+
+
+## Sets off on a flank: [param route] round to the Door at [param door] into
+## his Room [param room], out of the cover fight if it was in it.
+func _start_flank(route: Array[Vector3], door: Vector3, room: int) -> void:
+	_starting_flank = true
+	_enter(State.HUNT)
+	_starting_flank = false
 	_path = CrewPaths.route(layout, global_position, route)
 	flanking = true
 	_flank_clock = 0.0
+	flank_done = true
+	_flank_door = door
+	_flank_room = room
 
 
 ## Hunting him the straight way, or going round on a flank. Within
-## [constant CrewCover.TAKE_OVER] of where he was last seen, and not
-## flanking, it fights from cover instead.
+## [constant CrewCover.TAKE_OVER] of where he was last seen, or in his Room
+## or one joined to it, and not flanking, it fights from cover instead.
+## Radioed in from further off, it runs until then.
 func _tick_hunt() -> void:
 	if flanking:
 		_flank_clock += get_physics_process_delta_time()
-		if _can_see:
+		var to_door := _flat_distance(global_position, _flank_door)
+		if to_door <= CrewCombat.FLANK_ARRIVE or _path.is_empty() or (_can_see and to_door <= CrewCombat.FLANK_SEE):
+			# At the Door it went round to: a cover spot inside it.
+			_end_flank()
+		elif _can_see:
 			_enter(State.FIGHT)
-		elif _path.is_empty() or _flank_clock > CrewCombat.FLANK_GIVE_UP:
-			# Arrived, or given up: back to hunting him the straight way.
-			flanking = false
-			_repath_to(_last_seen)
+		elif _flank_clock > CrewCombat.FLANK_GIVE_UP:
+			# Given up: it takes cover where it stands.
+			_enter(State.COVER)
 		return
-	if cover != null and not _hunting_trace and CrewCover.takes_over(global_position, _last_seen):
+	if cover != null and not _hunting_trace \
+			and (CrewCover.takes_over(global_position, _last_seen) or _in_rooms_by(_last_seen)):
 		_enter(State.COVER)
 		return
 	if _seen_ago > lose_target_after:
@@ -1034,6 +1064,27 @@ func _tick_hunt() -> void:
 		return
 	if _repath_timer <= 0.0:
 		_repath_to(_last_seen)
+
+
+## The flank's end: into the cover fight, on a spot inside the Door it came
+## round to, picked by the cover rules ([method CrewCover.begin_flank]).
+func _end_flank() -> void:
+	var door := _flank_door
+	var room := _flank_room
+	_enter(State.COVER)
+	if cover != null:
+		cover.begin_flank(door, room)
+
+
+## Whether it stands in the Room holding [param at] or one a Door joins to it.
+func _in_rooms_by(at: Vector3) -> bool:
+	if layout == null:
+		return false
+	var near := CrewCombat.rooms_near(layout, CrewNoise.rooms_at(layout, at))
+	for room in CrewNoise.rooms_at(layout, global_position):
+		if room in near:
+			return true
+	return false
 
 
 ## FIGHT and COVER: a Guard's cover fight ([CrewCover]) drives both. A
@@ -1251,6 +1302,8 @@ func _watch_progress(delta: float) -> void:
 		_path = CrewPaths.route(layout, global_position, _path)
 		return
 	var other := _crew_in_way()
+	if other == null and _stuck_tries >= GIVE_WAY_LOOK_FURTHER:
+		other = _crew_in_way(GIVE_WAY_FAR)
 	if other != null and layout != null:
 		_get_past(other)
 		return
@@ -1268,12 +1321,13 @@ func _watch_progress(delta: float) -> void:
 			return
 
 
-## The nearest living crew member ahead of it within GIVE_WAY_NEAR, or null.
-func _crew_in_way() -> Crew3D:
+## The nearest living crew member ahead of it within [param reach]
+## (GIVE_WAY_NEAR), or null.
+func _crew_in_way(reach := GIVE_WAY_NEAR) -> Crew3D:
 	var ahead := _path[0] - global_position
 	ahead.y = 0.0
 	var best: Crew3D = null
-	var best_distance := GIVE_WAY_NEAR
+	var best_distance := reach
 	for node in get_tree().get_nodes_in_group(&"crew"):
 		var other := node as Crew3D
 		if other == null or other == self or not other.is_alive():
@@ -1324,20 +1378,24 @@ func _get_past(other: Crew3D) -> void:
 
 
 ## Asked by [param walker], which it stands in the way of with no way
-## round: a crew member on routine working at a prop or waiting steps off the
-## walker's way and waits there as one giving way does; one that was working
-## then walks back to its spot and works its Job again from the start.
-## Anyone else (chatting, hiding, fighting, already giving way) stays put.
-## Returns whether it moved.
+## round: a crew member on routine working at a prop or waiting, or one with
+## no routine stood still between wanders, steps off the walker's way and
+## waits there as one giving way does; one that was working then walks back
+## to its spot and works its Job again from the start. Anyone else
+## (chatting, hiding, fighting, already giving way) stays put. Returns
+## whether it moved.
 func make_way_for(walker: Crew3D) -> bool:
-	if state != State.PATROL or routine == null or _yield_to != null or layout == null \
-			or not job_phase in [JobPhase.WORKING, JobPhase.WAITING]:
+	if state != State.PATROL or _yield_to != null or layout == null:
+		return false
+	if routine == null and not _path.is_empty():
+		return false
+	if routine != null and not job_phase in [JobPhase.WORKING, JobPhase.WAITING]:
 		return false
 	var spot := CrewPaths.make_way(layout, global_position, walker._way(), _bodies_near())
 	if spot.is_empty():
 		return false
 	_path.clear()
-	if job_phase == JobPhase.WORKING:
+	if routine != null and job_phase == JobPhase.WORKING:
 		var job := routine.current()
 		_path.append(job.at if not job.patrol else Vector3(global_position.x, 0.0, global_position.z))
 		job_phase = JobPhase.WALKING
@@ -1565,11 +1623,16 @@ func _fire() -> Projectile3D:
 		return null
 	var in_burst := burst_length - _shots_left
 	if in_burst <= 0:
-		# The first round of a burst: the first of a sighting walks in.
-		_walk_in = _sighting_bursts == 0
-		_walk_side = 1.0 if _rng.randf() < 0.5 else -1.0
-		_sighting_bursts += 1
+		if miss_at != Vector3.INF:
+			# Fire on his cover is no part of a sighting, and never walks in.
+			_walk_in = false
+		else:
+			# The first round of a burst: the first of a sighting walks in.
+			_walk_in = _sighting_bursts == 0
+			_walk_side = 1.0 if _rng.randf() < 0.5 else -1.0
+			_sighting_bursts += 1
 	_shots_left -= 1
+	shot_frame = Engine.get_physics_frames()
 	_shot_timer = weapon.fire_interval * _gap_jitter
 
 	var from := global_position + Vector3.UP * MUZZLE_HEIGHT
@@ -1634,6 +1697,13 @@ func _aim_point(from: Vector3, in_burst: int) -> Vector3:
 		return last_aim_point
 	var fire := CrewFire.of(target)
 	last_aimed_true = fire.aims_true(self)
+	if miss_at != Vector3.INF:
+		# At the edge of the prop he hid behind: a deliberate miss.
+		last_aimed_true = false
+		last_miss_kind = "prop"
+		last_aim_point = miss_at
+		miss_at = Vector3.INF
+		return last_aim_point
 	if aim_override != Vector3.INF:
 		last_aim_point = aim_override
 		aim_override = Vector3.INF
@@ -1648,10 +1718,25 @@ func _aim_point(from: Vector3, in_burst: int) -> Vector3:
 		var distance := sandbox.walk_in_distance if sandbox != null else 1.0
 		var off := CrewFire.walk_in_offset(in_burst, burst_length, distance)
 		if off > 0.0:
-			last_walk_in = true
-			at += CrewFire.side_axis(from, at) * _walk_side * off
+			# A round walking in is aimed where the ship does not stand in its
+			# way (a door frame or a wall corner beside him): the other side,
+			# else at him.
+			var across := CrewFire.side_axis(from, at)
+			for side: float in [_walk_side, -_walk_side]:
+				var aside: Vector3 = at + across * side * off
+				var reach := from.distance_to(aside) - MUZZLE_TARGET_GAP
+				if reach <= 0.0 or not _ball_blocked(from, (aside - from).normalized() * reach):
+					_walk_side = side
+					last_walk_in = true
+					at = aside
+					break
 	last_aim_point = at
 	return at
+
+
+## Seconds since its last shot.
+func shot_age() -> float:
+	return (Engine.get_physics_frames() - shot_frame) / float(Engine.physics_ticks_per_second)
 
 
 ## Racks its gun now: the Profile's action sound at the muzzle, the

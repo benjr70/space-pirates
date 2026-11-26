@@ -1,18 +1,26 @@
 class_name CrewCombat
 extends RefCounted
 ## How Guards fight as a team: sharing where the Pirate is with Guards
-## nearby, bursts that never start in step, and one Guard flanking through
-## another Door while another pins him. The crew body asks; this works it
-## out. How each Guard fights from cover is [CrewCover]; where its shots are
-## aimed, and who may aim true, is [CrewFire].
+## nearby, bursts that never start in step, and the way round for a Guard
+## flanking through another Door while another pins him. The crew body asks;
+## this works it out. Who flanks, and firing on his cover when he hides, is
+## [CrewTeam]; how each Guard fights from cover (covering fire, one mover at
+## a time, the last Guard) is [CrewCover]; where its shots are aimed, and who
+## may aim true, is [CrewFire].
 ## See `CREW_AI.md`.
 
 ## No two crew start a burst within this many physics frames of each other.
 const BURST_STAGGER_FRAMES := 18
 ## How often a Guard that can see him tells the others, in seconds.
 const SHARE_EVERY := 1.0
-## A flank is given up after this many seconds without arriving.
+## A flank is given up after this many seconds without arriving; the
+## flanker then takes cover where it stands.
 const FLANK_GIVE_UP := 20.0
+## A flanker this close to the Door it goes in by has arrived: it takes a
+## cover spot inside it. One that sees him this close to the Door does the
+## same; further off it turns to fight him where it is.
+const FLANK_ARRIVE := 1.5
+const FLANK_SEE := 6.0
 ## Per-Guard jitter on its timings, as a range of multipliers.
 const JITTER := Vector2(0.75, 1.35)
 
@@ -62,26 +70,35 @@ static func rooms_near(layout: ShipLayout, rooms: Array[int]) -> Array[int]:
 	return out
 
 
+## The Door of his Room a flank goes in by, or an ambush waits at: of the
+## unlocked Doors into [param room], the one furthest from the pinning Guard
+## at [param pinner]. Null with none.
+static func far_door(layout: ShipLayout, room: int, pinner: Vector3) -> DoorData:
+	var best: DoorData = null
+	var best_distance := -INF
+	for door in layout.doors:
+		if door.locked or not (door.room_a == room or door.room_b == room):
+			continue
+		var distance := ShipBuilder3D.door_center_world(door).distance_to(pinner)
+		if distance > best_distance:
+			best_distance = distance
+			best = door
+	return best
+
+
 ## A route for [param crew] into the Pirate's Room through a Door other than
-## the one a pinning Guard at [param pinner] covers, going round rather than
-## through his Room. Empty when his Room has no second way in, or the
-## crew member's own way in would be that Door anyway.
-static func flank_route(crew: Crew3D, pirate_at: Vector3, pinner: Vector3) -> Array[Vector3]:
+## the one a pinning Guard at [param pinner] covers ([method far_door]),
+## going round rather than through his Room. Empty when his Room has no
+## second way in, or the crew member's own way in would be that Door
+## anyway. [param door_out] gets the Door's centre.
+static func flank_route(crew: Crew3D, pirate_at: Vector3, pinner: Vector3, door_out: Array = []) -> Array[Vector3]:
 	var layout := crew.layout
 	if layout == null:
 		return []
 	var target_room := layout.room_at(ShipBuilder3D.world_to_tile(pirate_at))
 	if target_room < 0:
 		return []
-	var best: DoorData = null
-	var best_distance := -INF
-	for door in layout.doors:
-		if door.locked or not (door.room_a == target_room or door.room_b == target_room):
-			continue
-		var distance := ShipBuilder3D.door_center_world(door).distance_to(pinner)
-		if distance > best_distance:
-			best_distance = distance
-			best = door
+	var best := far_door(layout, target_room, pinner)
 	if best == null:
 		return []
 	var centre := ShipBuilder3D.door_center_world(best)
@@ -100,6 +117,7 @@ static func flank_route(crew: Crew3D, pirate_at: Vector3, pinner: Vector3) -> Ar
 		return []
 	route.append(centre)
 	route.append(inside)
+	door_out.assign([centre])
 	return route
 
 

@@ -18,9 +18,10 @@ being built toward is `.scratch/crew-combat/spec.md`, after spec #52
 | `../ship/gun_roll.gd` (`GunRoll`) | Which weapon each Guard carries, rolled when `ShipBuilder3D` builds the ship (see Guns below). |
 | `crew_routine.gd` (`CrewRoutine`) | Routines: a crew member's Post and its loop of Jobs, planned from the layout's props and Rooms. Pure planning; the body walks it. |
 | `crew_traces.gd` (`CrewTraces`) | What the Pirate leaves behind that crew find: bodies, the open boarding Hatch, emptied Containers, Doors left open. |
-| `crew_combat.gd` (`CrewCombat`) | Guard teamwork: sharing the Pirate's position, staggered bursts, flank routes. |
+| `crew_combat.gd` (`CrewCombat`) | Guard teamwork: sharing the Pirate's position, staggered bursts, flank routes and the Door a flank goes in by. |
+| `crew_team.gd` (`CrewTeam`) | Guards together against one Pirate: which Guard flanks (by gun), and firing on the prop he broke sight behind (suppression). One per Pirate, settled once a physics frame like `CrewFire`. |
 | `crew_fire.gd` (`CrewFire`) | Fair fire: who aims true (at most two at once, handed on by a timer), and where every shot is aimed before its spread: at him, led and walking in, or at a miss point beside him. One per Pirate, shared by every Guard fighting him. |
-| `crew_cover.gd` (`CrewCover`) | One Guard's fight from cover: finding and claiming a spot, the fair walk there, holding it, peeking in its gun's rhythm, leaving it, and fighting with no cover in reach; and its gun's habit: the Shotgun's ambush and rack, the Marksman Rifle's perch, sight line and hip fire. Every Guard holds one (`Crew3D.cover`); it drives the Guard's FIGHT and COVER states. |
+| `crew_cover.gd` (`CrewCover`) | One Guard's fight from cover: finding and claiming a spot, the fair walk there, holding it, peeking in its gun's rhythm, leaving it, and fighting with no cover in reach; its gun's habit: the Shotgun's ambush and rack, the Marksman Rifle's perch, sight line and hip fire; and its part in the team: covering fire, one mover at a time, the flank's last leg, firing on his cover, the last Guard. Every Guard holds one (`Crew3D.cover`); it drives the Guard's FIGHT and COVER states. |
 | `crew_habit.gd` (`CrewHabit`) | A habit per gun: which of the four guns a Guard carries (`gun_of`, by its weapon's file) and the habit numbers (the Shotgun's 4 m and 8 m, its ambush reach and rack timing; the Marksman Rifle's perch radius, line length and weight, 5 m, sight lock and hip fire). |
 | `crew_sight_line.gd` (`CrewSightLine`) | The Marksman Rifle's sight line: a thin red unshaded line from the rifle to where it aims, made on first use under the Guard. |
 | `ship_alarm.gd` (`ShipAlarm`) | The ship-wide Alarm: raised once, red lights, every crew member told. Built per ship as `Ship/Alarm`. |
@@ -41,14 +42,19 @@ ambush beside a doorway, racking before each shot; the Marksman Rifle's
 sight line before every perched shot, dodged by a late sidestep, lost when
 it is hit, waiting for a true-aim place, holding its perch with him hidden,
 falling back to a further perch and firing from the hip in a small Room),
+Guards together (the Shotgun picked to flank and ending on a hidden spot
+inside the second Door, no Marksman Rifle flanking over 20 seeded fights,
+covering fire for every move between cover tiles, firing at a crate's edges
+for 4 s when he hides behind it, a Guard radioed from two Rooms away
+arriving spot to spot, the last Guard falling back and holding),
 staggered bursts,
 flanking, a cover spot it cannot reach, facing a body in its way, holding
 fire when its muzzle line is blocked, fighting from cover (the ring of four
 Guards, one per gun: hidden within 6 s by a fair walk, firing from low
 cover, 20 peeks of each gun's rhythm; full cover from a locker; flanked and
 closed on in a grid of crates; no cover in an empty Room; and 60 s of three
-Guards on a generated medium ship with no one stuck, no shared tile and no
-tile beside a Breaker), walking round props and round a body in its way,
+Guards on a generated medium ship with no one stuck, no shared tile, no
+tile beside a Breaker and never two between cover tiles at once), walking round props and round a body in its way,
 two crew head-on in a two-wide doorway (both arrive within 12 s), one
 standing in a one-wide gap with a way round (passed within 15 s), a Worker
 working in a dead-end lane making way for one walking out (out within 11 s,
@@ -100,7 +106,7 @@ PATROL ──suspicious──▶ INVESTIGATE
   │  ▲                    │
   │  └──Awareness faded───┘
   │                       │ spotted
-  └──────spotted──────────┴──▶ HUNT ──within 18 m of where he was seen, not flanking──▶ COVER ◀──▶ FIGHT
+  └──────spotted──────────┴──▶ HUNT ──within 18 m of where he was seen, or in a Room joined to his, not flanking──▶ COVER ◀──▶ FIGHT
                                 │                                                     (CrewCover drives both)
                        3 s out of sight                                                    │
                                 ▼                                                 14 s without seeing him
@@ -130,9 +136,11 @@ PATROL / INVESTIGATE ──spotted──▶ FLEE ──reached its Guard──�
   has arrived and the linger is over, or 10 s have passed with nothing in view
   (the spot may be inside a prop). Back on PATROL it picks up the Job it was on.
 - **HUNT**: runs to his last-seen position by the door graph (or flanks, see
-  Guard combat). Once that position is within 18 m (`CrewCover.TAKE_OVER`)
-  and it is not flanking, it fights from cover instead. A flanker that sees
-  him, at any distance, turns to fight him the same way. 3 s with him out of sight sends a hunter to SEARCH. A
+  Guards together). Once that position is within 18 m (`CrewCover.TAKE_OVER`),
+  or it stands in his Room or a Room joined to it, and it is not flanking,
+  it fights from cover instead: a Guard radioed in from further off runs
+  until then and arrives spot to spot. A flanker that sees him further than
+  6 m from the Door it goes in by turns to fight him where it is. 3 s with him out of sight sends a hunter to SEARCH. A
   Guard hunting where a trace says he was (a body, the open boarding Hatch,
   or told so by the Guard that found it) keeps hunting the old way, into his
   Boarding Pod if that is where the trace leads, until it sees him.
@@ -254,12 +262,15 @@ each leg a prop would block round it:
 - **Getting loose**: a crew member trying to walk that moves less than
   0.3 m in 1 s re-routes from where it stands. Stuck again, something no
   route knows of is in its way:
-  - **another crew member** (living, ahead, centres within 1 m): it gets
+  - **another crew member** (living, ahead, centres within 1 m; stuck 3
+    tries with nobody that near, within 1.5 m, `GIVE_WAY_FAR`, so a body
+    just past arm's length closing a lane counts): it gets
     past (`_get_past`). If that one is standing still (working, waiting,
     chatting, or itself giving way) it goes round it over open floor, the
     tiles within 0.75 m of every crew body near shut (`CrewPaths.route_around`);
     with no way round it asks it to **make way** (`make_way_for`): a crew
-    member on routine working at a prop or waiting steps off the walker's way
+    member on routine working at a prop or waiting, or one with no routine
+    stood still between wanders, steps off the walker's way
     as below and waits; one that was working then walks back to its spot
     and works the Job again from the start. If both are
     walking, **only one of the pair acts**: the one that can (has a way
@@ -444,8 +455,8 @@ its rules and numbers kept.
   - **Unseen 5 s**: it moves to a spot at least 1 m nearer where he was
     last seen (never the Marksman Rifle). **Unseen 14 s**: it searches
     (never a Marksman Rifle on its perch).
-  - Only one Guard moves up or back (out of band, unseen) at a time; the
-    mover holds the place 4 s.
+  - Every change of spot from one it holds waits its turn: one mover at a
+    time, under covering fire (see Guards together).
 - **Near misses**: a shot of his whose line (from his camera) passes within
   1.2 m of it keeps it down 0.8 s longer (never past its longest time down
   plus 0.8 s), or sends it down if up.
@@ -465,13 +476,8 @@ its rules and numbers kept.
 - **Aim**: see Fair fire below.
 - **Shots**: each Guard draws its own multiplier (0.75–1.35×) at spawn on its
   gun's time between shots.
-- **Pin and flank**: a Guard entering HUNT while another Guard is already
-  fighting (FIGHT or COVER), and no Guard is already flanking, tries to go
-  round: the Door into the Pirate's Room furthest from the pinning Guard, if
-  that is not the Door its own straight route would use anyway, reached by a
-  route that avoids the Pirate's Room, then through the Door and one metre in.
-  It turns to fight as soon as it has him in sight, at any distance, and
-  drops the flank on arrival or after 20 s.
+- **Pin and flank**: one Guard goes round through another Door into his Room
+  while another fights; who, and how it ends, is under Guards together.
 
 ## Fair fire
 
@@ -502,7 +508,9 @@ note `docs/research/fair-fire-and-cover.md` (branch `research/fair-fire-and-cove
   started since the clock last reset) starts aimed the Sandbox's walk-in
   distance (1 m) to one side, drawn left or right, and walks in: the first
   round the whole distance, falling to 0.4 of it on the last but one, the
-  last on him. A one-round burst (the Shotgun's, the Marksman Rifle's) has
+  last on him. A round whose line to its point would strike the ship (a
+  door frame or wall corner beside him) is aimed the other side, else at
+  him. A one-round burst (the Shotgun's, the Marksman Rifle's) has
   nothing to walk, so those guns skip it. Only a Guard aiming true walks in;
   the others aim at miss points.
 - **True aim** (one `CrewFire` per Pirate, `CrewFire.of`, kept as meta on
@@ -525,6 +533,9 @@ note `docs/research/fair-fire-and-cover.md` (branch `research/fair-fire-and-cove
   Marksman Rifle 1.0) of the way to the true intercept for its bolt's speed
   and his flat velocity; half that during a Slide or Clamber
   (`in_slide_or_clamber` on the Pirate).
+- **Fire on his cover** (suppression, see Guards together) is aimed at the
+  prop's edge, never true, and is no part of a sighting (it does not walk
+  in, and does not count as the sighting's first burst).
 - **Miss points.** A Guard not aiming true aims 0.4 to 0.8 m from his body
   centre. Behind cover from it (the tile 0.8 m from him toward it is a prop
   or a wall on the walking grid): at that tile's edge on the side he last
@@ -570,7 +581,11 @@ are the out-of-band rule above with their holds.
     joins within 5 m of the opening (`AMBUSH_REACH`), where he cannot see a
     standing body, nearest the opening first, reached by a fair walk. With
     no cover at all (in the open) the same after 4 s in the open. His Room
-    with no Door: no ambush, and it shifts as the others do.
+    with no Door: no ambush, and it shifts as the others do. **Where his
+    Room has a second Door** and another Guard fights him, the ambush is at
+    the Door furthest from the Guard nearest him (the Door a flank goes in
+    by, `CrewCombat.far_door`); with no hidden tile in reach there, at the
+    Door nearest the Shotgun.
   - **Waiting** (mode AMBUSH, state COVER) it stands facing the doorway.
     He comes into sight within 8 m with a clear muzzle line: it fires from
     where it stands and fights on from there by the cover rules (the tile
@@ -627,6 +642,82 @@ are the out-of-band rule above with their holds.
     place and ducks (in the open, pauses). A near miss ducks it too.
   - The line starts no burst within the stagger of another Guard's, so the
     shot is never held past its line.
+
+## Guards together
+
+How several Guards fight him as one (`CrewCover`, `CrewTeam`), from
+`.scratch/crew-combat/issues/13-guards-working-together-from-cover.md`.
+
+- **Covering fire.** A Guard changes cover (leaves a spot it holds for
+  another: flanked, too close, no shot, hiding with no peek, a shift by its
+  habit, falling back, or out of its ambush) only while another Guard
+  fighting him is up and firing at him, true or a deliberate miss: in a
+  peek or the open fight, its last shot within 1 s (`COVER_FIRE`,
+  `CrewCover.covering`). It waits for that up to 3 s (`COVER_WAIT`) and then
+  goes anyway. When it starts waiting with no partner able to fire, it goes
+  at once. Able to fire (`CrewCover.can_cover`): fighting in the open, or
+  holding or walking to a spot with a way to shoot, not holding its fire,
+  and with him in its sight now, or seen within 3 s while it is down behind
+  its own cover or walking to its spot, or firing on his cover. A partner
+  up that has lost him is not able.
+  While it waits it keeps its rhythm, peeking as usual; hiding with no peek,
+  the wait counts with its habit's waits (`CrewCover.waited`). The wait is
+  `CrewCover.move_wait()`.
+- **One mover at a time.** Leaving a spot it held makes a Guard the mover
+  (`CrewCover.between`) until it gets down at its new spot, waits in ambush,
+  or has no spot and fights in the open; no other Guard fighting him leaves
+  its spot meanwhile. Coming into the fight with no spot yet, or from the
+  open, it is not between cover tiles. A flanker does not count and does
+  not wait.
+- **Flank.** One flanker at a time, while another Guard fights him
+  (`CrewTeam.consider_flank`, looked at on entering HUNT and every 1 s):
+  of the Guards after him that have not flanked in this fight (`flank_done`,
+  cleared on PATROL and SEARCH), are outside his Room and have a way round,
+  the first by gun: Shotgun, then Pistol, then Assault Rifle; a Marksman
+  Rifle never. On a tie, one still hunting before one already fighting,
+  then the nearer him. It may leave its spot to go (it needs no covering
+  fire and is not the mover). The way round is today's
+  (`CrewCombat.flank_route`): the Door into his Room furthest from the Guard
+  pinning him (the other fighter nearest him), if its own straight way in
+  is not that Door, by a route that avoids his Room, with no fair-walk rule
+  between Rooms. Within 1.5 m of that Door (`FLANK_ARRIVE`), at the route's
+  end, or seeing him within 6 m of it (`FLANK_SEE`), it enters the cover
+  fight on a spot by the cover rules inside that Door: in his Room within
+  5 m of it (`FLANK_SPOT_REACH`), walked to without the fair-walk rule
+  (`CrewCover.begin_flank`), still no mover (`flank_end`) until it gets
+  down. No such spot: it picks as any Guard. Seeing him further from the
+  Door it turns to fight where it is. After 20 s it gives up and takes cover
+  where it stands (enters the cover fight there).
+- **Suppression.** When every Guard fighting him that had a shot at him (in
+  its sight with a clear muzzle line) loses it in one frame, one of them
+  having stood still (not ducked or stepped away), and a prop's tile lies
+  within 2 m beyond him on the line to that Guard (`CrewTeam.prop_between`;
+  a wall or a doorway frame is not a prop), he broke sight behind that
+  prop. (A Guard's eyes see over a crate he crouches behind; its shot does
+  not, and that is what he hides from.) For the Sandbox's suppression time
+  (4 s) the Pistol and Assault Rifle Guards fighting him fire at the prop's
+  edges: each shot aimed 0.15 m past one of its side edges as that Guard
+  sees it (alternating), at his body centre's height (1.0 m), if its eyes
+  and muzzle line reach it, a deliberate miss (`Crew3D.miss_at`,
+  `last_miss_kind` "prop"), never true. They peek for it in their rhythm,
+  and one in the open does not step for a clear shot meanwhile. A
+  Marksman Rifle (no line without a target) and a Shotgun (holding fire
+  beyond 8 m) take no part. One Guard (not a Marksman Rifle) may move up a
+  spot meanwhile, under that covering fire (`CrewTeam.may_move_up`). Then
+  they hold. It ends early when any of them has a shot at him again.
+- **Called from other Rooms.** A Guard radioed in (`CrewCombat.share`, or
+  told by a Worker) hunts upright by its normal route until it is 18 m from
+  his last-seen spot or stands in his Room or one joined to it, then
+  follows the cover rules and arrives spot to spot.
+- **The Alarm sweep.** A sweeping Guard that spots him hunts, and within 18 m
+  (he is in its sight, so always) or in a Room joined to his it fights by
+  the cover rules like any other. No code of its own.
+- **The last Guard.** A Guard that has had another Guard fighting him beside
+  it (after him and in his Room or one joined to it, or flanking) and now
+  has none is the last Guard (`CrewCover.last_guard`): it moves up no more
+  (no shift by its habit, no advance, no ambush, no flank), takes no spot
+  nearer him than the one it holds, once picks a spot at least 1 m further
+  from him (`_fall_back`), and holds. It does not flee or surrender.
 
 ## Alarm
 
@@ -756,7 +847,9 @@ and `crew.gd` (`SEARCH_AWARENESS`, `INVESTIGATE_SPEED`, `INVESTIGATE_LINGER`,
 `GIVE_WAY_WAIT`, `GIVE_WAY_INSIST`), `crew_paths.gd` (`CLEARANCE`, `SAMPLE`,
 `SNAP`, `BODY_GAP`, `MAKE_WAY_REACH`, `MAKE_WAY_CLEAR`), `crew_perception.gd` (`ON_EDGE_FACTOR`),
 `crew_combat.gd` (`BURST_STAGGER_FRAMES`, `SHARE_EVERY`, `FLANK_GIVE_UP`,
-`JITTER`), `crew_fire.gd` (`WALK_IN_NEAREST`, `MISS_NEAR`, `MISS_FAR`,
+`FLANK_ARRIVE`, `FLANK_SEE`, `JITTER`), `crew_team.gd` (`FLANK_LOOK`,
+`FLANK_ORDER`, `STILL`, `PROP_PROBE`, `PROBE_STEP`, `EDGE_OUT`,
+`SUPPRESSORS`), `crew_fire.gd` (`WALK_IN_NEAREST`, `MISS_NEAR`, `MISS_FAR`,
 `MISS_MARGIN`, `HEAD_RISE`, `HEAD_MISS_NEAR`, `EDGE_RISE`, `COVER_PROBE`,
 `PEEK_OFF`, `CLOSE`, `MOVING`),
 `crew_cover.gd` (`TAKE_OVER`, `SEARCH_RADIUS`, `FALL_BACK_RADIUS`,
@@ -764,7 +857,8 @@ and `crew.gd` (`SEARCH_AWARENESS`, `INVESTIGATE_SPEED`, `INVESTIGATE_LINGER`,
 `FULL_SHARE`, `BAND_FALLOFF`, `SPACING`, `JITTER`, `WAIT_UP`, `BLIND_PEEKS`,
 `FLANKED_AFTER`, `TOO_CLOSE`, `BETTER`,
 `UNSEEN_ADVANCE`, `UNSEEN_SEARCH`, `NEAR_MISS`, `NEAR_MISS_HOLD`,
-`LOOK_HIDING`, `LOOK_OPEN`, `MOVER_TIME`, `ARRIVE_DOWN`, `MOVE_GIVE_UP`,
+`LOOK_HIDING`, `LOOK_OPEN`, `COVER_FIRE`, `COVER_WAIT`, `FLANK_SPOT_REACH`,
+`ARRIVE_DOWN`, `MOVE_GIVE_UP`,
 `UNREACHABLE_FOR`, `STEP_GIVE_UP`, `OPEN_PAUSE`, `SINK`, `CROUCH`),
 `crew_habit.gd` (`SHOTGUN_CLOSE`, `SHOTGUN_HOLD_FIRE`, `AMBUSH_REACH`,
 `RACK_LEAD`, `RACK_EARLIEST`, `RACK_LATEST`, `PERCH_RADIUS`, `PERCH_LINE`,
@@ -777,8 +871,9 @@ and `crew.gd` (`SEARCH_AWARENESS`, `INVESTIGATE_SPEED`, `INVESTIGATE_LINGER`,
 `PATROL_PAUSE`, `AWAY_CHANCE`) and `crew_noise.gd` (`SPRINT_STEP`, `WALK_STEP`, `DOOR`). They are starting values to be tuned by
 playtest. Gun numbers are not here: they are each weapon's Profile and its
 Gunnery, edited in the Sandbox sheet (`docs/sandbox.md`), as are the crew
-fight's four numbers on the Sandbox resource (how many aim true, the
-handover time, the walk-in distance, the Shotgun pellet cap); the gun roll's
+fight's five numbers on the Sandbox resource (how many aim true, the
+handover time, the walk-in distance, the Shotgun pellet cap, the
+suppression time); the gun roll's
 weights, multipliers and caps are constants in `scripts/ship/gun_roll.gd`
 (`BASE`, `ROOM`, `MARKSMAN_CAP`, `ALL_SHOTGUN_ROOM`).
 

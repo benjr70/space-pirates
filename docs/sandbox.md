@@ -94,6 +94,7 @@ Every Sandbox number, generated from `resources/weapons/`, `resources/sandbox.tr
 | True Aim Handover | 0.8 |
 | Walk In Distance | 1.0 |
 | Shotgun Pellet Cap | 9 |
+| Suppression Time | 4.0 |
 
 Melee from behind (inside the 120.0 degree cone behind the target's facing) kills outright, whatever the damage.
 

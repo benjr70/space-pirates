@@ -204,7 +204,8 @@ const SPOT_CLOSE := Vector2(1.5, 3.0)
 ## Rifle) and COVER_SLACK fails the Raid: it should have peeked. Time it
 ## spends down waiting on its gun's habit (CrewCover.waited: a Marksman
 ## Rifle waiting for a true-aim place to start its sight line, a Shotgun
-## holding fire with him beyond 8 m; crew-combat ticket 20) is left out:
+## holding fire with him beyond 8 m; crew-combat ticket 20; one hiding with
+## no peek waiting its turn to move under covering fire, ticket 21) is left out:
 ## that is the habit, not a missed peek; for the Rifle at most
 ## PLACE_WAIT_HANDOVERS true-aim handovers, each doubled (it is queued
 ## first for the next place to free). One trying
