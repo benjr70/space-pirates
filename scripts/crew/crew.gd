@@ -385,11 +385,16 @@ var _chat_cooldown := 0.0
 ## Seconds spent walking to the current Job; a route that never arrives
 ## (blocked by a body in a doorway, say) is given up on.
 var _walk_clock := 0.0
+## Where its walk to the current Job ends: the Job's spot, a free spot in a
+## patrol stop's Room, or a wander round its Post when no Job could be reached.
+var _job_spot := Vector3.ZERO
 ## Where it last made progress along its path, how long since, and how many
 ## times in a row it has had to work itself loose ([method _watch_progress]).
 var _stuck_at := Vector3.INF
 var _stuck_clock := 0.0
 var _stuck_tries := 0
+## Seconds trying to walk without moving UNSTICK_MOVE, across tries.
+var _pinned_for := 0.0
 ## Giving way: the crew member it stepped aside for, how many points at the
 ## front of its path are still the walk to its spot, where the other stood
 ## then, and how long ago that was.
@@ -691,6 +696,7 @@ func _physics_process(delta: float) -> void:
 	if waiting:
 		_stuck_at = global_position
 		_stuck_clock = 0.0
+		_pinned_for = 0.0
 	else:
 		_watch_progress(delta)
 	_face()
@@ -1056,10 +1062,13 @@ func _tick_routine() -> void:
 		JobPhase.WALKING:
 			_walk_clock += get_physics_process_delta_time()
 			if _path.is_empty() and not job.patrol and _walk_clock <= JOB_GIVE_UP \
-					and _flat_distance(global_position, job.at) > arrive_radius + 0.05:
+					and _flat_distance(global_position, _job_spot) > arrive_radius + 0.05:
 				# Pushed off the end of its walk (a body passing in a lane):
-				# on to the spot itself before working.
-				_path.assign([job.at])
+				# on to the spot itself before working, by a route. Not
+				# straight at the Job's own spot: a walk that wandered its
+				# Post instead ([method _start_job]) ends far from it, and a
+				# straight line there runs into the hull (raid-smoke-bugs 12).
+				_repath_to(_job_spot)
 			elif _path.is_empty():
 				job_phase = JobPhase.WORKING
 				_hold_timer = job.duration * (ON_EDGE_PAUSE if perception.on_edge and job.patrol else 1.0)
@@ -1130,6 +1139,7 @@ func _start_job() -> void:
 	if spot == Vector3.INF:
 		spot = _random_point_in_room(home_room)
 	_repath_to(spot)
+	_job_spot = spot
 	job_phase = JobPhase.WALKING
 	_walk_clock = 0.0
 
@@ -1633,7 +1643,9 @@ func _steer(delta: float, waiting := false) -> void:
 
 ## Trying to walk but getting nowhere: UNSTICK_MOVE in UNSTICK_AFTER
 ## seconds. The first time it re-routes from where it stands (round the
-## props it may have been pushed against). After that, with another crew
+## props it may have been pushed against), and again any time, with no crew
+## member in its way, the straight way to its next point runs into the hull
+## or a prop ([constant CrewPaths.SCRAPE]) and a route finds another. With another crew
 ## member in its way, it gets past it ([method _get_past]); with anything
 ## else no route knows of (the Pirate), it steps aside, a side at a time, and
 ## walks on. A Job it still cannot reach is given up at JOB_GIVE_UP.
@@ -1643,8 +1655,10 @@ func _watch_progress(delta: float) -> void:
 	if _path.is_empty() or _flat_distance(global_position, _stuck_at) > UNSTICK_MOVE:
 		_stuck_at = global_position
 		_stuck_clock = 0.0
+		_pinned_for = 0.0
 		return
 	_stuck_clock += delta
+	_pinned_for += delta
 	if _stuck_clock < UNSTICK_AFTER:
 		return
 	_stuck_clock = 0.0
@@ -1654,9 +1668,24 @@ func _watch_progress(delta: float) -> void:
 		_path = _path.slice(_yield_left)
 		_yield_left = 0
 		return
-	if _stuck_tries == 1 and layout != null:
-		_path = CrewPaths.route(layout, global_position, _path)
-		return
+	if layout != null and (_stuck_tries == 1 or (_crew_in_way(GIVE_WAY_FAR) == null
+			and not CrewPaths.clear(CrewPaths.grid(layout), global_position, _path[0], CrewPaths.SCRAPE))):
+		# The first time, and whenever nobody is in its way and the way on
+		# runs into the hull or a prop (pushed off its line, it heads for
+		# its next point past a corner or a doorway's jamb), it re-routes
+		# from where it stands. With a crew member in its way it gets past
+		# it below, which routes round it.
+		var rerouted := CrewPaths.route(layout, global_position, _path)
+		if _stuck_tries == 1:
+			_path = rerouted
+			return
+		# Taken only when it mends that: a route that leads it the same way
+		# (its first stop the tile it stands on) leaves it to get past.
+		while rerouted.size() > 1 and _flat_distance(global_position, rerouted[0]) <= arrive_radius:
+			rerouted.pop_front()
+		if CrewPaths.clear(CrewPaths.grid(layout), global_position, rerouted[0], CrewPaths.SCRAPE):
+			_path = rerouted
+			return
 	var other := _crew_in_way()
 	if other == null and _stuck_tries >= GIVE_WAY_LOOK_FURTHER:
 		other = _crew_in_way(GIVE_WAY_FAR)
@@ -1704,33 +1733,66 @@ func _crew_in_way(reach := GIVE_WAY_NEAR) -> Crew3D:
 ## else stepping off its way to wait for it to pass.
 func _get_past(other: Crew3D) -> void:
 	var detour := CrewPaths.route_around(layout, global_position, _path, _bodies_near())
-	if not other.is_walking():
+	if not other.is_walking() and other._yield_to != null and other._yield_left == 0 and detour.is_empty():
+		# Giving way, and stood still (stopped short of its spot, or on a
+		# spot still in this one's way), it is the body in the way: three
+		# crew in a one-wide lane at a gap, the one giving way stood in
+		# the gap's mouth with this one pressed beside it. This one steps
+		# off its way instead and it walks on (raid-smoke-bugs 12).
+		var way: Array[Vector3] = [Vector3(other.global_position.x, 0.0, other.global_position.z)]
+		way.append_array(other._path.slice(0, 3))
+		var aside := CrewPaths.make_way(layout, global_position, way, _bodies_near())
+		if not aside.is_empty():
+			other._stop_giving_way()
+			_step_aside(other, aside)
+		return
+	# Walking the same way and stuck itself (a queue behind one that will
+	# not move): it is no more going anywhere than one standing still.
+	var queued := other.is_walking() and other._pinned_for >= UNSTICK_AFTER and _heading().dot(other._heading()) > 0.0
+	if not other.is_walking() or queued:
 		# The one in the way will not move of itself: it holds its spot in
 		# a fight (down in cover, a Shotgun in ambush, fighting in the
 		# open), or stands still (working at a prop, hiding in a doorway).
-		var held := other.state in [State.FIGHT, State.COVER] or (other._yield_to == null and other._path.is_empty())
+		var held := queued or other.state in [State.FIGHT, State.COVER] or (other._yield_to == null and other._path.is_empty())
 		var out_of_fight := not state in [State.FIGHT, State.COVER]
 		# A way round already taken, and still stuck against it.
 		var tried := _stuck_tries >= GIVE_WAY_LOOK_FURTHER
 		if not detour.is_empty() and not (tried and held and out_of_fight):
 			_path = detour
 			_repath_timer = UNSTICK_AFTER
-		elif held and out_of_fight and (not detour.is_empty() or not other.make_way_for(self)):
+		# With no way round it asks the other to make way, in a fight too
+		# (a Worker stood still where a Guard walks to cover held it 5 s:
+		# raid-smoke-bugs 12); out of the fight, refused, it gives up.
+		elif held and (not detour.is_empty() or not other.make_way_for(self)) and out_of_fight:
 			_give_up_walk(other)
 		return
 	if other._yield_to == self:
 		return  # it is stepping aside for this one
 	var spot: Array[Vector3] = []
-	if detour.is_empty():
+	# Out of the fight, in the way of one fighting, it steps off that one's
+	# way rather than go round it: a way round is a way across its path
+	# (a Worker on routine and a Guard walking to cover in a corridor, each
+	# going round the other into the other's way, raid-smoke-bugs 12).
+	var clears_for := not _fighting() and other._fighting()
+	if detour.is_empty() or clears_for:
 		spot = CrewPaths.make_way(layout, global_position, other._way(), _bodies_near())
-		if spot.is_empty():
+		if spot.is_empty() and detour.is_empty():
 			return  # nothing it can do: the other's to act
 	if not _acts_first(other):
+		return
+	if not spot.is_empty() and clears_for:
+		_step_aside(other, spot)
 		return
 	if not detour.is_empty():
 		_path = detour
 		_repath_timer = UNSTICK_AFTER
 		return
+	_step_aside(other, spot)
+
+
+## Gives way to [param other]: walks through [param spot] (the tile centres
+## to a spot off its way) and waits there for it to pass.
+func _step_aside(other: Crew3D, spot: Array[Vector3]) -> void:
 	_yield_to = other
 	_yield_from = other.global_position
 	_yield_clock = 0.0
@@ -1743,23 +1805,28 @@ func _get_past(other: Crew3D) -> void:
 ## Blocked by [param other], which will not move, with no way round (or
 ## one that did not get it past) and no making way: out of the fight
 ## itself, it gives this walk up. Hunting him behind a partner fighting
-## him, it joins the fight from where it stands; walking to a Job on
-## routine behind one standing still, it moves on to its next Job;
-## otherwise it stands BLOCKED_PAUSE before it walks anywhere again.
+## him, it joins the fight from where it stands; otherwise it stands
+## BLOCKED_PAUSE before it walks anywhere again, and one walking to a Job on
+## routine (behind one standing still or fighting) then sets off for its
+## next Job.
 ## (Crew-combat ticket 22 gave up only behind a Guard holding its spot in
 ## a fight with no way round; ticket 27's smoke invariant, no crew member
 ## trying to walk 5 s without moving 0.3 m, caught a Worker pressing 10 s
 ## into a working one at the end of a lane and a hunting Guard pressing
-## into a partner fighting in the open in a one-wide way.)
+## into a partner fighting in the open in a one-wide way. Raid-smoke-bugs
+## 12: a routine walker behind a Guard fighting stood its pause only to be
+## sent straight back into it by its routine; one sent straight on to its
+## next Job pressed on into a Guard in cover in its Room's only doorway.)
 func _give_up_walk(other: Crew3D) -> void:
 	var fighting := other.state in [State.FIGHT, State.COVER]
 	if fighting and state == State.HUNT and cover != null and not flanking:
 		_enter(State.COVER)
 		return
-	if not fighting and state == State.PATROL and routine != null and job_phase == JobPhase.WALKING:
+	if state == State.PATROL and routine != null and job_phase == JobPhase.WALKING:
+		# Not straight off again: every Job past a Guard holding a doorway
+		# runs through that doorway.
 		routine.advance()
-		_start_job()
-		return
+		job_phase = JobPhase.WAITING
 	_path.clear()
 	_hold_timer = maxf(_hold_timer, BLOCKED_PAUSE)
 
@@ -1785,6 +1852,7 @@ func make_way_for(walker: Crew3D) -> bool:
 	if routine != null and job_phase == JobPhase.WORKING:
 		var job := routine.current()
 		_path.append(job.at if not job.patrol else Vector3(global_position.x, 0.0, global_position.z))
+		_job_spot = _path.back()
 		job_phase = JobPhase.WALKING
 		_walk_clock = 0.0
 	_yield_to = walker
@@ -1798,13 +1866,23 @@ func make_way_for(walker: Crew3D) -> bool:
 
 ## Of two walking crew blocking each other, which acts, so they never mirror
 ## each other. Called only on one that can act (go round or step aside):
-## it does if the other cannot, and of two that both can, the one created
-## first (readied first), always the same one of the pair. Stuck
-## GIVE_WAY_INSIST tries, it acts whenever it can.
+## it does if the other cannot; of one in a fight and one out of it, the one
+## out of it; and of two that both can, the one created first (readied
+## first), always the same one of the pair. Stuck GIVE_WAY_INSIST tries,
+## it acts whenever it can.
 func _acts_first(other: Crew3D) -> bool:
-	if _stuck_tries >= GIVE_WAY_INSIST or _ready_order < other._ready_order:
+	if _stuck_tries >= GIVE_WAY_INSIST:
+		return true
+	if _fighting() != other._fighting():
+		# The one out of the fight makes room for the one in it.
+		return other._fighting() or not other._can_get_past(self)
+	if _ready_order < other._ready_order:
 		return true
 	return not other._can_get_past(self)
+
+
+func _fighting() -> bool:
+	return state in [State.FIGHT, State.COVER]
 
 
 ## Whether, blocked by [param other], it has a way round or somewhere off
@@ -1813,6 +1891,15 @@ func _can_get_past(other: Crew3D) -> bool:
 	var bodies := _bodies_near()
 	return not CrewPaths.route_around(layout, global_position, _path, bodies).is_empty() \
 			or not CrewPaths.make_way(layout, global_position, other._way(), bodies).is_empty()
+
+
+## Which way it is heading: flat, towards its next point; zero standing.
+func _heading() -> Vector3:
+	if _path.is_empty():
+		return Vector3.ZERO
+	var ahead := _path[0] - global_position
+	ahead.y = 0.0
+	return ahead.normalized()
 
 
 ## Walking somewhere, not stood giving way.
@@ -1880,8 +1967,36 @@ func _repath_to(destination: Vector3) -> void:
 ## The door graph's waypoints from here to [param destination]. A doorway
 ## belongs to no Room, so stood in one it steps onto whichever Room tile
 ## beside it gives the shorter route first, rather than walking straight
-## at the destination through the hull.
+## at the destination through the hull; and a destination in one (where
+## the Pirate was last seen, say) is reached through whichever Room tile
+## beside it gives the shorter route (raid-smoke-bugs 12: a searching Guard
+## walked straight at a doorway two Rooms off and pressed into the wall).
 func _waypoints(destination: Vector3) -> Array[Vector3]:
+	var end := ShipBuilder3D.world_to_tile(destination)
+	if layout.room_at(end) >= 0:
+		return _waypoints_to(destination)
+	var best: Array[Vector3] = []
+	var best_length := INF
+	for side: Vector2i in [Vector2i.UP, Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT]:
+		if layout.room_at(end + side) < 0:
+			continue
+		var legs := _waypoints_to(ShipBuilder3D.tile_to_world(end + side))
+		if legs.is_empty():
+			continue
+		legs.append(destination)
+		var length := 0.0
+		var cursor := global_position
+		for point in legs:
+			length += _flat_distance(cursor, point)
+			cursor = point
+		if length < best_length:
+			best_length = length
+			best = legs
+	return best
+
+
+## [method _waypoints] to a destination in a Room.
+func _waypoints_to(destination: Vector3) -> Array[Vector3]:
 	var at := ShipBuilder3D.world_to_tile(global_position)
 	if layout.room_at(at) >= 0:
 		return ShipNavigator.waypoints_3d(layout, global_position, destination)

@@ -164,6 +164,7 @@ func _initialize() -> void:
 	await _check_head_on_doorway()
 	await _check_standing_in_gap()
 	await _check_working_in_lane()
+	_check_walks_unstuck()
 	await _check_shared_work_spot()
 	await _check_bodies()
 	await _check_alarm()
@@ -2188,6 +2189,161 @@ func _check_working_in_lane() -> void:
 			"give way: the Worker that made way is not back at work at its crate (%.2f m off it, facing %.2f)" % [to_prop.length(), worker.facing().dot(to_prop.normalized())])
 	walker.free()
 	worker.free()
+
+
+## Raid-smoke-bugs 12: crew pinned 5 s or more by their own walking rules.
+## (1) A walk that wandered its Post (its Job's spot blocked) and ended
+## there walks no straight line on to the Job's spot. (2) Stuck pressed to a
+## wall with its next point beyond it, it re-routes, not only on its first
+## try. (3) Pressed against a prop, a route sets off past it, not back to its
+## own tile's centre first. (4) Behind one giving way that stands still in
+## the mouth of a one-wide gap, it steps aside itself. (5) A routine walk
+## given up behind a Guard fighting stands BLOCKED_PAUSE before the next Job.
+## (6) Queued behind one walking its way that is stuck itself, still stuck
+## after a way round, it gives the walk up. (7) Going where another stands,
+## no way round that ends on its own tile is offered. (8) A Guard in a
+## fight with no way round a Worker standing still asks it to make way.
+## (9) A Worker head-on with a Guard walking to cover steps off its way.
+## (10) A walk to a doorway (in no Room) goes through the Rooms between.
+func _check_walks_unstuck() -> void:
+	player.global_position = Vector3(60.0, 0.0, 60.0)
+	var grid := CrewPaths.grid(cluttered_layout)
+	var worker := _crew(CrewTypes.Type.WORKER)
+	worker.layout = cluttered_layout
+	worker.home_room = 0
+	worker.global_position = Vector3(404.5, 0.0, 8.5)
+	var job := CrewRoutine.Job.new()
+	job.room = 0
+	job.at = ShipBuilder3D.tile_to_world(Vector2i(402, 4))  # inside the crate
+	job.duration = 5.0
+	worker.routine = CrewRoutine.new()
+	worker.routine.jobs.append(job)
+	worker._start_job()
+	var wandered: bool = not worker._path.is_empty() and worker._path.back().distance_to(job.at) > 0.5
+	if wandered:
+		worker.global_position = worker._path.back()
+		worker._path.clear()
+	worker._tick_routine()
+	var at := worker.global_position
+	var through := false
+	for point in worker._path:
+		through = through or not CrewPaths.clear(grid, at, point, CrewPaths.SCRAPE)
+		at = point
+	_expect(wandered and not through, "unstuck: at the end of a wander (%s), its Job's spot in a crate, it walks on %s" % [wandered, worker._path])
+	worker.free()
+	var pair_grid := CrewPaths.grid(pair_layout)
+	var walker := _crew()
+	walker.layout = pair_layout
+	walker.global_position = Vector3(107.55, 0.0, 1.5)
+	walker._path.assign([Vector3(113.5, 0.0, 1.5)])
+	walker._stuck_tries = 1
+	walker._stuck_at = walker.global_position
+	walker._stuck_clock = Crew3D.UNSTICK_AFTER
+	walker._watch_progress(0.0)
+	at = walker.global_position
+	through = false
+	for point in walker._path:
+		through = through or not CrewPaths.clear(pair_grid, at, point, CrewPaths.SCRAPE)
+		at = point
+	_expect(not through, "unstuck: pressed to a wall on its second try, its next point beyond it, it walks on %s" % [walker._path])
+	walker.free()
+	var props := RoomData.new()
+	props.rects = [Rect2i(600, 0, 6, 6)]
+	props.props = [{"type": &"crate", "tile": Vector2i(601, 2)}]
+	var hug := ShipLayout.new()
+	hug.rooms = [props]
+	var first := CrewPaths.route(hug, Vector3(602.3, 0.0, 2.04), [Vector3(603.5, 0.0, 0.5)] as Array[Vector3])
+	_expect(not first.is_empty() and _flat(first[0], Vector3(602.5, 0.0, 2.5)) > 0.1,
+			"unstuck: pressed against a crate, its route sets off for its own tile's centre first: %s" % [first])
+	var lane := RoomData.new()
+	lane.rects = [Rect2i(610, 0, 10, 6)]
+	for x in range(610, 620):
+		if x != 613:
+			lane.props.append({"type": &"crate", "tile": Vector2i(x, 1)})
+	var gap := ShipLayout.new()
+	gap.rooms = [lane]
+	var a := _crew()
+	var b := _crew()
+	for member: Crew3D in [a, b]:
+		member.layout = gap
+	a.global_position = Vector3(613.9, 0.0, 0.75)
+	a._path.assign([Vector3(613.5, 0.0, 5.5)])
+	b.global_position = Vector3(613.4, 0.0, 1.0)
+	b._path.assign([Vector3(613.5, 0.0, 2.5)])
+	b._yield_to = a
+	a._get_past(b)
+	_expect(a._yield_to == b and b._yield_to == null,
+			"unstuck: behind one giving way stood in a gap's mouth, it gives way %s and the other %s; want it to, and the other to walk on" % [a._yield_to == b, b._yield_to == null])
+	a.free()
+	b.free()
+	var fighter := _crew()
+	var stood := _crew(CrewTypes.Type.WORKER)
+	for member: Crew3D in [fighter, stood]:
+		member.layout = gap
+	fighter.state = Crew3D.State.COVER
+	fighter.global_position = Vector3(611.6, 0.0, 0.5)
+	fighter._path.assign([Vector3(616.5, 0.0, 0.5)])
+	stood.global_position = Vector3(612.4, 0.0, 0.5)
+	stood.routine = CrewRoutine.new()
+	stood.job_phase = Crew3D.JobPhase.WAITING
+	fighter._get_past(stood)
+	_expect(stood._yield_to == fighter, "unstuck: a Guard in a fight walking down a one-wide lane past a Worker stood waiting is not made way for")
+	fighter.free()
+	stood.free()
+	var to_cover := _crew()
+	var clerk := _crew(CrewTypes.Type.WORKER)
+	to_cover.state = Crew3D.State.COVER
+	to_cover.global_position = CREW_AT
+	to_cover._path.assign([CREW_AT + Vector3.FORWARD * 3.0])
+	clerk.global_position = CREW_AT + Vector3.FORWARD * 0.7
+	clerk._path.assign([CREW_AT + Vector3.BACK * 3.0])
+	clerk._get_past(to_cover)
+	_expect(clerk._yield_to == to_cover, "unstuck: a Worker head-on with a Guard walking to cover does not step off its way (path %s)" % [clerk._path])
+	to_cover.free()
+	clerk.free()
+	var searcher := _crew()
+	searcher.layout = tri_layout
+	searcher.global_position = Vector3(192.5, 0.0, 6.5)
+	var doorway := ShipBuilder3D.tile_to_world(Vector2i(204, -1))
+	var legs := searcher._waypoints(doorway)
+	_expect(legs.size() > 1 and legs.back() == doorway,
+			"unstuck: the way from one Room to a doorway two Rooms off is %s, not through the Rooms between" % [legs])
+	searcher.free()
+	var guard := _crew()
+	guard.state = Crew3D.State.FIGHT
+	var routine := _crew(CrewTypes.Type.WORKER)
+	routine.routine = CrewRoutine.new()
+	for k in 2:
+		var stop := CrewRoutine.Job.new()
+		stop.room = 0
+		stop.at = CREW_AT + Vector3.FORWARD * (3.0 + k)
+		routine.routine.jobs.append(stop)
+	routine._hold_timer = 0.0
+	routine._start_job()
+	routine._give_up_walk(guard)
+	_expect(routine.routine.index == 1 and routine._path.is_empty() and routine._hold_timer >= Crew3D.BLOCKED_PAUSE,
+			"unstuck: a routine walk given up behind a Guard fighting: Job %d, path %s, standing %.1f s; want the next Job after %.1f s" % [
+			routine.routine.index, routine._path, routine._hold_timer, Crew3D.BLOCKED_PAUSE])
+	guard.free()
+	routine.free()
+	var behind := _crew()
+	var ahead := _crew()
+	behind.global_position = CREW_AT
+	ahead.global_position = CREW_AT + Vector3.FORWARD * 0.7
+	for member: Crew3D in [behind, ahead]:
+		member._path.assign([CREW_AT + Vector3.FORWARD * 8.0])
+	ahead._pinned_for = 2.0
+	behind._stuck_tries = Crew3D.GIVE_WAY_LOOK_FURTHER
+	behind._hold_timer = 0.0
+	behind._get_past(ahead)
+	_expect(behind._path.is_empty() and behind._hold_timer >= Crew3D.BLOCKED_PAUSE,
+			"unstuck: queued behind one walking its way and stuck itself, it walks on %s, standing %.1f s; want it to give the walk up" % [behind._path, behind._hold_timer])
+	behind.free()
+	ahead.free()
+	var swap := CrewPaths.route_around(layout, Vector3(3.79, 0.0, 10.47), [Vector3(4.5, 0.0, 11.0)] as Array[Vector3],
+			[Vector3(4.36, 0.0, 10.88)] as Array[Vector3])
+	_expect(swap.is_empty() or _flat(swap[0], Vector3(3.79, 0.0, 10.47)) > CrewPaths.GETS_ON,
+			"unstuck: going where another stands, its way round is %s, which gets it nowhere" % [swap])
 
 
 ## Two Workers whose loops share one work Job (a console's single spot):
@@ -5322,6 +5478,7 @@ func _check_hiding_rig() -> void:
 	await physics_frame
 	_check_hide_roll(panel)
 	await _check_hide_run()
+	_check_hide_stalled()
 	await _check_wounded_hides(alarm)
 	panel.take_damage(1, player)
 	await _check_out_with_nothing(alarm)
@@ -5366,6 +5523,43 @@ func _check_hide_roll(panel: AlarmPanel) -> void:
 	_expect(hides >= SPOTTINGS * HIDE_SHARE.x and hides <= SPOTTINGS * HIDE_SHARE.y,
 			"hide roll: %d of %d spottings hid, want %.0f%% to %.0f%%" % [hides, SPOTTINGS, HIDE_SHARE.x * 100.0, HIDE_SHARE.y * 100.0])
 	_expect(same, "hide roll: a Worker spawned again on the same tile of the same ship rolled differently")
+
+
+## Raid-smoke-bugs 12: a Worker running to hide that has not moved for
+## CrewHiding.STALL (a crew member stood on its tile, a corner its route
+## cannot get past), with no corner underfoot, gives that tile up for
+## another then, not at RUN_GIVE_UP.
+func _check_hide_stalled() -> void:
+	var worker := _hide_worker(Vector2i(HIDE_X0 + 6, 4))
+	worker.hide_chance = 1.0
+	worker._last_seen = _hide_at(10, 3)
+	player.global_position = worker._last_seen
+	worker._react_spotted()
+	for i in roundi((CrewHiding.FREEZE + 0.1) / STEP):
+		worker.hiding.tick(STEP)
+	var first := worker.hiding.tile
+	var ran := worker.hiding.phase == CrewHiding.Phase.RUN
+	for i in roundi((CrewHiding.STALL + 0.5) / STEP):
+		worker.hiding.tick(STEP)  # its body held where it stands
+	_expect(ran and worker.hiding.tile != first, "hide stalled: ran %s for %s, still for %.1f s, and still runs for %s" % [
+			ran, first, CrewHiding.STALL + 0.5, worker.hiding.tile])
+	# Its run given up in the other Room (Crew3D._give_up_walk): it stands
+	# its pause out, then runs on by a route, not straight through the wall.
+	worker.global_position = _hide_at(15, 1)
+	worker._path.clear()
+	worker._hold_timer = 1.0
+	worker.hiding.tick(STEP)
+	var stood := worker._path.is_empty()
+	worker._hold_timer = 0.0
+	worker.hiding.tick(STEP)
+	var at := worker.global_position
+	var through := worker._path.is_empty()
+	for point in worker._path:
+		through = through or not CrewPaths.clear(CrewPaths.grid(hide_layout), at, point, CrewPaths.SCRAPE)
+		at = point
+	_expect(worker.hiding.phase == CrewHiding.Phase.RUN and stood and not through,
+			"hide stalled: its run given up, it stands its pause %s and then runs on %s" % [stood, worker._path])
+	worker.free()
 
 
 ## A Worker that rolled to hide, the Pirate 4.1 m off: it freezes, runs to

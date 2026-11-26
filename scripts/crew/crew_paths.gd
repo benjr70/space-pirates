@@ -14,6 +14,12 @@ extends RefCounted
 ## Half-width of the square kept clear along a straight leg: the crew
 ## capsule's 0.35 m radius and a margin, inside half a tile.
 const CLEARANCE := 0.45
+## Half-width of the square for the thinner test of a leg a crew member is
+## already on: whether it runs into the hull or a prop at all (a corner, a
+## doorway's jamb), not whether it keeps a margin. Under the capsule's
+## 0.35 m radius, so a body stood against a wall (its centre 0.39 m off the
+## wall's collision) does not count its own wall.
+const SCRAPE := 0.3
 ## Spacing of the points tested along a straight leg, metres.
 const SAMPLE := 0.2
 ## How many tiles out to look for an open tile next to an end that is not on one.
@@ -90,15 +96,16 @@ static func route(layout: ShipLayout, from: Vector3, points: Array[Vector3]) -> 
 
 
 ## True when a crew member can walk straight from [param a] to [param b]:
-## every tile the clearance square touches along the way is open.
-static func clear(astar: AStarGrid2D, a: Vector3, b: Vector3) -> bool:
+## every tile the clearance square (half-width [param clearance]) touches
+## along the way is open.
+static func clear(astar: AStarGrid2D, a: Vector3, b: Vector3, clearance := CLEARANCE) -> bool:
 	var from := Vector2(a.x, a.z)
 	var to := Vector2(b.x, b.z)
 	var samples := maxi(ceili(from.distance_to(to) / SAMPLE), 1)
 	for s in samples + 1:
 		var p := from.lerp(to, float(s) / samples)
-		for corner in [Vector2(-CLEARANCE, -CLEARANCE), Vector2(CLEARANCE, -CLEARANCE),
-				Vector2(-CLEARANCE, CLEARANCE), Vector2(CLEARANCE, CLEARANCE)]:
+		for corner in [Vector2(-clearance, -clearance), Vector2(clearance, -clearance),
+				Vector2(-clearance, clearance), Vector2(clearance, clearance)]:
 			var q: Vector2 = p + corner
 			if _solid_tile(astar, Vector2i(floori(q.x), floori(q.y))):
 				return false
@@ -126,14 +133,19 @@ static func _round(layout: ShipLayout, astar: AStarGrid2D, from: Vector3, to: Ve
 		stops.append(ShipBuilder3D.tile_to_world(tile))
 	if not _solid(astar, to):
 		stops[-1] = Vector3(to.x, 0.0, to.z)
-	# Pull the string: from each anchor, on to the furthest stop in a clear line.
+	# Pull the string: from each anchor, on to the furthest stop in a clear
+	# line. From where it stands the line need only miss the hull and props
+	# (SCRAPE): a body pressed against a prop has the prop inside its full
+	# clearance square on every line, and would be sent back to its own
+	# tile's centre first, behind it or under another crew member stood
+	# there (raid-smoke-bugs 12).
 	var out: Array[Vector3] = []
 	var anchor := from
 	var i := -1
 	while i < stops.size() - 1:
 		var far := i + 1
 		for j in range(i + 2, stops.size()):
-			if not clear(astar, anchor, stops[j]):
+			if not clear(astar, anchor, stops[j], SCRAPE if i < 0 else CLEARANCE):
 				break
 			far = j
 		out.append(stops[far])
@@ -175,6 +187,9 @@ static func _rooms_at(layout: ShipLayout, tile: Vector2i) -> Array:
 ## the tiles both sides: a tile is shut to a walker whose centre is closer
 ## than this to a body's (two capsule radii and a margin).
 const BODY_GAP := 0.75
+## A way round must take a walker further than this from where it stands
+## (more than the 0.44 m it counts as arriving at a point).
+const GETS_ON := 0.5
 
 
 ## [method route] with the tiles round each of [param bodies] (other crew
@@ -196,6 +211,14 @@ static func route_around(layout: ShipLayout, from: Vector3, points: Array[Vector
 		ok = ok and clear(astar, out[k - 1], out[k])
 	for tile in shut:
 		astar.set_point_solid(tile, false)
+	# A way round that gets it nowhere is none: with the destination itself
+	# under the body (two walkers each going where the other stands), it
+	# ends on the tile it already stands on, and the destination appended
+	# below leads straight back through the body (raid-smoke-bugs 12).
+	var gets_on := false
+	for point in out:
+		gets_on = gets_on or Vector2(point.x - from.x, point.z - from.z).length() > GETS_ON
+	ok = ok and gets_on
 	# A body stood on the destination (a work spot) shuts it, and the way
 	# round ends beside it: the walk still ends where it was going.
 	if ok and out.back() != points.back():

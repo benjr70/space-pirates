@@ -63,8 +63,9 @@ const ON_TILE := 0.5
 const RUN_GIVE_UP := 30.0
 ## Hiding where it stands, it looks again for a place to run this often.
 const LOOK_AGAIN := 1.0
-## A run that has not moved STALL_MOVE metres in STALL seconds hides on the
-## tile it stands on, if that is a corner ([method _hide_here]).
+## A run that has not moved STALL_MOVE metres in STALL seconds (not stood
+## giving way) hides on the tile it stands on, if that is a corner
+## ([method _hide_here]), else gives its tile up and runs for another.
 const STALL := 2.0
 const STALL_MOVE := 0.3
 const META := &"crew_hiding_tiles"
@@ -156,11 +157,22 @@ func tick(delta: float) -> void:
 			elif _clock > RUN_GIVE_UP:
 				_refused[tile] = true
 				_run()
-			elif _stalled(delta) and _hide_here():
-				pass
+			elif crew._path.is_empty() and crew._hold_timer > 0.0:
+				_stalled(delta)  # its run given up: it stands Crew3D.BLOCKED_PAUSE
+			elif _stalled(delta) and crew._yield_to == null and not _hide_here():
+				# Stalled with no corner underfoot: whatever stops it (a crew
+				# member working on the tile, a wall corner its route cannot
+				# get it past) gives the tile up for another now, not at
+				# RUN_GIVE_UP (raid-smoke-bugs 12).
+				_refused[tile] = true
+				_run()
 			elif crew._path.is_empty():
-				# Pushed off the end of its run: on to the tile itself.
-				crew._path.assign([spot])
+				# Pushed off the end of its run, or its run given up behind
+				# a crew member that will not move (once it has stood
+				# Crew3D.BLOCKED_PAUSE): on to the tile, by a route. Not in a
+				# straight line, which from a run given up far off runs into
+				# the hull (raid-smoke-bugs 12).
+				crew._repath_to(spot)
 		Phase.HIDDEN:
 			if _taken():
 				# A Guard claimed it: on to the next best.

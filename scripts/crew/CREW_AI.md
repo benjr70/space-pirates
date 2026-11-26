@@ -470,9 +470,23 @@ each leg a prop would block round it:
 - A crew member **stood in a doorway** (in no Room) that re-paths steps
   first onto whichever Room tile beside it gives the shorter door-graph
   route, rather than walking straight at its destination through the hull.
+  A **destination in a doorway** (where the Pirate was last seen, say) is
+  reached the same way, through whichever Room tile beside it gives the
+  shorter route (raid-smoke-bugs 12: the door graph had no route to it, and
+  a searching Guard walked straight at a doorway two Rooms off into the
+  wall).
 - **Getting loose**: a crew member trying to walk that moves less than
-  0.3 m in 1 s re-routes from where it stands. Stuck again, something no
-  route knows of is in its way:
+  0.3 m in 1 s re-routes from where it stands. Stuck again with no crew
+  member within 1.5 m ahead, and the straight way to its next point
+  running into the hull or a prop at all (a square 0.6 m across,
+  `CrewPaths.SCRAPE`: pushed off its line, it heads for its next point past
+  a wall corner or a doorway's jamb), it re-routes again whenever that
+  gives it a way on that does not (raid-smoke-bugs 12; before, only the
+  first stuck second of a walk re-routed). A route from where it stands
+  needs only that thinner square on its first leg: a body pressed against
+  a prop has the prop inside the full 0.9 m square on every line, and was
+  sent back to its own tile's centre first (once under a Guard standing
+  there). Otherwise something no route knows of is in its way:
   - **another crew member** (living, ahead, centres within 1 m; stuck 3
     tries with nobody that near, within 1.5 m, `GIVE_WAY_FAR`, so a body
     just past arm's length closing a lane counts): it gets
@@ -496,9 +510,29 @@ each leg a prop would block round it:
     taken and still left it stuck (three tries, `GIVE_WAY_LOOK_FURTHER`)
     behind one that holds its spot or stands still: the walker out of a
     fight gives that walk up. Hunting him behind a partner fighting him, it
-    joins the cover fight where it stands; walking to a Job on routine
-    behind one standing still, it moves on to its next Job; otherwise it
-    stands 1.5 s. The smoke run's "no crew member trying to walk 5 s
+    joins the cover fight where it stands; otherwise it stands 1.5 s, and
+    one walking to a Job on routine (behind one standing still or
+    fighting) then sets off for its next Job (raid-smoke-bugs 12: sent
+    straight back, a routine walker pressed on into a Guard in cover in
+    its Room's only doorway, a second at a time). One walking the same way
+    that has itself not moved 0.3 m for 1 s (a queue behind one that will
+    not move) counts as standing still. One giving way that stands still
+    in the walker's way (stopped short of its spot, say three crew in a
+    one-wide lane at a gap, the one giving way in the gap's mouth) is
+    asked no more: the walker steps off its way instead and it walks on.
+    A Guard in a fight with no way round a crew member standing still asks
+    it to make way too (a Worker stood where a Guard walked to cover held
+    it 5 s); it only never gives its walk up. Of a walking pair, one out
+    of the fight and one in it (a Guard walking to cover), the one out of
+    it acts, and steps off the other's way rather than go round it (a way
+    round is a way across its path).
+    A way round must take the walker more than 0.5 m from where it stands
+    (`CrewPaths.GETS_ON`): going where another walker stands, the way round
+    ended on its own tile and led back through the body, and the pair
+    never gave way. A walk to a Job that ends away from the Job's spot
+    (its Post wandered because the spot was blocked) works there; only one
+    pushed off the end of its walk walks on, by a route, to where that walk
+    was going. The smoke run's "no crew member trying to walk 5 s
     without moving 0.3 m" caught a Worker pressing 10 s into a working one
     and a hunting Guard pressing into a partner fighting in the open. If both are
     walking, **only one of the pair acts**: the one that can (has a way
@@ -1009,7 +1043,13 @@ Alarm or a Guard), COWER (hiding) and REPORT (come out, walking to report).
   corner or wedge no Guard holds and no Worker hides on
   (`CrewHiding._hide_here`); a Worker still running to that tile moves on
   to its next best (a tile is taken from a runner only by a Worker hidden
-  on it or a Guard).
+  on it or a Guard). With no such corner underfoot (and not stood giving
+  way) it gives its own tile up for the next best then, not at 30 s
+  (raid-smoke-bugs 12: a runner pressed 30 s against a crew member working
+  on its tile, or at a wall corner its route could not get it past). A run
+  given up behind a crew member that will not move (`_give_up_walk`)
+  stands its 1.5 s out, and a run pushed off its end (or so given up) goes
+  on to the tile by a route, never in a straight line.
 - **Hidden**: on its tile (within 0.5 m) it keeps still, back to the wall,
   facing into the Room (`CrewHiding.facing`; on a tile between two solid
   sides facing each other, along the open way most toward the Room's
